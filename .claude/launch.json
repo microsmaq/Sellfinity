@@ -1,0 +1,12 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "sellpilot-dev",
+      "runtimeExecutable": "/Users/NewUser/.local/node/bin/npm",
+      "runtimeArgs": ["run", "dev"],
+      "port": 3000,
+      "env": { "PATH": "/Users/NewUser/.local/node/bin:/usr/bin:/bin:/usr/sbin:/sbin" }
+    }
+  ]
+}

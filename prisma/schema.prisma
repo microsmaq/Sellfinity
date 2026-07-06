@@ -1,0 +1,181 @@
+// SellPilot data model.
+// SQLite for local dev; switch provider+url to Postgres for production.
+// Conventions: all money is integer cents; "enum" fields are strings with
+// allowed values defined in src/lib/types.ts; JSON payloads are serialized
+// strings (SQLite) with typed mappers at the read/write boundary.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  name         String
+  // FREE | PRO | SCALE
+  plan         String   @default("FREE")
+  planRenewsAt DateTime?
+  createdAt    DateTime @default(now())
+
+  sessions       Session[]
+  products       Product[]
+  listings       Listing[]
+  orders         Order[]
+  syncRuns       SyncRun[]
+  syncIssues     SyncIssue[]
+  ebayConnection EbayConnection?
+}
+
+model Session {
+  id        String   @id // random 256-bit token, also the cookie value
+  userId    String
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+// The user's eBay seller account connection. Placeholder until real OAuth:
+// status SANDBOX means our mock client is in use; CONNECTED is reserved for
+// a real token exchange.
+model EbayConnection {
+  id           String    @id @default(cuid())
+  userId       String    @unique
+  // DISCONNECTED | SANDBOX | CONNECTED
+  status       String    @default("DISCONNECTED")
+  ebayUsername String?
+  // Real OAuth tokens would live here (encrypted at rest in production).
+  accessToken  String?
+  refreshToken String?
+  connectedAt  DateTime?
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// A product the user imported from the sourcing feed or mirrored from an
+// Amazon URL. Supplier fields snapshot the supplier state at import; sync
+// refreshes them.
+model Product {
+  id                  String   @id @default(cuid())
+  userId              String
+  sku                 String
+  title               String
+  description         String
+  // JSON string array of image URLs
+  imageUrlsJson       String   @default("[]")
+  category            String
+  supplierName        String
+  supplierProductId   String
+  supplierUrl         String
+  costCents           Int
+  supplierStock       Int
+  /** Estimated cost for the seller to ship one unit to the buyer. */
+  shippingCostCents   Int      @default(0)
+  suggestedPriceCents Int
+  // 0-100 sourcing score at import time
+  sourceScore         Int
+  createdAt           DateTime @default(now())
+
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  listings Listing[]
+
+  @@unique([userId, sku])
+  @@index([userId])
+}
+
+// An eBay listing for a product. Mirrors what we believe the live eBay state
+// to be; ebayListingId is set on publish (mock IDs in sandbox mode).
+model Listing {
+  id            String    @id @default(cuid())
+  userId        String
+  productId     String
+  ebayListingId String?
+  title         String
+  description   String
+  priceCents    Int
+  quantity      Int
+  imageUrlsJson String    @default("[]")
+  // DRAFT | ACTIVE | ENDED
+  status        String    @default("DRAFT")
+  publishedAt   DateTime?
+  endedAt       DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  user       User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  product    Product     @relation(fields: [productId], references: [id], onDelete: Cascade)
+  orders     Order[]
+  syncIssues SyncIssue[]
+
+  @@index([userId, status])
+}
+
+// A sale imported from eBay. Fee/cost fields are snapshotted at import so the
+// P&L is stable even if fee rates or supplier costs change later.
+model Order {
+  id                   String   @id @default(cuid())
+  userId               String
+  listingId            String
+  ebayOrderId          String
+  quantity             Int
+  // per-unit sale price
+  salePriceCents       Int
+  shippingChargedCents Int      @default(0)
+  ebayFeeCents         Int
+  shippingCostCents    Int
+  cogsCents            Int // total cost of goods for this order
+  // PAID | SHIPPED | REFUNDED
+  status               String   @default("PAID")
+  buyerUsername        String
+  saleDate             DateTime
+  createdAt            DateTime @default(now())
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  listing Listing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, ebayOrderId])
+  @@index([userId, saleDate])
+}
+
+model SyncRun {
+  id              String    @id @default(cuid())
+  userId          String
+  startedAt       DateTime  @default(now())
+  finishedAt      DateTime?
+  listingsChecked Int       @default(0)
+  issuesFound     Int       @default(0)
+  issuesAutoFixed Int       @default(0)
+
+  user   User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  issues SyncIssue[]
+
+  @@index([userId, startedAt])
+}
+
+// A detected mismatch between supplier truth and the live listing.
+model SyncIssue {
+  id        String    @id @default(cuid())
+  syncRunId String
+  userId    String
+  listingId String
+  // OUT_OF_STOCK | STOCK_DRIFT | COST_RISE | SUPPLIER_GONE
+  type      String
+  // JSON string: { field, expected, actual, ... } for display
+  detailsJson String
+  // OPEN | AUTO_FIXED | FIXED | IGNORED
+  resolution String    @default("OPEN")
+  resolvedAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  syncRun SyncRun @relation(fields: [syncRunId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  listing Listing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+
+  @@index([userId, resolution])
+}
