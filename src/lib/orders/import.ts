@@ -1,6 +1,6 @@
 import { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
-import { getEbayClient } from "@/lib/ebay";
+import { getEbayClientForUser } from "@/lib/ebay";
 import type { EbayClient } from "@/lib/ebay/client";
 import { ebayFeeCents } from "@/lib/fees";
 
@@ -16,8 +16,9 @@ const LOOKBACK_MS = 30 * 24 * 60 * 60 * 1000;
  */
 export async function importOrders(
   userId: string,
-  ebay: EbayClient = getEbayClient(),
+  ebayClient?: EbayClient,
 ): Promise<{ imported: number }> {
+  const ebay = ebayClient ?? (await getEbayClientForUser(userId));
   const since = new Date(Date.now() - LOOKBACK_MS);
   const remoteOrders = await ebay.getOrders(userId, since);
   if (remoteOrders.length === 0) return { imported: 0 };

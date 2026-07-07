@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { requireUser } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { getEbayClient } from "@/lib/ebay";
+import { getEbayClientForUser } from "@/lib/ebay";
 import { EbayApiError, validateListingInput } from "@/lib/ebay/client";
 import { generateListing } from "@/lib/listings/generate";
 import { planFor, remainingListingSlots } from "@/lib/plans";
@@ -91,7 +91,7 @@ export async function publishListings(listingIds: string[]): Promise<BulkResult>
     };
   }
 
-  const client = getEbayClient();
+  const client = await getEbayClientForUser(user.id);
   let done = 0;
   let failed = 0;
   let firstError: string | undefined;
@@ -151,7 +151,7 @@ export async function endListings(listingIds: string[]): Promise<BulkResult> {
   const listings = await db.listing.findMany({
     where: { id: { in: listingIds }, userId: user.id, status: "ACTIVE" },
   });
-  const client = getEbayClient();
+  const client = await getEbayClientForUser(user.id);
   let done = 0;
   for (const listing of listings) {
     if (listing.ebayListingId) await client.endListing(listing.ebayListingId);
@@ -194,7 +194,8 @@ export async function updateListing(
 
   if (listing.status === "ACTIVE" && listing.ebayListingId) {
     try {
-      await getEbayClient().updateListing(listing.ebayListingId, update);
+      const client = await getEbayClientForUser(user.id);
+      await client.updateListing(listing.ebayListingId, update);
     } catch (e) {
       if (e instanceof EbayApiError) return { done: 0, failed: 1, error: e.message };
       throw e;

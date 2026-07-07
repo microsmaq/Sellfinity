@@ -51,10 +51,11 @@ model EbayConnection {
   // DISCONNECTED | SANDBOX | CONNECTED
   status       String    @default("DISCONNECTED")
   ebayUsername String?
-  // Real OAuth tokens would live here (encrypted at rest in production).
-  accessToken  String?
-  refreshToken String?
-  connectedAt  DateTime?
+  // OAuth tokens (encrypt at rest before production).
+  accessToken          String?
+  accessTokenExpiresAt DateTime?
+  refreshToken         String?
+  connectedAt          DateTime?
   user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 

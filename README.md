@@ -65,11 +65,21 @@ the whole app works offline with zero credentials:
 | --- | --- | --- | --- |
 | Amazon product pages | `ProductPageScraper` (`src/lib/mirror/scraper.ts`) | Deterministic fabricated product per ASIN | Amazon PA-API or a scraping API (Rainforest, Oxylabs); swap in `src/lib/mirror/index.ts` |
 | Supplier/market data | `SupplierProvider` (`src/lib/sourcing/provider.ts`) | Deterministic 35-product catalog with daily stock/cost drift | CJ Dropshipping, AutoDS-style feed, or Zik-style analytics; swap in `src/lib/sourcing/index.ts` |
-| eBay Sell APIs | `EbayClient` (`src/lib/ebay/client.ts`) | Validates like eBay, mints ids, fabricates deterministic orders | eBay Inventory + Fulfillment APIs with OAuth; swap in `src/lib/ebay/index.ts`; needs `EBAY_CLIENT_ID`, `EBAY_CLIENT_SECRET`, `EBAY_RU_NAME` |
+| eBay Sell APIs | `EbayClient` (`src/lib/ebay/client.ts`) | Demo sandbox: validates like eBay, mints ids, fabricates deterministic orders | **Built**: `RealEbayClient` (`src/lib/ebay/real.ts`) + OAuth flow (`src/lib/ebay/oauth.ts`, `/api/ebay/connect` + `/api/ebay/callback`). Selected per user in `src/lib/ebay/index.ts` once connected. |
 | Payments | `changePlan` action (`src/lib/actions/billing.ts`) | Instant plan switch, no charge | Stripe Checkout + webhooks; needs `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` |
 
-The eBay "Connect" button in Settings stores a sandbox placeholder; wired for
-replacement by the real OAuth consent redirect.
+### Connecting a real eBay account
+
+Set in `.env`: `EBAY_ENV` (`SANDBOX` or `PRODUCTION`), `EBAY_CLIENT_ID`,
+`EBAY_CLIENT_SECRET`, and `EBAY_RU_NAME` (Developer Portal → your keyset →
+User Tokens → "Get a Token from eBay via Your Application" → the RuName whose
+auth-accepted URL points at `<app-origin>/api/ebay/callback`). Once all four
+are set, Settings shows a "Connect eBay account" OAuth button; granting
+consent stores per-user tokens (auto-refreshed) and routes publish, revise,
+end, and order import through the real Sell APIs (Inventory, Account,
+Taxonomy, Fulfillment). First publish bootstraps a merchant location and
+default business policies if the seller has none. Users without a real
+connection keep the built-in demo sandbox.
 
 ## Architecture notes
 

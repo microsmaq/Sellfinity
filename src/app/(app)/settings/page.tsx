@@ -1,16 +1,36 @@
 import { requireUser } from "@/lib/auth";
 import { db } from "@/lib/db";
+import { ebayEnvConfig } from "@/lib/ebay/oauth";
 import { planFor } from "@/lib/plans";
 import { Badge, Card, PageHeader } from "@/components/ui";
 import { EbayConnectionCard } from "./ebay-connection";
 
 export const metadata = { title: "Settings — SellPilot" };
 
-export default async function SettingsPage() {
+const CALLBACK_MESSAGES: Record<string, { text: string; error: boolean }> = {
+  connected: { text: "eBay account connected.", error: false },
+  declined: { text: "eBay connection was declined or cancelled.", error: true },
+  state_mismatch: {
+    text: "eBay connection failed a security check — please try again.",
+    error: true,
+  },
+  token_error: {
+    text: "eBay rejected the token exchange. Check the keyset and RuName in .env, then try again.",
+    error: true,
+  },
+};
+
+export default async function SettingsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ ebay?: string }>;
+}) {
   const user = await requireUser();
   const connection = await db.ebayConnection.findUnique({
     where: { userId: user.id },
   });
+  const oauthConfig = ebayEnvConfig();
+  const callback = CALLBACK_MESSAGES[(await searchParams).ebay ?? ""];
 
   return (
     <>
@@ -48,10 +68,18 @@ export default async function SettingsPage() {
           </dl>
         </Card>
 
+        {callback && (
+          <p
+            className={`rounded-lg px-3 py-2 text-sm ${callback.error ? "bg-red-50 text-red-700" : "bg-emerald-50 text-emerald-700"}`}
+          >
+            {callback.text}
+          </p>
+        )}
         <EbayConnectionCard
           status={(connection?.status ?? "DISCONNECTED") as "DISCONNECTED" | "SANDBOX" | "CONNECTED"}
           username={connection?.ebayUsername ?? null}
           connectedAt={connection?.connectedAt?.toISOString() ?? null}
+          oauth={oauthConfig ? { env: oauthConfig.env } : null}
         />
       </div>
     </>

@@ -1,5 +1,5 @@
 import { db } from "@/lib/db";
-import { getEbayClient } from "@/lib/ebay";
+import { getEbayClientForUser } from "@/lib/ebay";
 import type { EbayClient } from "@/lib/ebay/client";
 import { getSupplierProvider } from "@/lib/sourcing";
 import type { SupplierProvider } from "@/lib/sourcing/provider";
@@ -58,8 +58,12 @@ export async function applyFix(
  */
 export async function runSync(
   user: { id: string; plan: string },
-  deps: SyncDeps = { provider: getSupplierProvider(), ebay: getEbayClient() },
+  partialDeps?: SyncDeps,
 ): Promise<SyncSummary> {
+  const deps = partialDeps ?? {
+    provider: getSupplierProvider(),
+    ebay: await getEbayClientForUser(user.id),
+  };
   const autoFix = planFor(user.plan).autoFix;
   const listings = await db.listing.findMany({
     where: { userId: user.id, status: "ACTIVE" },
@@ -165,8 +169,12 @@ export async function runSync(
 export async function fixIssue(
   userId: string,
   issueId: string,
-  deps: SyncDeps = { provider: getSupplierProvider(), ebay: getEbayClient() },
+  partialDeps?: SyncDeps,
 ): Promise<string | null> {
+  const deps = partialDeps ?? {
+    provider: getSupplierProvider(),
+    ebay: await getEbayClientForUser(userId),
+  };
   const issue = await db.syncIssue.findFirst({
     where: { id: issueId, userId, resolution: "OPEN" },
     include: { listing: { include: { product: true } } },
