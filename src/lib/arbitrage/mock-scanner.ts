@@ -11,7 +11,9 @@ import {
 } from "@/lib/mirror/mock-amazon";
 import type { ArbitrageOpportunity, ArbitrageScanner } from "./scanner";
 
-const POOL_SIZE = 80;
+// Safety cap: scan at most this many slots per requested opportunity, since
+// some slots are filtered out (unprofitable or unsourceable today).
+const SLOTS_PER_OPPORTUNITY = 4;
 
 function hashString(s: string): number {
   let h = 2166136261;
@@ -51,11 +53,12 @@ export function asinForSlot(dayNumber: number, slot: number): string {
 export class MockArbitrageScanner implements ArbitrageScanner {
   constructor(private dayNumber: () => number = currentDayNumber) {}
 
-  async findOpportunities(): Promise<ArbitrageOpportunity[]> {
+  async findOpportunities(count: number): Promise<ArbitrageOpportunity[]> {
     const day = this.dayNumber();
     const opportunities: ArbitrageOpportunity[] = [];
+    const maxSlots = count * SLOTS_PER_OPPORTUNITY;
 
-    for (let slot = 0; slot < POOL_SIZE; slot++) {
+    for (let slot = 0; slot < maxSlots && opportunities.length < count; slot++) {
       const asin = asinForSlot(day, slot);
       const state = amazonStateForDay(asin, day);
       if (!state || state.stock === 0) continue; // can't source it today

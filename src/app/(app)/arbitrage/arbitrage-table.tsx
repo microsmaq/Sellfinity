@@ -2,38 +2,27 @@
 
 import Link from "next/link";
 import { useMemo, useState, useTransition } from "react";
-import { mirrorOpportunity } from "@/lib/actions/arbitrage";
+import { loadOpportunities, mirrorOpportunity } from "@/lib/actions/arbitrage";
+import { MAX_OPPORTUNITIES, type OpportunityRow } from "@/lib/arbitrage/scanner";
 import { formatCents } from "@/lib/money";
 import { Badge, Button, Card, cx } from "@/components/ui";
 
-export type OpportunityRow = {
-  asin: string;
-  category: string;
-  title: string;
-  imageUrl: string;
-  ebayPriceCents: number;
-  ebaySales30d: number;
-  ebayUrl: string;
-  amazonPriceCents: number;
-  amazonUrl: string;
-  profitCents: number;
-  marginPct: number;
-  feeCents: number;
-  mirrored: boolean;
-};
+const LOAD_STEP = 50;
 
-export function ArbitrageTable({
-  rows,
-  categories,
-}: {
-  rows: OpportunityRow[];
-  categories: string[];
-}) {
+export function ArbitrageTable({ initialRows }: { initialRows: OpportunityRow[] }) {
+  const [rows, setRows] = useState(initialRows);
   const [category, setCategory] = useState("all");
   const [minMargin, setMinMargin] = useState(0);
   const [pending, startTransition] = useTransition();
+  const [loadingMore, startLoadMore] = useTransition();
   const [busyAsin, setBusyAsin] = useState<string | null>(null);
+  const [exhausted, setExhausted] = useState(false);
   const [notice, setNotice] = useState<{ text: string; error: boolean } | null>(null);
+
+  const categories = useMemo(
+    () => [...new Set(rows.map((r) => r.category))].sort(),
+    [rows],
+  );
 
   const visible = useMemo(
     () =>
@@ -51,16 +40,35 @@ export function ArbitrageTable({
     startTransition(async () => {
       const outcome = await mirrorOpportunity(row.asin, row.ebayPriceCents);
       setBusyAsin(null);
-      setNotice(
-        outcome.ok
-          ? {
-              text: `Mirrored "${outcome.title}" as a draft priced at ${formatCents(outcome.priceCents!)} — review it in Listings.`,
-              error: false,
-            }
-          : { text: outcome.error ?? "Mirroring failed", error: true },
-      );
+      if (outcome.ok) {
+        setRows((prev) =>
+          prev.map((r) => (r.asin === row.asin ? { ...r, mirrored: true } : r)),
+        );
+        setNotice({
+          text: `Mirrored "${outcome.title}" as a draft priced at ${formatCents(outcome.priceCents!)} — review it in Listings.`,
+          error: false,
+        });
+      } else {
+        setNotice({ text: outcome.error ?? "Mirroring failed", error: true });
+      }
     });
   }
+
+  function loadMore() {
+    setNotice(null);
+    startLoadMore(async () => {
+      const next = await loadOpportunities(rows.length + LOAD_STEP);
+      // Keep local mirrored flags for rows the fresh scan also returned.
+      const mirroredAsins = new Set(rows.filter((r) => r.mirrored).map((r) => r.asin));
+      const merged = next.map((r) =>
+        mirroredAsins.has(r.asin) ? { ...r, mirrored: true } : r,
+      );
+      if (merged.length <= rows.length) setExhausted(true);
+      setRows(merged);
+    });
+  }
+
+  const atCap = rows.length >= MAX_OPPORTUNITIES;
 
   return (
     <div className="space-y-4">
@@ -87,6 +95,9 @@ export function ArbitrageTable({
           <option value={25}>Margin ≥ 25%</option>
           <option value={35}>Margin ≥ 35%</option>
         </select>
+        <p className="text-sm text-slate-500">
+          {visible.length} of {rows.length} opportunities
+        </p>
         {notice && (
           <p
             className={cx(
@@ -174,11 +185,7 @@ export function ArbitrageTable({
                   {r.mirrored ? (
                     <Badge tone="indigo">In your store</Badge>
                   ) : (
-                    <Button
-                      size="sm"
-                      disabled={pending}
-                      onClick={() => mirror(r)}
-                    >
+                    <Button size="sm" disabled={pending} onClick={() => mirror(r)}>
                       {busyAsin === r.asin ? "Mirroring…" : "Mirror to my store"}
                     </Button>
                   )}
@@ -195,6 +202,18 @@ export function ArbitrageTable({
           </tbody>
         </table>
       </Card>
+
+      <div className="flex justify-center">
+        {atCap || exhausted ? (
+          <p className="text-sm text-slate-500">
+            That&apos;s everything the scanner found today — check back tomorrow.
+          </p>
+        ) : (
+          <Button variant="secondary" disabled={loadingMore} onClick={loadMore}>
+            {loadingMore ? "Scanning…" : `Load ${LOAD_STEP} more`}
+          </Button>
+        )}
+      </div>
     </div>
   );
 }

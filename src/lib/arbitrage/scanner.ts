@@ -28,7 +28,31 @@ export type ArbitrageOpportunity = {
   margin: MarginEstimate;
 };
 
+/** UI row for the arbitrage table — shared by server rows builder and client table. */
+export type OpportunityRow = {
+  asin: string;
+  category: string;
+  title: string;
+  imageUrl: string;
+  ebayPriceCents: number;
+  ebaySales30d: number;
+  ebayUrl: string;
+  amazonPriceCents: number;
+  amazonUrl: string;
+  profitCents: number;
+  marginPct: number;
+  feeCents: number;
+  mirrored: boolean;
+};
+
+/** Ceiling on one scan — keeps "load more" from growing unbounded. */
+export const MAX_OPPORTUNITIES = 500;
+
 export interface ArbitrageScanner {
-  /** Today's opportunities, profitable ones only, best margin first. */
-  findOpportunities(): Promise<ArbitrageOpportunity[]>;
+  /**
+   * Today's opportunities, profitable ones only, best margin first.
+   * Returns up to `count` (a larger count re-scans deeper into the same
+   * day's pool, so the result is a superset of a smaller one).
+   */
+  findOpportunities(count: number): Promise<ArbitrageOpportunity[]>;
 }

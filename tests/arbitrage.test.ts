@@ -17,15 +17,26 @@ describe("MockArbitrageScanner", () => {
   const scanner = new MockArbitrageScanner(() => 20000);
 
   it("is deterministic within a day and drifts across days", async () => {
-    expect(await scanner.findOpportunities()).toEqual(
-      await scanner.findOpportunities(),
+    expect(await scanner.findOpportunities(50)).toEqual(
+      await scanner.findOpportunities(50),
     );
-    const tomorrow = await new MockArbitrageScanner(() => 20001).findOpportunities();
-    expect(await scanner.findOpportunities()).not.toEqual(tomorrow);
+    const tomorrow = await new MockArbitrageScanner(() => 20001).findOpportunities(50);
+    expect(await scanner.findOpportunities(50)).not.toEqual(tomorrow);
+  });
+
+  it("returns the requested count, and a larger scan is a superset of a smaller one", async () => {
+    const fifty = await scanner.findOpportunities(50);
+    const hundred = await scanner.findOpportunities(100);
+    expect(fifty).toHaveLength(50);
+    expect(hundred).toHaveLength(100);
+    const bigAsins = new Set(hundred.map((o) => o.amazon.asin));
+    for (const o of fifty) {
+      expect(bigAsins.has(o.amazon.asin)).toBe(true);
+    }
   });
 
   it("only surfaces profitable pairs where Amazon is cheaper, sorted by profit", async () => {
-    const opportunities = await scanner.findOpportunities();
+    const opportunities = await scanner.findOpportunities(80);
     expect(opportunities.length).toBeGreaterThan(10);
     let prev = Infinity;
     for (const o of opportunities) {
@@ -37,7 +48,7 @@ describe("MockArbitrageScanner", () => {
   });
 
   it("computes margin net of eBay fees on the eBay sale price", async () => {
-    const [o] = await scanner.findOpportunities();
+    const [o] = await scanner.findOpportunities(10);
     const fee = ebayFeeCents({
       quantity: 1,
       salePriceCents: o.ebay.priceCents,
@@ -50,7 +61,7 @@ describe("MockArbitrageScanner", () => {
   });
 
   it("pairs each opportunity with the exact product the mirror sandbox returns", async () => {
-    const [o] = await scanner.findOpportunities();
+    const [o] = await scanner.findOpportunities(10);
     const product = productForAsin(o.amazon.asin);
     expect(o.ebay.title).toBe(product.title);
     const state = amazonStateForDay(o.amazon.asin, 20000);
