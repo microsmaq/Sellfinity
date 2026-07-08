@@ -2,11 +2,45 @@
 
 import { useActionState, useTransition } from "react";
 import {
+  completeEbayConnectionFromUrl,
   connectEbaySandbox,
   disconnectEbay,
   type SettingsResult,
 } from "@/lib/actions/settings";
 import { Badge, Button, Card, Input, Label } from "@/components/ui";
+
+function PasteCallbackForm() {
+  const [state, formAction, pending] = useActionState<SettingsResult | null, FormData>(
+    completeEbayConnectionFromUrl,
+    null,
+  );
+  return (
+    <form action={formAction} className="space-y-2">
+      <p className="text-xs text-slate-500">
+        If eBay couldn&apos;t send you back here after you granted access (its
+        settings won&apos;t accept a localhost return URL), copy the full URL
+        from the browser address bar on the page you ended up on and paste it
+        below:
+      </p>
+      <div className="flex gap-2">
+        <Input
+          name="url"
+          placeholder="https://…?code=v^1.1#i^1…&state=…"
+          required
+          className="font-mono text-xs"
+        />
+        <Button type="submit" variant="secondary" disabled={pending}>
+          {pending ? "Completing…" : "Complete connection"}
+        </Button>
+      </div>
+      {state?.error && (
+        <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">
+          {state.error}
+        </p>
+      )}
+    </form>
+  );
+}
 
 export function EbayConnectionCard({
   status,
@@ -86,6 +120,7 @@ export function EbayConnectionCard({
                 {oauth.env === "PRODUCTION" ? "seller" : "sandbox test"} account and
                 grant access. Tokens are stored locally and refreshed automatically.
               </p>
+              <PasteCallbackForm />
             </div>
           )}
 

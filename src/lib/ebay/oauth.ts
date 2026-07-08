@@ -52,6 +52,26 @@ export function consentUrl(config: EbayEnvConfig, state: string): string {
   return `${config.authHost}/oauth2/authorize?${params}`;
 }
 
+/**
+ * Extract code and state from a pasted post-consent redirect URL. Used when
+ * eBay can't redirect back to a local dev server (its accepted-URL field
+ * rejects localhost): the user copies the dead page's URL from the address
+ * bar and pastes it in Settings.
+ */
+export function parseCallbackUrl(
+  input: string,
+): { code: string; state: string | null } | null {
+  let url: URL;
+  try {
+    url = new URL(input.trim());
+  } catch {
+    return null;
+  }
+  const code = url.searchParams.get("code");
+  if (!code) return null;
+  return { code, state: url.searchParams.get("state") };
+}
+
 type TokenResponse = {
   access_token: string;
   expires_in: number; // seconds
