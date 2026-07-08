@@ -298,6 +298,24 @@ describe("mirrorUrl", () => {
     expect(dup.error).toContain("Already imported");
   });
 
+  it("prices against a known eBay comp when one is supplied", async () => {
+    const { user } = await createUserWithActiveListing("FREE");
+    const outcome = await mirrorUrl(
+      user.id,
+      "https://www.amazon.com/dp/B0ABCD1234",
+      scraper,
+      { marketPriceCents: 4999 },
+    );
+    expect(outcome.ok).toBe(true);
+    const listing = await db.listing.findUniqueOrThrow({
+      where: { id: outcome.listingId! },
+    });
+    // Charm-priced undercut of the $49.99 comp, not the generic markup.
+    expect(listing.priceCents).toBeLessThan(4999);
+    expect(listing.priceCents).toBeGreaterThan(4000);
+    expect(listing.priceCents % 100).toBe(99);
+  });
+
   it("fails cleanly on a non-product URL", async () => {
     const { user } = await createUserWithActiveListing("FREE");
     const outcome = await mirrorUrl(user.id, "https://example.com/dp/nope", scraper);

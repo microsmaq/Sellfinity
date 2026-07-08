@@ -7,6 +7,7 @@ import { cx } from "@/components/ui";
 const links = [
   { href: "/dashboard", label: "Profit dashboard", icon: "📊" },
   { href: "/mirror", label: "Amazon mirroring", icon: "🪞" },
+  { href: "/arbitrage", label: "Arbitrage finder", icon: "⚖️" },
   { href: "/sourcing", label: "Product sourcing", icon: "🔍" },
   { href: "/listings", label: "Listings", icon: "🏷️" },
   { href: "/inventory", label: "Inventory sync", icon: "🔄" },

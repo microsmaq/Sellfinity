@@ -11,6 +11,10 @@ keep stock in sync, and know what you actually profited.
   charm price with a guaranteed margin over the Amazon buy price. Optionally
   publishes immediately. Mirrored products participate in inventory sync and
   profit tracking like any other.
+- **Arbitrage finder** (`/arbitrage`) — best-selling eBay products (by
+  category) that have a matching Amazon product selling for less, with the
+  per-unit margin shown net of eBay fees. One click mirrors the Amazon
+  product into your store as a draft priced to undercut the actual eBay comp.
 - **Product sourcing** (`/sourcing`) — a daily-refreshing feed of candidates
   ranked 0–100 by margin (40%), demand (35%), and competition (25%), with
   per-unit profit estimates net of eBay fees and shipping. Import to inventory
@@ -64,6 +68,7 @@ the whole app works offline with zero credentials:
 | Integration | Interface | Mock today | Real implementation |
 | --- | --- | --- | --- |
 | Amazon product pages | `ProductPageScraper` (`src/lib/mirror/scraper.ts`) | Deterministic fabricated product per ASIN | Amazon PA-API or a scraping API (Rainforest, Oxylabs); swap in `src/lib/mirror/index.ts` |
+| Arbitrage scan | `ArbitrageScanner` (`src/lib/arbitrage/scanner.ts`) | Deterministic daily eBay-vs-Amazon pairs from the mirror sandbox catalog | eBay Browse/Marketplace Insights + Amazon product search, matched by UPC/title; swap in `src/lib/arbitrage/index.ts` |
 | Supplier/market data | `SupplierProvider` (`src/lib/sourcing/provider.ts`) | Deterministic 35-product catalog with daily stock/cost drift | CJ Dropshipping, AutoDS-style feed, or Zik-style analytics; swap in `src/lib/sourcing/index.ts` |
 | eBay Sell APIs | `EbayClient` (`src/lib/ebay/client.ts`) | Demo sandbox: validates like eBay, mints ids, fabricates deterministic orders | **Built**: `RealEbayClient` (`src/lib/ebay/real.ts`) + OAuth flow (`src/lib/ebay/oauth.ts`, `/api/ebay/connect` + `/api/ebay/callback`). Selected per user in `src/lib/ebay/index.ts` once connected. |
 | Payments | `changePlan` action (`src/lib/actions/billing.ts`) | Instant plan switch, no charge | Stripe Checkout + webhooks; needs `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` |

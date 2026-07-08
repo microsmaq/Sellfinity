@@ -32,6 +32,11 @@ export async function mirrorUrl(
   userId: string,
   url: string,
   scraper: ProductPageScraper = getScraper(),
+  opts: {
+    /** A known eBay comp price to undercut (e.g. from the arbitrage
+     * scanner); without it the market is estimated from the buy price. */
+    marketPriceCents?: number;
+  } = {},
 ): Promise<MirrorOutcome> {
   const scraped = await scraper.scrape(url);
   if (!scraped) {
@@ -50,7 +55,8 @@ export async function mirrorUrl(
   }
 
   const pricing = {
-    marketPriceCents: Math.round(scraped.priceCents * MARKET_MARKUP),
+    marketPriceCents:
+      opts.marketPriceCents ?? Math.round(scraped.priceCents * MARKET_MARKUP),
     costCents: scraped.priceCents,
     shippingCostCents: 0, // fulfilled via Amazon free shipping
   };
