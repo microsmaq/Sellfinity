@@ -251,7 +251,7 @@ export class RealEbayClient implements EbayClient {
       availability: { shipToLocationAvailability: { quantity: input.quantity } },
     });
 
-    const offer = await this.request<{ offerId: string }>("POST", "/sell/inventory/v1/offer", {
+    const offerBody = {
       sku: input.sku,
       marketplaceId: MARKETPLACE,
       format: "FIXED_PRICE",
@@ -263,11 +263,33 @@ export class RealEbayClient implements EbayClient {
         price: { value: (input.priceCents / 100).toFixed(2), currency: "USD" },
       },
       merchantLocationKey: LOCATION_KEY,
-    });
+    };
+
+    let offerId: string;
+    try {
+      const offer = await this.request<{ offerId: string }>(
+        "POST",
+        "/sell/inventory/v1/offer",
+        offerBody,
+      );
+      offerId = offer.offerId;
+    } catch (e) {
+      // A previous attempt that died between offer creation and publish
+      // leaves an unpublished offer behind; adopt it instead of failing.
+      if (!(e instanceof EbayApiError) || !/already exists/i.test(e.message)) throw e;
+      const existing = await this.request<{ offers?: { offerId: string }[] }>(
+        "GET",
+        `/sell/inventory/v1/offer?sku=${encodeURIComponent(input.sku)}&marketplace_id=${MARKETPLACE}`,
+      );
+      const existingId = existing.offers?.[0]?.offerId;
+      if (!existingId) throw e;
+      offerId = existingId;
+      await this.request("PUT", `/sell/inventory/v1/offer/${offerId}`, offerBody);
+    }
 
     const published = await this.request<{ listingId: string }>(
       "POST",
-      `/sell/inventory/v1/offer/${offer.offerId}/publish`,
+      `/sell/inventory/v1/offer/${offerId}/publish`,
     );
     return { ebayListingId: published.listingId };
   }

@@ -2,17 +2,65 @@
 
 import Link from "next/link";
 import { useMemo, useState, useTransition } from "react";
-import { loadOpportunities, mirrorOpportunity } from "@/lib/actions/arbitrage";
+import {
+  loadOpportunities,
+  mirrorOpportunities,
+  mirrorOpportunity,
+} from "@/lib/actions/arbitrage";
 import { MAX_OPPORTUNITIES, type OpportunityRow } from "@/lib/arbitrage/scanner";
 import { formatCents } from "@/lib/money";
-import { Badge, Button, Card, cx } from "@/components/ui";
+import { Badge, Button, Card, Input, cx } from "@/components/ui";
 
 const LOAD_STEP = 50;
+
+type SortKey = "ebayPrice" | "sales" | "amazonPrice" | "profit" | "margin";
+
+const sortValue: Record<SortKey, (r: OpportunityRow) => number> = {
+  ebayPrice: (r) => r.ebayPriceCents,
+  sales: (r) => r.ebaySales30d,
+  amazonPrice: (r) => r.amazonPriceCents,
+  profit: (r) => r.profitCents,
+  margin: (r) => r.marginPct,
+};
+
+function SortHeader({
+  label,
+  sortKey,
+  sort,
+  onSort,
+}: {
+  label: string;
+  sortKey: SortKey;
+  sort: { key: SortKey; desc: boolean };
+  onSort: (key: SortKey) => void;
+}) {
+  const active = sort.key === sortKey;
+  return (
+    <th className="px-4 py-3 text-right">
+      <button
+        onClick={() => onSort(sortKey)}
+        className={cx(
+          "inline-flex items-center gap-1 text-xs font-semibold uppercase tracking-wide hover:text-slate-900",
+          active ? "text-slate-900" : "text-slate-500",
+        )}
+      >
+        {label}
+        <span className="w-2 text-slate-400">{active ? (sort.desc ? "↓" : "↑") : ""}</span>
+      </button>
+    </th>
+  );
+}
 
 export function ArbitrageTable({ initialRows }: { initialRows: OpportunityRow[] }) {
   const [rows, setRows] = useState(initialRows);
   const [category, setCategory] = useState("all");
   const [minMargin, setMinMargin] = useState(0);
+  const [query, setQuery] = useState("");
+  const [sort, setSort] = useState<{ key: SortKey; desc: boolean }>({
+    key: "profit",
+    desc: true,
+  });
+  const [selected, setSelected] = useState<Set<string>>(new Set());
   const [pending, startTransition] = useTransition();
   const [loadingMore, startLoadMore] = useTransition();
   const [busyAsin, setBusyAsin] = useState<string | null>(null);
@@ -24,28 +72,57 @@ export function ArbitrageTable({ initialRows }: { initialRows: OpportunityRow[] 
     [rows],
   );
 
-  const visible = useMemo(
-    () =>
-      rows.filter(
-        (r) =>
-          (category === "all" || r.category === category) &&
-          r.marginPct >= minMargin,
-      ),
-    [rows, category, minMargin],
-  );
+  const visible = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    const filtered = rows.filter(
+      (r) =>
+        (category === "all" || r.category === category) &&
+        r.marginPct >= minMargin &&
+        (q === "" || r.title.toLowerCase().includes(q)),
+    );
+    const value = sortValue[sort.key];
+    return filtered.sort((a, b) =>
+      sort.desc ? value(b) - value(a) : value(a) - value(b),
+    );
+  }, [rows, category, minMargin, query, sort]);
 
-  function mirror(row: OpportunityRow) {
+  const selectableVisible = visible.filter((r) => !r.mirrored);
+  const allSelected =
+    selectableVisible.length > 0 &&
+    selectableVisible.every((r) => selected.has(r.asin));
+
+  function onSort(key: SortKey) {
+    setSort((prev) =>
+      prev.key === key ? { key, desc: !prev.desc } : { key, desc: true },
+    );
+  }
+
+  function toggle(asin: string) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(asin)) next.delete(asin);
+      else next.add(asin);
+      return next;
+    });
+  }
+
+  function markMirrored(asins: Iterable<string>) {
+    const set = new Set(asins);
+    setRows((prev) =>
+      prev.map((r) => (set.has(r.asin) ? { ...r, mirrored: true } : r)),
+    );
+  }
+
+  function mirrorOne(row: OpportunityRow) {
     setNotice(null);
     setBusyAsin(row.asin);
     startTransition(async () => {
       const outcome = await mirrorOpportunity(row.asin, row.ebayPriceCents);
       setBusyAsin(null);
       if (outcome.ok) {
-        setRows((prev) =>
-          prev.map((r) => (r.asin === row.asin ? { ...r, mirrored: true } : r)),
-        );
+        markMirrored([row.asin]);
         setNotice({
-          text: `Mirrored "${outcome.title}" as a draft priced at ${formatCents(outcome.priceCents!)} — review it in Listings.`,
+          text: `Mirrored "${outcome.title}" as a draft priced at ${formatCents(outcome.priceCents!)}.`,
           error: false,
         });
       } else {
@@ -54,17 +131,32 @@ export function ArbitrageTable({ initialRows }: { initialRows: OpportunityRow[] 
     });
   }
 
+  function mirrorSelected() {
+    const items = visible
+      .filter((r) => selected.has(r.asin) && !r.mirrored)
+      .map((r) => ({ asin: r.asin, ebayPriceCents: r.ebayPriceCents }));
+    setNotice(null);
+    startTransition(async () => {
+      const result = await mirrorOpportunities(items);
+      markMirrored(result.mirroredAsins);
+      setSelected(new Set());
+      const done = result.mirroredAsins.length;
+      setNotice({
+        text:
+          `Mirrored ${done} product${done === 1 ? "" : "s"} as drafts` +
+          (result.failed ? ` (${result.failed} failed${result.error ? `: ${result.error}` : ""})` : "") +
+          ".",
+        error: done === 0,
+      });
+    });
+  }
+
   function loadMore() {
     setNotice(null);
     startLoadMore(async () => {
       const next = await loadOpportunities(rows.length + LOAD_STEP);
-      // Keep local mirrored flags for rows the fresh scan also returned.
-      const mirroredAsins = new Set(rows.filter((r) => r.mirrored).map((r) => r.asin));
-      const merged = next.map((r) =>
-        mirroredAsins.has(r.asin) ? { ...r, mirrored: true } : r,
-      );
-      if (merged.length <= rows.length) setExhausted(true);
-      setRows(merged);
+      if (next.length <= rows.length) setExhausted(true);
+      setRows(next);
     });
   }
 
@@ -73,6 +165,13 @@ export function ArbitrageTable({ initialRows }: { initialRows: OpportunityRow[] 
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-3">
+        <Input
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search products…"
+          className="w-56"
+          aria-label="Search products"
+        />
         <select
           value={category}
           onChange={(e) => setCategory(e.target.value)}
@@ -98,40 +197,80 @@ export function ArbitrageTable({ initialRows }: { initialRows: OpportunityRow[] 
         <p className="text-sm text-slate-500">
           {visible.length} of {rows.length} opportunities
         </p>
-        {notice && (
-          <p
-            className={cx(
-              "rounded-lg px-3 py-1.5 text-sm",
-              notice.error ? "bg-red-50 text-red-700" : "bg-emerald-50 text-emerald-700",
-            )}
+        <div className="ml-auto">
+          <Button
+            disabled={pending || selected.size === 0}
+            onClick={mirrorSelected}
           >
-            {notice.text}{" "}
-            {!notice.error && (
-              <Link href="/listings" className="font-medium text-emerald-800 underline">
-                Open Listings →
-              </Link>
-            )}
-          </p>
-        )}
+            {pending && busyAsin === null
+              ? "Mirroring…"
+              : `Mirror selected (${selected.size})`}
+          </Button>
+        </div>
       </div>
+
+      {notice && (
+        <p
+          className={cx(
+            "rounded-lg px-3 py-2 text-sm",
+            notice.error ? "bg-red-50 text-red-700" : "bg-emerald-50 text-emerald-700",
+          )}
+        >
+          {notice.text}{" "}
+          {!notice.error && (
+            <Link href="/listings" className="font-medium text-emerald-800 underline">
+              Open Listings →
+            </Link>
+          )}
+        </p>
+      )}
 
       <Card className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-slate-200 text-left text-xs uppercase tracking-wide text-slate-500">
+              <th className="px-4 py-3">
+                <input
+                  type="checkbox"
+                  checked={allSelected}
+                  onChange={() =>
+                    setSelected(
+                      allSelected
+                        ? new Set()
+                        : new Set(selectableVisible.map((r) => r.asin)),
+                    )
+                  }
+                  aria-label="Select all"
+                />
+              </th>
               <th className="px-4 py-3">Product</th>
-              <th className="px-4 py-3 text-right">eBay price</th>
-              <th className="px-4 py-3 text-right">Sales (30d)</th>
-              <th className="px-4 py-3 text-right">Amazon price</th>
+              <SortHeader label="eBay price" sortKey="ebayPrice" sort={sort} onSort={onSort} />
+              <SortHeader label="Sales (30d)" sortKey="sales" sort={sort} onSort={onSort} />
+              <SortHeader label="Amazon price" sortKey="amazonPrice" sort={sort} onSort={onSort} />
               <th className="px-4 py-3 text-right">eBay fees</th>
-              <th className="px-4 py-3 text-right">Profit / unit</th>
-              <th className="px-4 py-3 text-right">Margin</th>
+              <SortHeader label="Profit / unit" sortKey="profit" sort={sort} onSort={onSort} />
+              <SortHeader label="Margin" sortKey="margin" sort={sort} onSort={onSort} />
               <th className="px-4 py-3" />
             </tr>
           </thead>
           <tbody>
             {visible.map((r) => (
-              <tr key={r.asin} className="border-b border-slate-100 last:border-0">
+              <tr
+                key={r.asin}
+                className={cx(
+                  "border-b border-slate-100 last:border-0",
+                  selected.has(r.asin) && "bg-indigo-50/50",
+                )}
+              >
+                <td className="px-4 py-3">
+                  <input
+                    type="checkbox"
+                    checked={selected.has(r.asin)}
+                    onChange={() => toggle(r.asin)}
+                    disabled={r.mirrored}
+                    aria-label={`Select ${r.title}`}
+                  />
+                </td>
                 <td className="max-w-sm px-4 py-3">
                   <div className="flex items-center gap-3">
                     {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -181,11 +320,24 @@ export function ArbitrageTable({ initialRows }: { initialRows: OpportunityRow[] 
                   {formatCents(r.profitCents)}
                 </td>
                 <td className="px-4 py-3 text-right tabular-nums">{r.marginPct}%</td>
-                <td className="px-4 py-3 text-right">
+                <td className="whitespace-nowrap px-4 py-3 text-right">
                   {r.mirrored ? (
-                    <Badge tone="indigo">In your store</Badge>
+                    r.storeEbayUrl ? (
+                      <a
+                        href={r.storeEbayUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center rounded-md bg-indigo-50 px-2 py-0.5 text-xs font-medium text-indigo-700 ring-1 ring-inset ring-indigo-600/20 hover:bg-indigo-100"
+                      >
+                        My eBay listing ↗
+                      </a>
+                    ) : (
+                      <Link href="/listings">
+                        <Badge tone="indigo">Draft in store →</Badge>
+                      </Link>
+                    )
                   ) : (
-                    <Button size="sm" disabled={pending} onClick={() => mirror(r)}>
+                    <Button size="sm" disabled={pending} onClick={() => mirrorOne(r)}>
                       {busyAsin === r.asin ? "Mirroring…" : "Mirror to my store"}
                     </Button>
                   )}
@@ -194,7 +346,7 @@ export function ArbitrageTable({ initialRows }: { initialRows: OpportunityRow[] 
             ))}
             {visible.length === 0 && (
               <tr>
-                <td colSpan={8} className="px-4 py-12 text-center text-slate-500">
+                <td colSpan={9} className="px-4 py-12 text-center text-slate-500">
                   No opportunities match these filters.
                 </td>
               </tr>

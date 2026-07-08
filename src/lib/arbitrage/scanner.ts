@@ -43,6 +43,9 @@ export type OpportunityRow = {
   marginPct: number;
   feeCents: number;
   mirrored: boolean;
+  /** The user's own live eBay listing for this product, when published;
+   * null while it's still a draft (or ended without an id). */
+  storeEbayUrl: string | null;
 };
 
 /** Ceiling on one scan — keeps "load more" from growing unbounded. */
