@@ -7,7 +7,7 @@ import { Card, EmptyState, PageHeader, StatCard } from "@/components/ui";
 import { ProfitChart } from "./profit-chart";
 import { ImportOrdersButton } from "./import-orders-button";
 
-export const metadata = { title: "Profit dashboard — SellPilot" };
+export const metadata = { title: "Profit dashboard — Sellfinity" };
 
 export default async function DashboardPage() {
   const user = await requireUser();

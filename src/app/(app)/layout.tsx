@@ -17,7 +17,7 @@ export default async function AppLayout({
     <div className="flex min-h-screen">
       <aside className="fixed inset-y-0 flex w-60 flex-col border-r border-slate-200 bg-white px-4 py-5">
         <Link href="/dashboard" className="mb-6 px-3 text-lg font-semibold">
-          Sell<span className="text-indigo-600">Pilot</span>
+          Sell<span className="text-indigo-600">finity</span>
         </Link>
         <SidebarNav />
         <div className="mt-auto border-t border-slate-200 pt-4">

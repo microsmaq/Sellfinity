@@ -1,4 +1,4 @@
-// SellPilot data model.
+// Sellfinity data model.
 // SQLite for local dev; switch provider+url to Postgres for production.
 // Conventions: all money is integer cents; "enum" fields are strings with
 // allowed values defined in src/lib/types.ts; JSON payloads are serialized

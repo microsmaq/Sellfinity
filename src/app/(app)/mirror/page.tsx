@@ -3,7 +3,7 @@ import { db } from "@/lib/db";
 import { Badge, PageHeader } from "@/components/ui";
 import { MirrorForm } from "./mirror-form";
 
-export const metadata = { title: "Amazon mirroring — SellPilot" };
+export const metadata = { title: "Amazon mirroring — Sellfinity" };
 
 export default async function MirrorPage() {
   const user = await requireUser();

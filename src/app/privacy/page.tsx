@@ -1,19 +1,19 @@
 import Link from "next/link";
 
-export const metadata = { title: "Privacy policy — SellPilot" };
+export const metadata = { title: "Privacy policy — Sellfinity" };
 
 export default function PrivacyPage() {
   return (
     <main className="mx-auto max-w-2xl px-6 py-16">
       <Link href="/" className="text-lg font-semibold">
-        Sell<span className="text-indigo-600">Pilot</span>
+        Sell<span className="text-indigo-600">finity</span>
       </Link>
       <h1 className="mt-8 text-3xl font-semibold tracking-tight text-slate-900">
         Privacy policy
       </h1>
       <div className="mt-6 space-y-4 text-sm leading-6 text-slate-600">
         <p>
-          SellPilot stores the information you provide when you create an
+          Sellfinity stores the information you provide when you create an
           account (name, email, and a hashed password) and the business data
           the product needs to operate: products you import, listings you
           create, orders imported from your connected marketplaces, and
@@ -35,7 +35,7 @@ export default function PrivacyPage() {
         </p>
         <p>
           To delete your account and all associated data, contact support.
-          Questions about this policy: support@sellpilot.example.
+          Questions about this policy: support@sellfinity.example.
         </p>
         <p className="text-xs text-slate-400">Last updated July 2026.</p>
       </div>

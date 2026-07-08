@@ -1,4 +1,4 @@
-# SellPilot
+# Sellfinity
 
 One tool for eBay dropshippers and resellers: find winning products, list them,
 keep stock in sync, and know what you actually profited.
@@ -45,7 +45,7 @@ npm run db:seed     # demo account with a month of activity
 npm run dev
 ```
 
-Log in as **demo@sellpilot.dev / demo1234** (Pro plan, seeded data), or
+Log in as **demo@sellfinity.dev / demo1234** (Pro plan, seeded data), or
 register a fresh account and walk the flow: connect eBay in Settings (sandbox)
 → import from Sourcing → generate drafts → publish → run sync → import orders.
 

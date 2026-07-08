@@ -20,8 +20,8 @@ import {
 } from "./oauth";
 
 const MARKETPLACE = "EBAY_US";
-const LOCATION_KEY = "sellpilot-primary";
-const POLICY_PREFIX = "SellPilot default";
+const LOCATION_KEY = "sellfinity-primary";
+const POLICY_PREFIX = "Sellfinity default";
 
 export class RealEbayClient implements EbayClient {
   private policiesPromise?: Promise<{
@@ -89,7 +89,7 @@ export class RealEbayClient implements EbayClient {
             country: "US",
           },
         },
-        name: "SellPilot primary location",
+        name: "Sellfinity primary location",
         merchantLocationStatus: "ENABLED",
         locationTypes: ["WAREHOUSE"],
       }),

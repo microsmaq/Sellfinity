@@ -13,7 +13,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "SellPilot — eBay reselling on autopilot",
+  title: "Sellfinity — eBay reselling on autopilot",
   description:
     "Source winning products, auto-list to eBay, keep inventory in sync, and track real profit.",
 };

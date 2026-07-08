@@ -3,7 +3,7 @@ import { getCurrentUser } from "@/lib/auth";
 import { login } from "@/lib/actions/auth";
 import { AuthForm } from "../auth-form";
 
-export const metadata = { title: "Log in — SellPilot" };
+export const metadata = { title: "Log in — Sellfinity" };
 
 export default async function LoginPage() {
   if (await getCurrentUser()) redirect("/dashboard");
@@ -21,7 +21,7 @@ export default async function LoginPage() {
           autoComplete: "current-password",
         },
       ]}
-      footer={{ text: "New to SellPilot?", linkText: "Create an account", href: "/register" }}
+      footer={{ text: "New to Sellfinity?", linkText: "Create an account", href: "/register" }}
     />
   );
 }

@@ -3,7 +3,7 @@ import { getCurrentUser } from "@/lib/auth";
 import { register } from "@/lib/actions/auth";
 import { AuthForm } from "../auth-form";
 
-export const metadata = { title: "Sign up — SellPilot" };
+export const metadata = { title: "Sign up — Sellfinity" };
 
 export default async function RegisterPage() {
   if (await getCurrentUser()) redirect("/dashboard");

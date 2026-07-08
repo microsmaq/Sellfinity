@@ -5,7 +5,7 @@ import { parseImageUrls } from "@/lib/types";
 import { PageHeader, Badge } from "@/components/ui";
 import { ListingsView, type ListingRow, type UnlistedRow } from "./listings-view";
 
-export const metadata = { title: "Listings — SellPilot" };
+export const metadata = { title: "Listings — Sellfinity" };
 
 export default async function ListingsPage() {
   const user = await requireUser();

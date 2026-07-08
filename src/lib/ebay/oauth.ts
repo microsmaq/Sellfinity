@@ -14,7 +14,7 @@ export type EbayEnvConfig = {
   apiHost: string;
 };
 
-/** The seller permissions SellPilot needs. */
+/** The seller permissions Sellfinity needs. */
 export const EBAY_SCOPES = [
   "https://api.ebay.com/oauth/api_scope/sell.inventory",
   "https://api.ebay.com/oauth/api_scope/sell.account",

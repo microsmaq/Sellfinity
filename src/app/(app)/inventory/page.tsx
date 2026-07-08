@@ -5,7 +5,7 @@ import { parseSyncIssueDetails } from "@/lib/types";
 import { PageHeader } from "@/components/ui";
 import { InventoryView, type IssueRow, type RunRow } from "./inventory-view";
 
-export const metadata = { title: "Inventory sync — SellPilot" };
+export const metadata = { title: "Inventory sync — Sellfinity" };
 
 export default async function InventoryPage() {
   const user = await requireUser();

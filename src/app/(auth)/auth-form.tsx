@@ -31,7 +31,7 @@ export function AuthForm({
     <main className="flex flex-1 items-center justify-center px-6 py-16">
       <div className="w-full max-w-sm">
         <Link href="/" className="mb-8 block text-center text-xl font-semibold">
-          Sell<span className="text-indigo-600">Pilot</span>
+          Sell<span className="text-indigo-600">finity</span>
         </Link>
         <Card className="p-6">
           <h1 className="mb-5 text-lg font-semibold text-slate-900">{title}</h1>

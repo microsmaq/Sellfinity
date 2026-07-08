@@ -7,7 +7,7 @@ import bcrypt from "bcryptjs";
 import { db } from "./db";
 import type { User } from "@prisma/client";
 
-const SESSION_COOKIE = "sellpilot_session";
+const SESSION_COOKIE = "sellfinity_session";
 const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 
 export function hashPassword(password: string): Promise<string> {

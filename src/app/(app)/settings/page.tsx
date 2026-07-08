@@ -5,7 +5,7 @@ import { planFor } from "@/lib/plans";
 import { Badge, Card, PageHeader } from "@/components/ui";
 import { EbayConnectionCard } from "./ebay-connection";
 
-export const metadata = { title: "Settings — SellPilot" };
+export const metadata = { title: "Settings — Sellfinity" };
 
 const CALLBACK_MESSAGES: Record<string, { text: string; error: boolean }> = {
   connected: { text: "eBay account connected.", error: false },

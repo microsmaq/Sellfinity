@@ -4,7 +4,7 @@ import { PLAN_DEFS } from "@/lib/plans";
 import { PageHeader } from "@/components/ui";
 import { PlanCards } from "./plan-cards";
 
-export const metadata = { title: "Billing — SellPilot" };
+export const metadata = { title: "Billing — Sellfinity" };
 
 export default async function BillingPage() {
   const user = await requireUser();

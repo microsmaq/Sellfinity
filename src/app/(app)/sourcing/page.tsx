@@ -5,7 +5,7 @@ import { scoreAndRank } from "@/lib/sourcing/scoring";
 import { PageHeader } from "@/components/ui";
 import { SourcingTable, type CandidateRow } from "./sourcing-table";
 
-export const metadata = { title: "Product sourcing — SellPilot" };
+export const metadata = { title: "Product sourcing — Sellfinity" };
 
 export default async function SourcingPage() {
   const user = await requireUser();

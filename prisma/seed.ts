@@ -1,5 +1,5 @@
 // Seeds a demo account with a realistic month of selling activity:
-//   email: demo@sellpilot.dev  password: demo1234
+//   email: demo@sellfinity.dev  password: demo1234
 // Orders and sync history are produced by the same pipeline the app uses
 // (sandbox eBay client + mock supplier), not hand-inserted rows.
 
@@ -16,7 +16,7 @@ import { serializeImageUrls } from "../src/lib/types";
 const DAY_MS = 86_400_000;
 
 async function main() {
-  const email = "demo@sellpilot.dev";
+  const email = "demo@sellfinity.dev";
   const existing = await db.user.findUnique({ where: { email } });
   if (existing) {
     console.log("Demo user already exists — deleting and reseeding.");
@@ -136,7 +136,7 @@ async function main() {
       `${imported} orders, sync found ${summary.issuesFound} issue(s) ` +
       `(${summary.issuesAutoFixed} auto-fixed).`,
   );
-  console.log("Login: demo@sellpilot.dev / demo1234");
+  console.log("Login: demo@sellfinity.dev / demo1234");
 }
 
 main()
