@@ -12,7 +12,12 @@ import {
   type ListingUpdate,
   type RemoteOrder,
 } from "./client";
-import { ebayEnvConfig, freshAccessToken, type EbayEnvConfig } from "./oauth";
+import {
+  appAccessToken,
+  ebayEnvConfig,
+  freshAccessToken,
+  type EbayEnvConfig,
+} from "./oauth";
 
 const MARKETPLACE = "EBAY_US";
 const LOCATION_KEY = "sellpilot-primary";
@@ -34,8 +39,13 @@ export class RealEbayClient implements EbayClient {
     method: string,
     path: string,
     body?: unknown,
+    // Taxonomy and other app-level APIs reject user tokens.
+    auth: "user" | "app" = "user",
   ): Promise<T> {
-    const token = await freshAccessToken(this.config, this.userId);
+    const token =
+      auth === "app"
+        ? await appAccessToken(this.config)
+        : await freshAccessToken(this.config, this.userId);
     const res = await fetch(`${this.config.apiHost}${path}`, {
       method,
       headers: {
@@ -43,6 +53,7 @@ export class RealEbayClient implements EbayClient {
         "Content-Type": "application/json",
         "Content-Language": "en-US",
         Accept: "application/json",
+        "Accept-Language": "en-US",
       },
       body: body === undefined ? undefined : JSON.stringify(body),
     });
@@ -62,7 +73,7 @@ export class RealEbayClient implements EbayClient {
     try {
       await fn();
     } catch (e) {
-      if (e instanceof EbayApiError && /already exists|25801|2004/.test(e.message)) return;
+      if (e instanceof EbayApiError && /already|\b25801\b/i.test(e.message)) return;
       throw e;
     }
   }
@@ -87,6 +98,21 @@ export class RealEbayClient implements EbayClient {
 
   private ensurePolicies() {
     this.policiesPromise ??= (async () => {
+      // Sellers (sandbox test users especially) may not be enrolled in
+      // business policies yet — error 20403 on any policy call. Re-opting-in
+      // returns an unhelpful 409, so check enrollment first.
+      const enrolled = await this.request<{ programs?: { programType: string }[] }>(
+        "GET",
+        "/sell/account/v1/program/get_opted_in_programs",
+      );
+      if (
+        !enrolled.programs?.some((p) => p.programType === "SELLING_POLICY_MANAGEMENT")
+      ) {
+        await this.request("POST", "/sell/account/v1/program/opt_in", {
+          programType: "SELLING_POLICY_MANAGEMENT",
+        });
+      }
+
       const q = `marketplace_id=${MARKETPLACE}`;
 
       const [fulfillment, payment, returns] = await Promise.all([
@@ -113,7 +139,12 @@ export class RealEbayClient implements EbayClient {
                 optionType: "DOMESTIC",
                 shippingServices: [
                   {
-                    shippingServiceCode: "USPSGroundAdvantage",
+                    // Trading-API-style code ("USPSPriority", not
+                    // "USPSPriorityMail") — the Account API validates against
+                    // that enum, and sandbox rejects newer codes like
+                    // USPSGroundAdvantage.
+                    shippingCarrierCode: "USPS",
+                    shippingServiceCode: "USPSPriority",
                     freeShipping: true,
                   },
                 ],
@@ -167,10 +198,38 @@ export class RealEbayClient implements EbayClient {
     }>(
       "GET",
       `/commerce/taxonomy/v1/category_tree/0/get_category_suggestions?q=${encodeURIComponent(title)}`,
+      undefined,
+      "app",
     );
     const id = res.categorySuggestions?.[0]?.category.categoryId;
     if (!id) throw new EbayApiError(`eBay could not suggest a category for "${title}"`);
     return id;
+  }
+
+  /**
+   * Required item specifics for a category, filled with the standard
+   * defaults sellers use when the data isn't known ("Unbranded" brand,
+   * "Does Not Apply" for the rest).
+   */
+  private async requiredAspects(categoryId: string): Promise<Record<string, string[]>> {
+    const res = await this.request<{
+      aspects?: {
+        localizedAspectName: string;
+        aspectConstraint?: { aspectRequired?: boolean };
+      }[];
+    }>(
+      "GET",
+      `/commerce/taxonomy/v1/category_tree/0/get_item_aspects_for_category?category_id=${categoryId}`,
+      undefined,
+      "app",
+    );
+    const aspects: Record<string, string[]> = {};
+    for (const aspect of res.aspects ?? []) {
+      if (!aspect.aspectConstraint?.aspectRequired) continue;
+      const name = aspect.localizedAspectName;
+      aspects[name] = [name.toLowerCase() === "brand" ? "Unbranded" : "Does Not Apply"];
+    }
+    return aspects;
   }
 
   async createListing(input: CreateListingInput): Promise<{ ebayListingId: string }> {
@@ -179,12 +238,14 @@ export class RealEbayClient implements EbayClient {
       this.ensurePolicies(),
       this.suggestCategoryId(input.title),
     ]);
+    const aspects = await this.requiredAspects(categoryId);
 
     await this.request("PUT", `/sell/inventory/v1/inventory_item/${encodeURIComponent(input.sku)}`, {
       product: {
         title: input.title,
         description: input.description,
         imageUrls: input.imageUrls.slice(0, 12),
+        aspects,
       },
       condition: "NEW",
       availability: { shipToLocationAvailability: { quantity: input.quantity } },

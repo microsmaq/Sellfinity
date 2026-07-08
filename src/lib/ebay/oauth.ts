@@ -128,6 +128,28 @@ export async function completeConnection(
   });
 }
 
+// Application (client-credentials) token for app-level APIs like Taxonomy,
+// which reject user tokens. Cached in memory until expiry.
+let cachedAppToken: { token: string; expiresAt: number } | null = null;
+
+export async function appAccessToken(config: EbayEnvConfig): Promise<string> {
+  if (cachedAppToken && Date.now() < cachedAppToken.expiresAt) {
+    return cachedAppToken.token;
+  }
+  const token = await tokenRequest(
+    config,
+    new URLSearchParams({
+      grant_type: "client_credentials",
+      scope: "https://api.ebay.com/oauth/api_scope",
+    }),
+  );
+  cachedAppToken = {
+    token: token.access_token,
+    expiresAt: Date.now() + (token.expires_in - 60) * 1000,
+  };
+  return token.access_token;
+}
+
 /** Valid access token for a connected user, refreshing via the stored
  * refresh token when expired. */
 export async function freshAccessToken(
