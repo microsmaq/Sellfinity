@@ -44,3 +44,4 @@ prisma/test.db
 prisma/dev.db
 prisma/*.db-journal
 .claude/settings.local.json
+certificates/

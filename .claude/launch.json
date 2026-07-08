@@ -4,9 +4,14 @@
     {
       "name": "sellpilot-dev",
       "runtimeExecutable": "/Users/NewUser/.local/node/bin/npm",
-      "runtimeArgs": ["run", "dev"],
+      "runtimeArgs": [
+        "run",
+        "dev:https"
+      ],
       "port": 3000,
-      "env": { "PATH": "/Users/NewUser/.local/node/bin:/usr/bin:/bin:/usr/sbin:/sbin" }
+      "env": {
+        "PATH": "/Users/NewUser/.local/node/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+      }
     }
   ]
 }
