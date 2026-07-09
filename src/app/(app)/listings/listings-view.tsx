@@ -110,14 +110,10 @@ function EditCell({
 export function ListingsView({
   unlisted,
   listings,
-  activeCount,
-  maxActive,
   ebayConnected,
 }: {
   unlisted: UnlistedRow[];
   listings: ListingRow[];
-  activeCount: number;
-  maxActive: number | null;
   ebayConnected: boolean;
 }) {
   const [tab, setTab] = useState<Tab>("unlisted");
@@ -242,17 +238,6 @@ export function ListingsView({
         </div>
         {bulkActions}
       </div>
-
-      {maxActive !== null && (
-        <p className="text-xs text-slate-500">
-          {activeCount} of {maxActive} active listing slots used on your plan.{" "}
-          {activeCount >= maxActive && (
-            <Link href="/billing" className="font-medium text-indigo-600">
-              Upgrade for more →
-            </Link>
-          )}
-        </p>
-      )}
 
       {notice && (
         <p

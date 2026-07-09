@@ -1,8 +1,5 @@
 // String-enum values for SQLite-backed "enum" columns, plus JSON mappers.
 
-export const PLANS = ["FREE", "PRO", "SCALE"] as const;
-export type Plan = (typeof PLANS)[number];
-
 export const LISTING_STATUSES = ["DRAFT", "ACTIVE", "ENDED"] as const;
 export type ListingStatus = (typeof LISTING_STATUSES)[number];
 

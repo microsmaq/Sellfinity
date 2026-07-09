@@ -1,6 +1,5 @@
 import { requireUser } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { planFor } from "@/lib/plans";
 import { parseImageUrls } from "@/lib/types";
 import { PageHeader, Badge } from "@/components/ui";
 import { ListingsView, type ListingRow, type UnlistedRow } from "./listings-view";
@@ -49,8 +48,6 @@ export default async function ListingsPage() {
     publishedAt: l.publishedAt?.toISOString() ?? null,
   }));
 
-  const plan = planFor(user.plan);
-  const activeCount = rows.filter((r) => r.status === "ACTIVE").length;
   const ebayConnected = !!connection && connection.status !== "DISCONNECTED";
 
   return (
@@ -69,8 +66,6 @@ export default async function ListingsPage() {
       <ListingsView
         unlisted={unlisted}
         listings={rows}
-        activeCount={activeCount}
-        maxActive={plan.maxActiveListings === Infinity ? null : plan.maxActiveListings}
         ebayConnected={ebayConnected}
       />
     </>

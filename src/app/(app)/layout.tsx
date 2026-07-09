@@ -1,8 +1,6 @@
 import Link from "next/link";
 import { requireUser } from "@/lib/auth";
 import { logout } from "@/lib/actions/auth";
-import { planFor } from "@/lib/plans";
-import { Badge } from "@/components/ui";
 import { SidebarNav } from "./nav";
 
 export default async function AppLayout({
@@ -11,7 +9,6 @@ export default async function AppLayout({
   children: React.ReactNode;
 }) {
   const user = await requireUser();
-  const plan = planFor(user.plan);
 
   return (
     <div className="flex min-h-screen">
@@ -21,14 +18,11 @@ export default async function AppLayout({
         </Link>
         <SidebarNav />
         <div className="mt-auto border-t border-slate-200 pt-4">
-          <div className="flex items-center justify-between px-3">
-            <div className="min-w-0">
-              <p className="truncate text-sm font-medium text-slate-900">
-                {user.name}
-              </p>
-              <p className="truncate text-xs text-slate-500">{user.email}</p>
-            </div>
-            <Badge tone={plan.id === "FREE" ? "slate" : "indigo"}>{plan.name}</Badge>
+          <div className="min-w-0 px-3">
+            <p className="truncate text-sm font-medium text-slate-900">
+              {user.name}
+            </p>
+            <p className="truncate text-xs text-slate-500">{user.email}</p>
           </div>
           <form action={logout} className="mt-3 px-3">
             <button

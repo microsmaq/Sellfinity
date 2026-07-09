@@ -17,7 +17,7 @@ export async function runSyncNow(): Promise<SyncSummary | { error: string }> {
   if (!connection || connection.status === "DISCONNECTED") {
     return { error: "Connect your eBay account in Settings before syncing." };
   }
-  const summary = await runSync({ id: user.id, plan: user.plan });
+  const summary = await runSync(user.id);
   revalidate();
   return summary;
 }

@@ -28,8 +28,6 @@ async function main() {
       email,
       name: "Demo Seller",
       passwordHash: await bcrypt.hash("demo1234", 10),
-      plan: "PRO",
-      planRenewsAt: new Date(Date.now() + 21 * DAY_MS),
     },
   });
 
@@ -129,7 +127,7 @@ async function main() {
   const { imported } = await importOrders(user.id);
 
   // One sync run so the inventory page has history (PRO plan → auto-fixes).
-  const summary = await runSync({ id: user.id, plan: user.plan });
+  const summary = await runSync(user.id);
 
   console.log(
     `Seeded demo account: ${picked.length} sourced + ${mirrored} mirrored products, ` +

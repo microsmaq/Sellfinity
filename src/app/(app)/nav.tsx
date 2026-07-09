@@ -11,7 +11,6 @@ const links = [
   { href: "/sourcing", label: "Product sourcing", icon: "🔍" },
   { href: "/listings", label: "Listings", icon: "🏷️" },
   { href: "/inventory", label: "Inventory sync", icon: "🔄" },
-  { href: "/billing", label: "Billing", icon: "💳" },
   { href: "/settings", label: "Settings", icon: "⚙️" },
 ];
 

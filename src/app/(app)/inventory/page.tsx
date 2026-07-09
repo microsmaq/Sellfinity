@@ -1,6 +1,5 @@
 import { requireUser } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { planFor } from "@/lib/plans";
 import { parseSyncIssueDetails } from "@/lib/types";
 import { PageHeader } from "@/components/ui";
 import { InventoryView, type IssueRow, type RunRow } from "./inventory-view";
@@ -53,13 +52,11 @@ export default async function InventoryPage() {
     issuesAutoFixed: r.issuesAutoFixed,
   }));
 
-  const plan = planFor(user.plan);
-
   return (
     <>
       <PageHeader
         title="Inventory sync"
-        subtitle={`Checks every active listing against live supplier stock and cost. ${plan.autoFix ? "Auto-fix is on: mismatches are corrected on eBay automatically." : "Your plan flags mismatches for manual review — upgrade for auto-fix."}`}
+        subtitle="Checks every active listing against live supplier stock and cost. Risky mismatches are corrected on eBay automatically; restock opportunities are flagged for your review."
       />
       <InventoryView
         openIssues={openIssues.map(toRow)}

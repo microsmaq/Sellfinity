@@ -44,13 +44,12 @@ class RecordingEbay implements EbayClient {
   }
 }
 
-async function createUserWithActiveListing(plan: string) {
+async function createUserWithActiveListing() {
   const user = await db.user.create({
     data: {
       email: `t-${Date.now()}-${Math.random()}@test.dev`,
       passwordHash: "x",
       name: "Test",
-      plan,
     },
   });
   const product = await db.product.create({
@@ -107,32 +106,10 @@ beforeEach(async () => {
 });
 
 describe("runSync", () => {
-  it("flags issues as OPEN without touching the listing on the FREE plan", async () => {
-    const { user, listing } = await createUserWithActiveListing("FREE");
+  it("auto-fixes risky issues: revises eBay and mirrors the DB", async () => {
+    const { user, listing } = await createUserWithActiveListing();
     const ebay = new RecordingEbay();
-    const summary = await runSync(user, {
-      provider: new FakeProvider({ stock: 0, costCents: 600 }),
-      ebay,
-    });
-
-    expect(summary.listingsChecked).toBe(1);
-    expect(summary.issuesFound).toBe(1);
-    expect(summary.issuesAutoFixed).toBe(0);
-    expect(ebay.updates).toEqual([]);
-
-    const issues = await db.syncIssue.findMany({ where: { userId: user.id } });
-    expect(issues).toHaveLength(1);
-    expect(issues[0].type).toBe("OUT_OF_STOCK");
-    expect(issues[0].resolution).toBe("OPEN");
-
-    const unchanged = await db.listing.findUniqueOrThrow({ where: { id: listing.id } });
-    expect(unchanged.quantity).toBe(5);
-  });
-
-  it("auto-fixes on the PRO plan: revises eBay and mirrors the DB", async () => {
-    const { user, listing } = await createUserWithActiveListing("PRO");
-    const ebay = new RecordingEbay();
-    const summary = await runSync(user, {
+    const summary = await runSync(user.id, {
       provider: new FakeProvider({ stock: 0, costCents: 600 }),
       ebay,
     });
@@ -149,10 +126,10 @@ describe("runSync", () => {
     expect(issues[0].resolution).toBe("AUTO_FIXED");
   });
 
-  it("ends the listing when the supplier is gone (auto-fix plan)", async () => {
-    const { user, listing } = await createUserWithActiveListing("PRO");
+  it("ends the listing when the supplier is gone", async () => {
+    const { user, listing } = await createUserWithActiveListing();
     const ebay = new RecordingEbay();
-    await runSync(user, { provider: new FakeProvider(null), ebay });
+    await runSync(user.id, { provider: new FakeProvider(null), ebay });
 
     expect(ebay.ended).toEqual(["110555000111"]);
     const updated = await db.listing.findUniqueOrThrow({ where: { id: listing.id } });
@@ -160,14 +137,15 @@ describe("runSync", () => {
   });
 
   it("does not pile up duplicate OPEN issues across repeated runs", async () => {
-    const { user } = await createUserWithActiveListing("FREE");
+    const { user, listing } = await createUserWithActiveListing();
+    await db.listing.update({ where: { id: listing.id }, data: { quantity: 2 } });
     const deps = {
-      provider: new FakeProvider({ stock: 0, costCents: 600 }),
+      provider: new FakeProvider({ stock: 100, costCents: 600 }),
       ebay: new RecordingEbay(),
     };
-    await runSync(user, deps);
-    await runSync(user, deps);
-    await runSync(user, deps);
+    await runSync(user.id, deps);
+    await runSync(user.id, deps);
+    await runSync(user.id, deps);
 
     const open = await db.syncIssue.findMany({
       where: { userId: user.id, resolution: "OPEN" },
@@ -176,12 +154,14 @@ describe("runSync", () => {
   });
 
   it("closes OPEN issues that no longer apply", async () => {
-    const { user } = await createUserWithActiveListing("FREE");
+    const { user, listing } = await createUserWithActiveListing();
+    await db.listing.update({ where: { id: listing.id }, data: { quantity: 2 } });
     const ebay = new RecordingEbay();
-    await runSync(user, { provider: new FakeProvider({ stock: 0, costCents: 600 }), ebay });
-    // Supplier restocks to exactly the listed quantity — nothing wrong anymore.
-    const summary = await runSync(user, {
-      provider: new FakeProvider({ stock: 100, costCents: 600 }),
+    // Restock opportunity (flag-only) files an OPEN issue…
+    await runSync(user.id, { provider: new FakeProvider({ stock: 100, costCents: 600 }), ebay });
+    // …then supplier stock drops to exactly the listed quantity — nothing wrong anymore.
+    const summary = await runSync(user.id, {
+      provider: new FakeProvider({ stock: 2, costCents: 600 }),
       ebay,
     });
 
@@ -197,8 +177,8 @@ describe("runSync", () => {
   });
 
   it("refreshes the product supplier snapshot", async () => {
-    const { user, product } = await createUserWithActiveListing("FREE");
-    await runSync(user, {
+    const { user, product } = await createUserWithActiveListing();
+    await runSync(user.id, {
       provider: new FakeProvider({ stock: 42, costCents: 777 }),
       ebay: new RecordingEbay(),
     });
@@ -209,11 +189,11 @@ describe("runSync", () => {
 });
 
 describe("runSync — review-fix behaviors", () => {
-  it("does not auto-fix a restock opportunity, even on auto-fix plans", async () => {
-    const { user, listing } = await createUserWithActiveListing("PRO");
+  it("does not auto-fix a restock opportunity", async () => {
+    const { user, listing } = await createUserWithActiveListing();
     await db.listing.update({ where: { id: listing.id }, data: { quantity: 2 } });
     const ebay = new RecordingEbay();
-    const summary = await runSync(user, {
+    const summary = await runSync(user.id, {
       provider: new FakeProvider({ stock: 100, costCents: 600 }),
       ebay,
     });
@@ -229,12 +209,14 @@ describe("runSync — review-fix behaviors", () => {
   });
 
   it("respects an ignore while the condition persists, and re-flags after it clears and recurs", async () => {
-    const { user } = await createUserWithActiveListing("FREE");
+    const { user, listing } = await createUserWithActiveListing();
+    await db.listing.update({ where: { id: listing.id }, data: { quantity: 2 } });
     const ebay = new RecordingEbay();
-    const outOfStock = { provider: new FakeProvider({ stock: 0, costCents: 600 }), ebay };
-    const healthy = { provider: new FakeProvider({ stock: 100, costCents: 600 }), ebay };
+    // Restock drift is flag-only, so it produces a persistent OPEN issue.
+    const restock = { provider: new FakeProvider({ stock: 100, costCents: 600 }), ebay };
+    const settled = { provider: new FakeProvider({ stock: 2, costCents: 600 }), ebay };
 
-    await runSync(user, outOfStock);
+    await runSync(user.id, restock);
     const issue = await db.syncIssue.findFirstOrThrow({
       where: { userId: user.id, resolution: "OPEN" },
     });
@@ -243,16 +225,16 @@ describe("runSync — review-fix behaviors", () => {
       data: { resolution: "IGNORED", resolvedAt: new Date() },
     });
 
-    // Still out of stock: the ignore holds — nothing new is filed.
-    const second = await runSync(user, outOfStock);
+    // Condition persists: the ignore holds — nothing new is filed.
+    const second = await runSync(user.id, restock);
     expect(second.issuesFound).toBe(0);
     expect(
       await db.syncIssue.count({ where: { userId: user.id, resolution: "OPEN" } }),
     ).toBe(0);
 
     // Condition clears (the ignore expires), then recurs: flagged again.
-    await runSync(user, healthy);
-    const fourth = await runSync(user, outOfStock);
+    await runSync(user.id, settled);
+    const fourth = await runSync(user.id, restock);
     expect(fourth.issuesFound).toBe(1);
     expect(
       await db.syncIssue.count({ where: { userId: user.id, resolution: "OPEN" } }),
@@ -264,7 +246,7 @@ describe("mirrorUrl", () => {
   const scraper = new MockAmazonScraper(() => 20000);
 
   it("creates a product and an eBay-ready draft from an Amazon URL", async () => {
-    const { user } = await createUserWithActiveListing("FREE");
+    const { user } = await createUserWithActiveListing();
     const outcome = await mirrorUrl(
       user.id,
       "https://www.amazon.com/Some-Product/dp/B0ABCD1234/ref=sr_1_1",
@@ -287,7 +269,7 @@ describe("mirrorUrl", () => {
   });
 
   it("rejects a duplicate ASIN for the same user", async () => {
-    const { user } = await createUserWithActiveListing("FREE");
+    const { user } = await createUserWithActiveListing();
     await mirrorUrl(user.id, "https://www.amazon.com/dp/B0ABCD1234", scraper);
     const dup = await mirrorUrl(
       user.id,
@@ -299,7 +281,7 @@ describe("mirrorUrl", () => {
   });
 
   it("prices against a known eBay comp when one is supplied", async () => {
-    const { user } = await createUserWithActiveListing("FREE");
+    const { user } = await createUserWithActiveListing();
     const outcome = await mirrorUrl(
       user.id,
       "https://www.amazon.com/dp/B0ABCD1234",
@@ -317,7 +299,7 @@ describe("mirrorUrl", () => {
   });
 
   it("fails cleanly on a non-product URL", async () => {
-    const { user } = await createUserWithActiveListing("FREE");
+    const { user } = await createUserWithActiveListing();
     const outcome = await mirrorUrl(user.id, "https://example.com/dp/nope", scraper);
     expect(outcome.ok).toBe(false);
     expect(await db.product.count({ where: { userId: user.id, sku: "NOPE" } })).toBe(0);
@@ -326,29 +308,34 @@ describe("mirrorUrl", () => {
 
 describe("fixIssue", () => {
   it("applies the fix for an OPEN issue and marks it FIXED", async () => {
-    const { user, listing } = await createUserWithActiveListing("FREE");
+    const { user, listing } = await createUserWithActiveListing();
+    await db.listing.update({ where: { id: listing.id }, data: { quantity: 2 } });
     const ebay = new RecordingEbay();
-    const deps = { provider: new FakeProvider({ stock: 0, costCents: 600 }), ebay };
-    await runSync(user, deps);
+    const deps = { provider: new FakeProvider({ stock: 100, costCents: 600 }), ebay };
+    await runSync(user.id, deps);
     const issue = await db.syncIssue.findFirstOrThrow({
       where: { userId: user.id, resolution: "OPEN" },
     });
 
     const error = await fixIssue(user.id, issue.id, deps);
     expect(error).toBeNull();
-    expect(ebay.updates).toEqual([{ id: "110555000111", update: { quantity: 0 } }]);
+    expect(ebay.updates).toEqual([{ id: "110555000111", update: { quantity: 5 } }]);
     const updated = await db.listing.findUniqueOrThrow({ where: { id: listing.id } });
-    expect(updated.quantity).toBe(0);
+    expect(updated.quantity).toBe(5);
     const resolved = await db.syncIssue.findUniqueOrThrow({ where: { id: issue.id } });
     expect(resolved.resolution).toBe("FIXED");
   });
 
   it("ends the listing when the condition morphed into supplier-gone", async () => {
-    const { user, listing } = await createUserWithActiveListing("FREE");
+    const { user, listing } = await createUserWithActiveListing();
+    await db.listing.update({ where: { id: listing.id }, data: { quantity: 2 } });
     const ebay = new RecordingEbay();
-    await runSync(user, { provider: new FakeProvider({ stock: 0, costCents: 600 }), ebay });
+    await runSync(user.id, {
+      provider: new FakeProvider({ stock: 100, costCents: 600 }),
+      ebay,
+    });
     const issue = await db.syncIssue.findFirstOrThrow({
-      where: { userId: user.id, resolution: "OPEN", type: "OUT_OF_STOCK" },
+      where: { userId: user.id, resolution: "OPEN", type: "STOCK_DRIFT" },
     });
 
     // By the time the user clicks Fix, the supplier delisted the product.
@@ -363,12 +350,12 @@ describe("fixIssue", () => {
   });
 
   it("refuses cross-user access", async () => {
-    const { user } = await createUserWithActiveListing("FREE");
+    const { user } = await createUserWithActiveListing();
     const deps = {
       provider: new FakeProvider({ stock: 0, costCents: 600 }),
       ebay: new RecordingEbay(),
     };
-    await runSync(user, deps);
+    await runSync(user.id, deps);
     const issue = await db.syncIssue.findFirstOrThrow({ where: { userId: user.id } });
 
     const error = await fixIssue("someone-else", issue.id, deps);
@@ -378,7 +365,7 @@ describe("fixIssue", () => {
 
 describe("importOrders (with the sandbox eBay client)", () => {
   it("imports deterministic orders with correct fee snapshots, idempotently", async () => {
-    const { user, listing, product } = await createUserWithActiveListing("FREE");
+    const { user, listing, product } = await createUserWithActiveListing();
     const ebay = new MockEbayClient();
 
     const first = await importOrders(user.id, ebay);
@@ -407,7 +394,7 @@ describe("importOrders (with the sandbox eBay client)", () => {
   });
 
   it("decrements listing quantity as units sell, never below zero", async () => {
-    const { user, listing } = await createUserWithActiveListing("FREE");
+    const { user, listing } = await createUserWithActiveListing();
     await importOrders(user.id, new MockEbayClient());
     const updated = await db.listing.findUniqueOrThrow({ where: { id: listing.id } });
     expect(updated.quantity).toBeGreaterThanOrEqual(0);

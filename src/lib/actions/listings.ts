@@ -6,7 +6,6 @@ import { db } from "@/lib/db";
 import { getEbayClientForUser } from "@/lib/ebay";
 import { EbayApiError, validateListingInput } from "@/lib/ebay/client";
 import { generateListing } from "@/lib/listings/generate";
-import { planFor, remainingListingSlots } from "@/lib/plans";
 import { parseImageUrls } from "@/lib/types";
 
 export type BulkResult = { done: number; failed: number; error?: string };
@@ -60,7 +59,7 @@ export async function createDrafts(productIds: string[]): Promise<BulkResult> {
   return { done, failed };
 }
 
-/** Publish drafts to eBay. Enforces eBay connection and plan listing limits. */
+/** Publish drafts to eBay. Requires a connected eBay account. */
 export async function publishListings(listingIds: string[]): Promise<BulkResult> {
   const user = await requireUser();
   if (listingIds.length === 0) return { done: 0, failed: 0, error: "Nothing selected" };
@@ -74,23 +73,10 @@ export async function publishListings(listingIds: string[]): Promise<BulkResult>
     };
   }
 
-  const activeCount = await db.listing.count({
-    where: { userId: user.id, status: "ACTIVE" },
-  });
-  const slots = remainingListingSlots(user.plan, activeCount);
   const drafts = await db.listing.findMany({
     where: { id: { in: listingIds }, userId: user.id, status: "DRAFT" },
     include: { product: true },
   });
-  if (drafts.length > slots) {
-    const planName = planFor(user.plan).name;
-    return {
-      done: 0,
-      failed: drafts.length,
-      error: `Your ${planName} plan allows ${slots} more active listing${slots === 1 ? "" : "s"} (${drafts.length} selected). Upgrade in Billing to publish more.`,
-    };
-  }
-
   const client = await getEbayClientForUser(user.id);
   let done = 0;
   let failed = 0;
@@ -114,25 +100,10 @@ export async function publishListings(listingIds: string[]): Promise<BulkResult>
     }
     try {
       const { ebayListingId } = await client.createListing(input);
-      // Claim a plan slot atomically — the upfront check can race a
-      // concurrent publish, so the activation re-counts inside a transaction.
-      const claimed = await db.$transaction(async (tx) => {
-        const nowActive = await tx.listing.count({
-          where: { userId: user.id, status: "ACTIVE" },
-        });
-        if (remainingListingSlots(user.plan, nowActive) < 1) return false;
-        await tx.listing.update({
-          where: { id: draft.id },
-          data: { status: "ACTIVE", ebayListingId, publishedAt: new Date() },
-        });
-        return true;
+      await db.listing.update({
+        where: { id: draft.id },
+        data: { status: "ACTIVE", ebayListingId, publishedAt: new Date() },
       });
-      if (!claimed) {
-        await client.endListing(ebayListingId);
-        failed++;
-        firstError ??= "Plan listing limit reached. Upgrade in Billing to publish more.";
-        continue;
-      }
       done++;
     } catch (e) {
       failed++;

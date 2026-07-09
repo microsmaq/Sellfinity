@@ -3,7 +3,6 @@ import { getEbayClientForUser } from "@/lib/ebay";
 import type { EbayClient } from "@/lib/ebay/client";
 import { getSupplierProvider } from "@/lib/sourcing";
 import type { SupplierProvider } from "@/lib/sourcing/provider";
-import { planFor } from "@/lib/plans";
 import { detectIssues, type DetectedIssue } from "./detect";
 
 export type SyncDeps = {
@@ -53,24 +52,23 @@ export async function applyFix(
 
 /**
  * Check every active listing against current supplier state. Refreshes the
- * product's supplier snapshot, records a SyncRun, files issues, and — on
- * plans with auto-fix — applies the fixes immediately.
+ * product's supplier snapshot, records a SyncRun, files issues, and applies
+ * the auto-fixable ones immediately.
  */
 export async function runSync(
-  user: { id: string; plan: string },
+  userId: string,
   partialDeps?: SyncDeps,
 ): Promise<SyncSummary> {
   const deps = partialDeps ?? {
     provider: getSupplierProvider(),
-    ebay: await getEbayClientForUser(user.id),
+    ebay: await getEbayClientForUser(userId),
   };
-  const autoFix = planFor(user.plan).autoFix;
   const listings = await db.listing.findMany({
-    where: { userId: user.id, status: "ACTIVE" },
+    where: { userId, status: "ACTIVE" },
     include: { product: true },
   });
 
-  const run = await db.syncRun.create({ data: { userId: user.id } });
+  const run = await db.syncRun.create({ data: { userId } });
   let issuesFound = 0;
   let issuesAutoFixed = 0;
 
@@ -95,7 +93,7 @@ export async function runSync(
     // Close prior OPEN issues that no longer apply.
     await db.syncIssue.updateMany({
       where: {
-        userId: user.id,
+        userId,
         listingId: listing.id,
         resolution: "OPEN",
         type: { notIn: [...types] },
@@ -106,7 +104,7 @@ export async function runSync(
     // recurrence of the same issue type gets flagged again.
     await db.syncIssue.deleteMany({
       where: {
-        userId: user.id,
+        userId,
         listingId: listing.id,
         resolution: "IGNORED",
         type: { notIn: [...types] },
@@ -117,7 +115,7 @@ export async function runSync(
       // An ignore holds for as long as the condition persists — don't re-nag.
       const ignored = await db.syncIssue.findFirst({
         where: {
-          userId: user.id,
+          userId,
           listingId: listing.id,
           type: issue.type,
           resolution: "IGNORED",
@@ -128,7 +126,7 @@ export async function runSync(
       issuesFound++;
       let resolution = "OPEN";
       let resolvedAt: Date | null = null;
-      if (autoFix && issue.autoFixable) {
+      if (issue.autoFixable) {
         await applyFix(listing, issue.fix, deps.ebay);
         resolution = "AUTO_FIXED";
         resolvedAt = new Date();
@@ -136,12 +134,12 @@ export async function runSync(
       }
       // Supersede a persisting OPEN issue of the same type with the fresh one.
       await db.syncIssue.deleteMany({
-        where: { userId: user.id, listingId: listing.id, type: issue.type, resolution: "OPEN" },
+        where: { userId, listingId: listing.id, type: issue.type, resolution: "OPEN" },
       });
       await db.syncIssue.create({
         data: {
           syncRunId: run.id,
-          userId: user.id,
+          userId,
           listingId: listing.id,
           type: issue.type,
           detailsJson: JSON.stringify(issue.details),

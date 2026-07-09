@@ -26,14 +26,16 @@ keep stock in sync, and know what you actually profited.
 - **Inventory sync** (`/inventory`) — checks every active listing against live
   supplier stock/cost. Flags out-of-stock, stock drift (oversell risk and
   restock), loss-making prices after cost rises, and delisted supplier
-  products. Paid plans auto-fix; the free plan flags for manual review.
+  products. Risky mismatches are auto-fixed; restock opportunities are
+  flagged for review.
 - **Profit tracking** (`/dashboard`) — imports orders with fee/COGS snapshots
   taken at sale time; 30-day KPIs, daily net-profit chart, per-item P&L,
   recent orders.
 
-Plus: email/password auth (bcrypt + DB sessions), three billing tiers with
-enforced listing limits (checkout is stubbed), and a settings area for the
-eBay seller account connection.
+Plus: email/password auth (bcrypt + DB sessions) and a settings area for the
+eBay seller account connection. Billing is intentionally disabled for now —
+every account gets the full feature set free (the User.plan column remains in
+the schema so subscriptions can return without a migration).
 
 ## Stack
 
@@ -49,7 +51,7 @@ npm run db:seed     # demo account with a month of activity
 npm run dev
 ```
 
-Log in as **demo@sellfinity.dev / demo1234** (Pro plan, seeded data), or
+Log in as **demo@sellfinity.dev / demo1234** (seeded data), or
 register a fresh account and walk the flow: connect eBay in Settings (sandbox)
 → import from Sourcing → generate drafts → publish → run sync → import orders.
 
@@ -71,7 +73,6 @@ the whole app works offline with zero credentials:
 | Arbitrage scan | `ArbitrageScanner` (`src/lib/arbitrage/scanner.ts`) | Deterministic daily eBay-vs-Amazon pairs from the mirror sandbox catalog | eBay Browse/Marketplace Insights + Amazon product search, matched by UPC/title; swap in `src/lib/arbitrage/index.ts` |
 | Supplier/market data | `SupplierProvider` (`src/lib/sourcing/provider.ts`) | Deterministic 35-product catalog with daily stock/cost drift | CJ Dropshipping, AutoDS-style feed, or Zik-style analytics; swap in `src/lib/sourcing/index.ts` |
 | eBay Sell APIs | `EbayClient` (`src/lib/ebay/client.ts`) | Demo sandbox: validates like eBay, mints ids, fabricates deterministic orders | **Built**: `RealEbayClient` (`src/lib/ebay/real.ts`) + OAuth flow (`src/lib/ebay/oauth.ts`, `/api/ebay/connect` + `/api/ebay/callback`). Selected per user in `src/lib/ebay/index.ts` once connected. |
-| Payments | `changePlan` action (`src/lib/actions/billing.ts`) | Instant plan switch, no charge | Stripe Checkout + webhooks; needs `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` |
 
 ### Connecting a real eBay account
 
@@ -104,8 +105,6 @@ connection keep the built-in demo sandbox.
   superseded (old row deleted) each run, and issues whose condition cleared on
   its own are marked FIXED rather than a distinct "expired" state.
 - No password reset/change flow and no login rate limiting yet.
-- `planRenewsAt` is display-only until real billing lands (no renewal or
-  auto-downgrade job).
 - Order statuses SHIPPED/REFUNDED exist in the schema and P&L logic, but no
   flow sets them until the real eBay order import lands.
 - Daily chart buckets use UTC day boundaries, not the seller's timezone.

@@ -1,8 +1,7 @@
 import { requireUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { ebayEnvConfig } from "@/lib/ebay/oauth";
-import { planFor } from "@/lib/plans";
-import { Badge, Card, PageHeader } from "@/components/ui";
+import { Card, PageHeader } from "@/components/ui";
 import { EbayConnectionCard } from "./ebay-connection";
 
 export const metadata = { title: "Settings — Sellfinity" };
@@ -46,14 +45,6 @@ export default async function SettingsPage({
             <div className="flex justify-between">
               <dt className="text-slate-500">Email</dt>
               <dd className="font-medium text-slate-900">{user.email}</dd>
-            </div>
-            <div className="flex justify-between">
-              <dt className="text-slate-500">Plan</dt>
-              <dd>
-                <Badge tone={user.plan === "FREE" ? "slate" : "indigo"}>
-                  {planFor(user.plan).name}
-                </Badge>
-              </dd>
             </div>
             <div className="flex justify-between">
               <dt className="text-slate-500">Member since</dt>
