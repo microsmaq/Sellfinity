@@ -40,13 +40,14 @@ the schema so subscriptions can return without a migration).
 ## Stack
 
 Next.js (App Router, server actions) · TypeScript · Tailwind · Prisma +
-SQLite (swap the datasource to Postgres for production) · Vitest.
+Postgres (Neon) · Vitest. Tests run against a dedicated `sellfinity_test`
+database (see `TEST_DATABASE_URL`).
 
 ## Running locally
 
 ```bash
-npm install
-npm run db:push     # create/update the SQLite schema
+npm install         # needs DATABASE_URL/DIRECT_DATABASE_URL in .env (see .env.example)
+npx prisma migrate deploy
 npm run db:seed     # demo account with a month of activity
 npm run dev
 ```
@@ -56,7 +57,7 @@ register a fresh account and walk the flow: connect eBay in Settings (sandbox)
 → import from Sourcing → generate drafts → publish → run sync → import orders.
 
 ```bash
-npm test            # unit + DB integration tests (uses prisma/test.db)
+npm test            # unit + DB integration tests (uses TEST_DATABASE_URL)
 npm run typecheck
 npm run lint
 npm run build

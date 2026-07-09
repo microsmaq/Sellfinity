@@ -87,12 +87,14 @@ async function createUserWithActiveListing() {
 }
 
 beforeAll(() => {
+  // DATABASE_URL already points at the dedicated test database (see
+  // vitest.config.ts); sync its schema before the suite runs.
   execSync("npx prisma db push --skip-generate --accept-data-loss", {
     cwd: process.cwd(),
-    env: { ...process.env, DATABASE_URL: "file:./test.db" },
+    env: process.env,
     stdio: "pipe",
   });
-});
+}, 120_000);
 
 beforeEach(async () => {
   await db.syncIssue.deleteMany();

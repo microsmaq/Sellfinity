@@ -3,19 +3,13 @@
 Target setup: Vercel (app) + Neon Postgres (database) + the sellfinity.app
 domain. ~1 hour of clicking, plus eBay's production-keyset review time.
 
-## 1. Database — Neon Postgres (~10 min)
+## 1. Database — Neon Postgres — DONE (July 2026)
 
-1. Create a free project at https://neon.tech → copy the pooled connection
-   string (looks like `postgresql://user:pass@...neon.tech/neondb?sslmode=require`).
-2. In `prisma/schema.prisma`, change the datasource provider from `sqlite`
-   to `postgresql`.
-3. Create the initial migration against Neon (run locally):
-   ```bash
-   DATABASE_URL="<neon-url>" npx prisma migrate dev --name init
-   ```
-   Commit the generated `prisma/migrations/` directory.
-4. Local dev keeps working: either point local `.env` at Neon too (simplest),
-   or keep a second SQLite schema for offline work.
+The schema runs on Neon (`neondb`), the initial migration is committed in
+`prisma/migrations/`, tests use the `sellfinity_test` database, and local dev
+points at Neon via `.env`. Vercel needs both `DATABASE_URL` (the **pooled**
+`-pooler` URL) and `DIRECT_DATABASE_URL` (the direct URL, used by
+`prisma migrate deploy`).
 
 ## 2. App — Vercel (~15 min)
 
@@ -24,7 +18,7 @@ domain. ~1 hour of clicking, plus eBay's production-keyset review time.
 3. Build command: `npm run vercel-build` (runs prisma generate + migrate
    deploy + next build).
 4. Environment variables (Production):
-   - `DATABASE_URL` — the Neon string
+   - `DATABASE_URL` — Neon **pooled** URL; `DIRECT_DATABASE_URL` — direct URL
    - `EBAY_ENV` — `SANDBOX` at first; flip to `PRODUCTION` when the
      production keyset is live
    - `EBAY_CLIENT_ID`, `EBAY_CLIENT_SECRET` — matching keyset
@@ -61,7 +55,13 @@ domain. ~1 hour of clicking, plus eBay's production-keyset review time.
    redirect works normally on a real domain (the paste-URL fallback remains
    as a backup).
 
-## 5. Post-launch hardening (from README "Known limitations")
+## 5. Before announcing the site
+
+- Delete (or change the password of) the seeded **demo@sellfinity.dev**
+  account in the production database — it's public knowledge and holds the
+  connected eBay sandbox account.
+
+## 6. Post-launch hardening (from README "Known limitations")
 
 - Encrypt stored eBay tokens at rest.
 - Login rate limiting + password reset flow.
