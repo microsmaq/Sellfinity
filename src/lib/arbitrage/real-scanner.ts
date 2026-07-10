@@ -213,8 +213,16 @@ async function amazonMatch(
   return null;
 }
 
+/** Stop scanning this far before the serverless function limit so the page
+ * always renders with what it has; the next request resumes the cursor. */
+const TIME_BUDGET_MS = 22_000;
+
 export class RealArbitrageScanner implements ArbitrageScanner {
-  async findOpportunities(count: number): Promise<ArbitrageOpportunity[]> {
+  async findOpportunities(
+    count: number,
+    timeBudgetMs: number = TIME_BUDGET_MS,
+  ): Promise<ArbitrageOpportunity[]> {
+    const deadline = Date.now() + timeBudgetMs;
     const cacheKey = `arbitrage:${currentDayNumber()}`;
     const cached = await db.scanCache.findUnique({ where: { cacheKey } });
     const state: ScanState = cached
@@ -224,7 +232,21 @@ export class RealArbitrageScanner implements ArbitrageScanner {
     const seenAsins = new Set(state.seenAsins);
     const seenItemIds = new Set(state.seenItemIds);
 
-    while (state.opportunities.length < count && !state.exhausted) {
+    const save = () => {
+      state.seenAsins = [...seenAsins];
+      state.seenItemIds = [...seenItemIds];
+      return db.scanCache.upsert({
+        where: { cacheKey },
+        create: { cacheKey, dataJson: JSON.stringify(state) },
+        update: { dataJson: JSON.stringify(state) },
+      });
+    };
+
+    while (
+      state.opportunities.length < count &&
+      !state.exhausted &&
+      Date.now() < deadline
+    ) {
       if (state.pending.length === 0) {
         if (state.nextKeyword >= CATEGORY_KEYWORDS.length) {
           state.exhausted = true;
@@ -243,7 +265,9 @@ export class RealArbitrageScanner implements ArbitrageScanner {
         continue;
       }
 
-      // Examine candidates in small parallel batches (one credit each).
+      // Examine candidates in small parallel batches (one paid credit each),
+      // banking progress after every batch so an interrupted request never
+      // wastes credits.
       const batch = state.pending.splice(0, LOOKUP_BATCH);
       const matches = await Promise.all(batch.map(amazonMatch));
       for (const match of matches) {
@@ -251,16 +275,10 @@ export class RealArbitrageScanner implements ArbitrageScanner {
         seenAsins.add(match.amazon.asin);
         state.opportunities.push(match);
       }
+      await save();
     }
 
-    state.seenAsins = [...seenAsins];
-    state.seenItemIds = [...seenItemIds];
-    await db.scanCache.upsert({
-      where: { cacheKey },
-      create: { cacheKey, dataJson: JSON.stringify(state) },
-      update: { dataJson: JSON.stringify(state) },
-    });
-
+    await save();
     return [...state.opportunities]
       .sort((a, b) => b.margin.estimatedProfitCents - a.margin.estimatedProfitCents)
       .slice(0, count);
