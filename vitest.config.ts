@@ -19,7 +19,9 @@ export default defineConfig({
       // Tests are hermetic: never select the real (paid) data providers.
       RAINFOREST_API_KEY: "",
     },
-    // The integration suite shares one database — no parallel files.
+    // The integration suite shares one database — no parallel files. The
+    // database is remote (Neon), so multi-query tests need generous time.
     fileParallelism: false,
+    testTimeout: 30_000,
   },
 });

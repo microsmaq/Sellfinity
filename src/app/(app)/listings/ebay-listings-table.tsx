@@ -4,7 +4,9 @@ import { useState, useTransition } from "react";
 import {
   endEbayListing,
   matchEbayListing,
+  matchEbayListingsBatch,
   repriceEbayListing,
+  unmatchEbayListing,
 } from "@/lib/actions/ebay-listings";
 import { formatCents, parseDollarsToCents } from "@/lib/money";
 import { Badge, Button, Card, cx } from "@/components/ui";
@@ -90,6 +92,46 @@ export function EbayListingsTable({
   const [pending, startTransition] = useTransition();
   const [busyId, setBusyId] = useState<string | null>(null);
   const [notice, setNotice] = useState<{ text: string; error: boolean } | null>(null);
+  const [bulkProgress, setBulkProgress] = useState<string | null>(null);
+
+  function applyTrackResults(results: Awaited<ReturnType<typeof matchEbayListingsBatch>>) {
+    setRows((prev) =>
+      prev.map((row) => {
+        const r = results.find((x) => x.ebayListingId === row.ebayListingId);
+        return r && r.ok ? { ...row, match: r.match } : row;
+      }),
+    );
+  }
+
+  function matchAll() {
+    const unmatchedRows = rows.filter((r) => !r.match);
+    setNotice(null);
+    startTransition(async () => {
+      let matched = 0;
+      let noMatch = 0;
+      for (let i = 0; i < unmatchedRows.length; i += 10) {
+        const batch = unmatchedRows.slice(i, i + 10).map((r) => ({
+          ebayListingId: r.ebayListingId,
+          title: r.title,
+          priceCents: r.priceCents,
+          imageUrl: r.imageUrl,
+          quantity: r.quantity,
+        }));
+        const results = await matchEbayListingsBatch(batch);
+        applyTrackResults(results);
+        matched += results.filter((x) => x.ok).length;
+        noMatch += results.filter((x) => !x.ok).length;
+        setBulkProgress(
+          `Matching… ${Math.min(i + 10, unmatchedRows.length)}/${unmatchedRows.length} processed (${matched} matched, ${noMatch} no match)`,
+        );
+      }
+      setBulkProgress(null);
+      setNotice({
+        text: `Match complete: ${matched} matched, ${noMatch} without a confident Amazon match. Review the pairings — Unmatch any that look wrong.`,
+        error: false,
+      });
+    });
+  }
 
   function run(id: string, fn: () => Promise<{ error?: string }>, onOk: () => void, okText: string) {
     setNotice(null);
@@ -116,10 +158,9 @@ export function EbayListingsTable({
         <span>{rows.length} active on eBay</span>
         {problems > 0 && <Badge tone="red">{problems} need attention</Badge>}
         {unmatched > 0 && (
-          <span>
-            {unmatched} without an Amazon match — match them to see margins and
-            enable inventory sync.
-          </span>
+          <Button size="sm" disabled={pending} onClick={matchAll}>
+            {bulkProgress ?? `Match all unmatched (${unmatched})`}
+          </Button>
         )}
         {notice && (
           <span
@@ -250,28 +291,53 @@ export function EbayListingsTable({
                     )}
                   </td>
                   <td className="whitespace-nowrap px-4 py-3 text-right">
-                    {!r.match && (
+                    {!r.match ? (
                       <Button
                         size="sm"
                         variant="secondary"
                         disabled={pending}
+                        onClick={() => {
+                          setNotice(null);
+                          setBusyId(r.ebayListingId);
+                          startTransition(async () => {
+                            const result = await matchEbayListing({
+                              ebayListingId: r.ebayListingId,
+                              title: r.title,
+                              priceCents: r.priceCents,
+                              imageUrl: r.imageUrl,
+                              quantity: r.quantity,
+                            });
+                            setBusyId(null);
+                            if (result.ok) applyTrackResults([result]);
+                            else setNotice({ text: result.error, error: true });
+                          });
+                        }}
+                      >
+                        {busyId === r.ebayListingId ? "Matching…" : "Find Amazon match"}
+                      </Button>
+                    ) : (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        disabled={pending}
+                        title="Wrong product? Stop tracking this pairing"
                         onClick={() =>
                           run(
                             r.ebayListingId,
+                            () => unmatchEbayListing(r.ebayListingId),
                             () =>
-                              matchEbayListing({
-                                ebayListingId: r.ebayListingId,
-                                title: r.title,
-                                priceCents: r.priceCents,
-                                imageUrl: r.imageUrl,
-                                quantity: r.quantity,
-                              }),
-                            () => {},
-                            "Matched — reload to see the margin.",
+                              setRows((prev) =>
+                                prev.map((x) =>
+                                  x.ebayListingId === r.ebayListingId
+                                    ? { ...x, match: null }
+                                    : x,
+                                ),
+                              ),
+                            "Unmatched.",
                           )
                         }
                       >
-                        {busyId === r.ebayListingId ? "Matching…" : "Find Amazon match"}
+                        Unmatch
                       </Button>
                     )}{" "}
                     <Button

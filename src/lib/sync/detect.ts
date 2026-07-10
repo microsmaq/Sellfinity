@@ -67,7 +67,10 @@ export function detectIssues(
     }
   } else {
     const expectedQty = Math.min(LISTING_QUANTITY_CAP, state.stock);
-    if (listing.quantity !== expectedQty) {
+    // Oversell risk is always flagged; a below-cap quantity is only a
+    // "restock" suggestion when the listing is at zero (i.e. something we or
+    // the seller zeroed out) — a deliberately small quantity is not drift.
+    if (listing.quantity > expectedQty || listing.quantity === 0) {
       const oversell = listing.quantity > expectedQty;
       issues.push({
         type: "STOCK_DRIFT",

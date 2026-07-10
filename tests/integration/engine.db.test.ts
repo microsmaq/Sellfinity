@@ -143,7 +143,7 @@ describe("runSync", () => {
 
   it("does not pile up duplicate OPEN issues across repeated runs", async () => {
     const { user, listing } = await createUserWithActiveListing();
-    await db.listing.update({ where: { id: listing.id }, data: { quantity: 2 } });
+    await db.listing.update({ where: { id: listing.id }, data: { quantity: 0 } });
     const deps = {
       provider: new FakeProvider({ stock: 100, costCents: 600 }),
       ebay: new RecordingEbay(),
@@ -160,13 +160,13 @@ describe("runSync", () => {
 
   it("closes OPEN issues that no longer apply", async () => {
     const { user, listing } = await createUserWithActiveListing();
-    await db.listing.update({ where: { id: listing.id }, data: { quantity: 2 } });
+    await db.listing.update({ where: { id: listing.id }, data: { quantity: 0 } });
     const ebay = new RecordingEbay();
     // Restock opportunity (flag-only) files an OPEN issue…
     await runSync(user.id, { provider: new FakeProvider({ stock: 100, costCents: 600 }), ebay });
-    // …then supplier stock drops to exactly the listed quantity — nothing wrong anymore.
+    // …then the supplier sells out too — a zero listing is correct now.
     const summary = await runSync(user.id, {
-      provider: new FakeProvider({ stock: 2, costCents: 600 }),
+      provider: new FakeProvider({ stock: 0, costCents: 600 }),
       ebay,
     });
 
@@ -196,7 +196,7 @@ describe("runSync", () => {
 describe("runSync — review-fix behaviors", () => {
   it("does not auto-fix a restock opportunity", async () => {
     const { user, listing } = await createUserWithActiveListing();
-    await db.listing.update({ where: { id: listing.id }, data: { quantity: 2 } });
+    await db.listing.update({ where: { id: listing.id }, data: { quantity: 0 } });
     const ebay = new RecordingEbay();
     const summary = await runSync(user.id, {
       provider: new FakeProvider({ stock: 100, costCents: 600 }),
@@ -210,16 +210,16 @@ describe("runSync — review-fix behaviors", () => {
     expect(issue.type).toBe("STOCK_DRIFT");
     expect(issue.resolution).toBe("OPEN");
     const unchanged = await db.listing.findUniqueOrThrow({ where: { id: listing.id } });
-    expect(unchanged.quantity).toBe(2);
+    expect(unchanged.quantity).toBe(0);
   });
 
   it("respects an ignore while the condition persists, and re-flags after it clears and recurs", async () => {
     const { user, listing } = await createUserWithActiveListing();
-    await db.listing.update({ where: { id: listing.id }, data: { quantity: 2 } });
+    await db.listing.update({ where: { id: listing.id }, data: { quantity: 0 } });
     const ebay = new RecordingEbay();
     // Restock drift is flag-only, so it produces a persistent OPEN issue.
     const restock = { provider: new FakeProvider({ stock: 100, costCents: 600 }), ebay };
-    const settled = { provider: new FakeProvider({ stock: 2, costCents: 600 }), ebay };
+    const settled = { provider: new FakeProvider({ stock: 0, costCents: 600 }), ebay };
 
     await runSync(user.id, restock);
     const issue = await db.syncIssue.findFirstOrThrow({
@@ -314,7 +314,7 @@ describe("mirrorUrl", () => {
 describe("fixIssue", () => {
   it("applies the fix for an OPEN issue and marks it FIXED", async () => {
     const { user, listing } = await createUserWithActiveListing();
-    await db.listing.update({ where: { id: listing.id }, data: { quantity: 2 } });
+    await db.listing.update({ where: { id: listing.id }, data: { quantity: 0 } });
     const ebay = new RecordingEbay();
     const deps = { provider: new FakeProvider({ stock: 100, costCents: 600 }), ebay };
     await runSync(user.id, deps);
@@ -333,7 +333,7 @@ describe("fixIssue", () => {
 
   it("ends the listing when the condition morphed into supplier-gone", async () => {
     const { user, listing } = await createUserWithActiveListing();
-    await db.listing.update({ where: { id: listing.id }, data: { quantity: 2 } });
+    await db.listing.update({ where: { id: listing.id }, data: { quantity: 0 } });
     const ebay = new RecordingEbay();
     await runSync(user.id, {
       provider: new FakeProvider({ stock: 100, costCents: 600 }),
