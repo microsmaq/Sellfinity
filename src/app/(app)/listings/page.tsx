@@ -48,6 +48,19 @@ export default async function ListingsPage() {
     try {
       const client = await getEbayClientForUser(user.id);
       const remote = await client.getSellerListings(user.id);
+      // Self-heal: a tracked ACTIVE listing that eBay no longer reports was
+      // ended outside the app — record that. (Only for listings older than a
+      // day: eBay's list can lag freshly published items.)
+      const remoteIds = remote.map((r) => r.ebayListingId);
+      await db.listing.updateMany({
+        where: {
+          userId: user.id,
+          status: "ACTIVE",
+          ebayListingId: { not: null, notIn: remoteIds },
+          publishedAt: { lt: new Date(Date.now() - 24 * 60 * 60 * 1000) },
+        },
+        data: { status: "ENDED", endedAt: new Date() },
+      });
       ebayRows = buildEbayRows(remote, listings);
     } catch (e) {
       ebayFetchError = e instanceof Error ? e.message.slice(0, 200) : "eBay lookup failed";

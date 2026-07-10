@@ -334,10 +334,19 @@ export class RealEbayClient implements EbayClient {
       include: { product: { select: { sku: true } } },
     });
     if (!listing) return null;
-    const res = await this.request<{ offers?: { offerId: string }[] }>(
-      "GET",
-      `/sell/inventory/v1/offer?sku=${encodeURIComponent(listing.product.sku)}&marketplace_id=${MARKETPLACE}`,
-    );
+    let res: { offers?: { offerId: string }[] };
+    try {
+      res = await this.request<{ offers?: { offerId: string }[] }>(
+        "GET",
+        `/sell/inventory/v1/offer?sku=${encodeURIComponent(listing.product.sku)}&marketplace_id=${MARKETPLACE}`,
+      );
+    } catch (e) {
+      // 404 / 25713 "This Offer is not available": the listing wasn't created
+      // through the Inventory API (e.g. imported via bulk match) — signal the
+      // caller to use the Trading API instead.
+      if (e instanceof EbayApiError && /\(404\)|25713/.test(e.message)) return null;
+      throw e;
+    }
     const offerId = res.offers?.[0]?.offerId;
     if (!offerId) return null;
     return { offerId, sku: listing.product.sku };
