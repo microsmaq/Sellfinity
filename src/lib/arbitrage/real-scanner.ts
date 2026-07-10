@@ -7,7 +7,7 @@
 import { db } from "@/lib/db";
 import { estimateMargin } from "@/lib/fees";
 import { appAccessToken, ebayEnvConfig } from "@/lib/ebay/oauth";
-import { rainforestRequest } from "@/lib/mirror/rainforest";
+import { findAmazonMatch } from "@/lib/mirror/match";
 import type { ArbitrageOpportunity, ArbitrageScanner } from "./scanner";
 
 // Category keyword rotation. Each keyword yields one Browse page of
@@ -32,31 +32,7 @@ const MIN_EBAY_PRICE_CENTS = 800;
 const MAX_EBAY_PRICE_CENTS = 15000;
 /** Amazon price must be at most this fraction of the eBay price. */
 const MAX_SOURCE_RATIO = 0.85;
-const MATCH_THRESHOLD = 0.35;
 const LOOKUP_BATCH = 5;
-
-const STOPWORDS = new Set([
-  "the", "a", "an", "and", "or", "for", "with", "of", "to", "in", "on",
-  "new", "set", "pack", "pcs", "piece", "pieces", "free", "shipping",
-]);
-
-/** Significant lowercase tokens of a listing title. */
-export function titleTokens(title: string): string[] {
-  return title
-    .toLowerCase()
-    .replace(/[^a-z0-9 ]+/g, " ")
-    .split(/\s+/)
-    .filter((t) => t.length > 2 && !STOPWORDS.has(t));
-}
-
-/** Fraction of `a`'s significant tokens present in `b` (0..1). */
-export function titleSimilarity(a: string, b: string): number {
-  const ta = titleTokens(a);
-  if (ta.length === 0) return 0;
-  const tb = new Set(titleTokens(b));
-  const hits = ta.filter((t) => tb.has(t)).length;
-  return hits / ta.length;
-}
 
 /** Deterministic demand estimate (real sold-velocity needs the
  * limited-release Marketplace Insights API). */
@@ -157,60 +133,36 @@ async function browseSearch(
   return out;
 }
 
-type RainforestSearchResult = {
-  asin?: string;
-  title?: string;
-  link?: string;
-  price?: { value?: number };
-};
-
 /** Find the Amazon counterpart of an eBay candidate; null when no confident,
- * cheaper match exists. Costs one Rainforest credit. */
+ * sufficiently cheaper match exists. Costs one Rainforest credit. */
 async function amazonMatch(
   candidate: EbayCandidate,
 ): Promise<ArbitrageOpportunity | null> {
-  const searchTerm = titleTokens(candidate.title).slice(0, 7).join(" ");
-  if (!searchTerm) return null;
-  let results: RainforestSearchResult[];
-  try {
-    const data = await rainforestRequest<{
-      search_results?: RainforestSearchResult[];
-    }>({ type: "search", search_term: searchTerm });
-    results = data.search_results ?? [];
-  } catch {
-    return null; // one failed lookup shouldn't kill the scan
-  }
+  const match = await findAmazonMatch(candidate.title);
+  if (!match) return null;
+  if (match.priceCents > candidate.priceCents * MAX_SOURCE_RATIO) return null;
 
-  for (const result of results.slice(0, 5)) {
-    if (!result.asin || typeof result.price?.value !== "number") continue;
-    if (titleSimilarity(candidate.title, result.title ?? "") < MATCH_THRESHOLD) continue;
-    const amazonPriceCents = Math.round(result.price.value * 100);
-    if (amazonPriceCents <= 0) continue;
-    if (amazonPriceCents > candidate.priceCents * MAX_SOURCE_RATIO) continue;
+  const margin = estimateMargin(candidate.priceCents, match.priceCents, 0);
+  if (margin.estimatedProfitCents <= 0) return null;
 
-    const margin = estimateMargin(candidate.priceCents, amazonPriceCents, 0);
-    if (margin.estimatedProfitCents <= 0) continue;
-
-    return {
-      category: candidate.category,
-      ebay: {
-        itemId: candidate.itemId,
-        title: candidate.title,
-        priceCents: candidate.priceCents,
-        salesLast30d: estimatedSales30d(candidate.itemId, candidate.priceCents),
-        url: candidate.url,
-        imageUrl: candidate.imageUrl,
-      },
-      amazon: {
-        asin: result.asin,
-        title: result.title ?? candidate.title,
-        priceCents: amazonPriceCents,
-        url: result.link ?? `https://www.amazon.com/dp/${result.asin}`,
-      },
-      margin,
-    };
-  }
-  return null;
+  return {
+    category: candidate.category,
+    ebay: {
+      itemId: candidate.itemId,
+      title: candidate.title,
+      priceCents: candidate.priceCents,
+      salesLast30d: estimatedSales30d(candidate.itemId, candidate.priceCents),
+      url: candidate.url,
+      imageUrl: candidate.imageUrl,
+    },
+    amazon: {
+      asin: match.asin,
+      title: match.title,
+      priceCents: match.priceCents,
+      url: match.url,
+    },
+    margin,
+  };
 }
 
 /** Stop scanning this far before the serverless function limit so the page

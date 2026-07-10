@@ -10,6 +10,7 @@ import {
   validateListingInput,
   type CreateListingInput,
   type EbayClient,
+  type RemoteListing,
   type ListingUpdate,
   type RemoteOrder,
 } from "./client";
@@ -97,6 +98,21 @@ export class MockEbayClient implements EbayClient {
 
   async endListing(): Promise<void> {
     // Real client would call eBay here; sandbox accepts silently.
+  }
+
+  async getSellerListings(userId: string): Promise<RemoteListing[]> {
+    // The demo sandbox's "remote truth" is our own ACTIVE listings.
+    const listings = await db.listing.findMany({
+      where: { userId, status: "ACTIVE", ebayListingId: { not: null } },
+    });
+    return listings.map((l) => ({
+      ebayListingId: l.ebayListingId!,
+      title: l.title,
+      priceCents: l.priceCents,
+      url: `https://sandbox.ebay.com/itm/${l.ebayListingId}`,
+      imageUrl: (JSON.parse(l.imageUrlsJson) as string[])[0] ?? null,
+      quantity: l.quantity,
+    }));
   }
 
   async getOrders(userId: string, since: Date): Promise<RemoteOrder[]> {

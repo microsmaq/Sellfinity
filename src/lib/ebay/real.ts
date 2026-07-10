@@ -10,6 +10,7 @@ import {
   type CreateListingInput,
   type EbayClient,
   type ListingUpdate,
+  type RemoteListing,
   type RemoteOrder,
 } from "./client";
 import {
@@ -22,6 +23,35 @@ import {
 const MARKETPLACE = "EBAY_US";
 const LOCATION_KEY = "sellfinity-primary";
 const POLICY_PREFIX = "Sellfinity default";
+
+function xmlField(block: string, tag: string): string | null {
+  return block.match(new RegExp(`<${tag}[^>]*>([^<]*)</${tag}>`))?.[1] ?? null;
+}
+
+/** Parse one GetMyeBaySelling <Item> block into a RemoteListing. Exported
+ * for tests. */
+export function parseTradingItem(block: string): RemoteListing | null {
+  const ebayListingId = xmlField(block, "ItemID");
+  const title = xmlField(block, "Title");
+  const price = xmlField(block, "CurrentPrice") ?? xmlField(block, "BuyItNowPrice");
+  if (!ebayListingId || !title || !price) return null;
+  const quantityRaw =
+    xmlField(block, "QuantityAvailable") ?? xmlField(block, "Quantity");
+  return {
+    ebayListingId,
+    // Trading XML escapes entities; unescape the common ones.
+    title: title
+      .replace(/&amp;/g, "&")
+      .replace(/&lt;/g, "<")
+      .replace(/&gt;/g, ">")
+      .replace(/&quot;/g, '"')
+      .replace(/&apos;/g, "'"),
+    priceCents: Math.round(parseFloat(price) * 100),
+    url: xmlField(block, "ViewItemURL") ?? `https://www.ebay.com/itm/${ebayListingId}`,
+    imageUrl: xmlField(block, "GalleryURL"),
+    quantity: quantityRaw !== null ? parseInt(quantityRaw, 10) : null,
+  };
+}
 
 export class RealEbayClient implements EbayClient {
   private policiesPromise?: Promise<{
@@ -294,35 +324,82 @@ export class RealEbayClient implements EbayClient {
     return { ebayListingId: published.listingId };
   }
 
-  /** The offer behind one of our published listings (Inventory API is
-   * SKU/offer-keyed; we track eBay's listing id). */
-  private async offerIdFor(ebayListingId: string): Promise<{ offerId: string; sku: string }> {
+  /** The offer behind one of our published listings; null when the listing
+   * wasn't created through the Inventory API (imported/foreign listings). */
+  private async offerIdFor(
+    ebayListingId: string,
+  ): Promise<{ offerId: string; sku: string } | null> {
     const listing = await db.listing.findFirst({
       where: { userId: this.userId, ebayListingId },
       include: { product: { select: { sku: true } } },
     });
-    if (!listing) throw new EbayApiError(`No local listing for eBay id ${ebayListingId}`);
+    if (!listing) return null;
     const res = await this.request<{ offers?: { offerId: string }[] }>(
       "GET",
       `/sell/inventory/v1/offer?sku=${encodeURIComponent(listing.product.sku)}&marketplace_id=${MARKETPLACE}`,
     );
     const offerId = res.offers?.[0]?.offerId;
-    if (!offerId) throw new EbayApiError(`No eBay offer found for SKU ${listing.product.sku}`);
+    if (!offerId) return null;
     return { offerId, sku: listing.product.sku };
   }
 
+  /** Trading API call (XML) — used for the seller's full listing inventory
+   * and for revising/ending listings not created through the Inventory API.
+   * Returns the raw response XML on success (Ack Success/Warning). */
+  private async tradingRequest(callName: string, innerXml: string): Promise<string> {
+    const token = await freshAccessToken(this.config, this.userId);
+    const body = `<?xml version="1.0" encoding="utf-8"?>
+<${callName}Request xmlns="urn:ebay:apis:eBLBaseComponents">
+${innerXml}
+</${callName}Request>`;
+    const res = await fetch(`${this.config.apiHost}/ws/api.dll`, {
+      method: "POST",
+      headers: {
+        "X-EBAY-API-CALL-NAME": callName,
+        "X-EBAY-API-COMPATIBILITY-LEVEL": "1193",
+        "X-EBAY-API-SITEID": "0",
+        "X-EBAY-API-IAF-TOKEN": token,
+        "Content-Type": "text/xml",
+      },
+      body,
+    });
+    const text = await res.text();
+    const ack = text.match(/<Ack>([^<]+)<\/Ack>/)?.[1];
+    if (!res.ok || ack === "Failure") {
+      const message =
+        text.match(/<LongMessage>([^<]+)<\/LongMessage>/)?.[1] ??
+        `HTTP ${res.status}`;
+      throw new EbayApiError(`eBay ${callName} failed: ${message.slice(0, 300)}`);
+    }
+    return text;
+  }
+
   async updateListing(ebayListingId: string, update: ListingUpdate): Promise<void> {
-    const { offerId, sku } = await this.offerIdFor(ebayListingId);
+    const offer = await this.offerIdFor(ebayListingId);
+    if (!offer) {
+      // Foreign/imported listing: revise via Trading API.
+      const fields = [
+        `<ItemID>${ebayListingId}</ItemID>`,
+        update.priceCents !== undefined
+          ? `<StartPrice>${(update.priceCents / 100).toFixed(2)}</StartPrice>`
+          : "",
+        update.quantity !== undefined
+          ? `<Quantity>${update.quantity}</Quantity>`
+          : "",
+      ].join("");
+      await this.tradingRequest("ReviseFixedPriceItem", `<Item>${fields}</Item>`);
+      return;
+    }
     await this.request("POST", "/sell/inventory/v1/bulk_update_price_quantity", {
       requests: [
         {
-          sku,
+          sku: offer.sku,
           ...(update.quantity !== undefined && {
             shipToLocationAvailability: { quantity: update.quantity },
           }),
           offers: [
             {
-              offerId,
+              offerId: offer.offerId,
               ...(update.quantity !== undefined && { availableQuantity: update.quantity }),
               ...(update.priceCents !== undefined && {
                 price: { value: (update.priceCents / 100).toFixed(2), currency: "USD" },
@@ -335,8 +412,36 @@ export class RealEbayClient implements EbayClient {
   }
 
   async endListing(ebayListingId: string): Promise<void> {
-    const { offerId } = await this.offerIdFor(ebayListingId);
-    await this.request("POST", `/sell/inventory/v1/offer/${offerId}/withdraw`);
+    const offer = await this.offerIdFor(ebayListingId);
+    if (!offer) {
+      await this.tradingRequest(
+        "EndFixedPriceItem",
+        `<ItemID>${ebayListingId}</ItemID><EndingReason>NotAvailable</EndingReason>`,
+      );
+      return;
+    }
+    await this.request("POST", `/sell/inventory/v1/offer/${offer.offerId}/withdraw`);
+  }
+
+  async getSellerListings(): Promise<RemoteListing[]> {
+    const listings: RemoteListing[] = [];
+    for (let page = 1; page <= 10; page++) {
+      const xml = await this.tradingRequest(
+        "GetMyeBaySelling",
+        `<ActiveList><Include>true</Include><Pagination><EntriesPerPage>200</EntriesPerPage><PageNumber>${page}</PageNumber></Pagination></ActiveList><DetailLevel>ReturnAll</DetailLevel>`,
+      );
+      const itemBlocks = xml.match(/<Item>[\s\S]*?<\/Item>/g) ?? [];
+      for (const block of itemBlocks) {
+        const parsed = parseTradingItem(block);
+        if (parsed) listings.push(parsed);
+      }
+      const totalPages = parseInt(
+        xml.match(/<TotalNumberOfPages>(\d+)<\/TotalNumberOfPages>/)?.[1] ?? "1",
+        10,
+      );
+      if (page >= totalPages || itemBlocks.length === 0) break;
+    }
+    return listings;
   }
 
   async getOrders(_userId: string, since: Date): Promise<RemoteOrder[]> {

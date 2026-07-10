@@ -1,10 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { mapRainforestProduct } from "@/lib/mirror/rainforest";
-import {
-  estimatedSales30d,
-  titleSimilarity,
-  titleTokens,
-} from "@/lib/arbitrage/real-scanner";
+import { estimatedSales30d } from "@/lib/arbitrage/real-scanner";
+import { titleSimilarity, titleTokens } from "@/lib/mirror/match";
 
 describe("mapRainforestProduct", () => {
   const fixture = {

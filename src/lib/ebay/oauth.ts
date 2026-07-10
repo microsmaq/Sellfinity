@@ -14,11 +14,15 @@ export type EbayEnvConfig = {
   apiHost: string;
 };
 
-/** The seller permissions Sellfinity needs. */
+/** The seller permissions Sellfinity needs. The base scope enables Trading
+ * API calls (managing listings not created through this app); identity gives
+ * us the seller's username for listing imports. */
 export const EBAY_SCOPES = [
+  "https://api.ebay.com/oauth/api_scope",
   "https://api.ebay.com/oauth/api_scope/sell.inventory",
   "https://api.ebay.com/oauth/api_scope/sell.account",
   "https://api.ebay.com/oauth/api_scope/sell.fulfillment",
+  "https://api.ebay.com/oauth/api_scope/commerce.identity.readonly",
 ];
 
 /** Reads the keyset from env; null when real eBay isn't configured. */
@@ -113,9 +117,25 @@ export async function completeConnection(
       redirect_uri: config.ruName,
     }),
   );
+  // The real username (needed to import the seller's listings). Connections
+  // made before the identity scope existed fall back to a placeholder; the
+  // listings page prompts those users to reconnect.
+  let username = `${config.env.toLowerCase()} seller`;
+  try {
+    const res = await fetch(`${config.apiHost}/commerce/identity/v1/user/`, {
+      headers: { Authorization: `Bearer ${token.access_token}` },
+    });
+    if (res.ok) {
+      const identity = (await res.json()) as { username?: string };
+      if (identity.username) username = identity.username;
+    }
+  } catch {
+    // keep placeholder
+  }
+
   const data = {
     status: "CONNECTED",
-    ebayUsername: `${config.env.toLowerCase()} seller`,
+    ebayUsername: username,
     accessToken: token.access_token,
     accessTokenExpiresAt: new Date(Date.now() + (token.expires_in - 60) * 1000),
     refreshToken: token.refresh_token ?? null,

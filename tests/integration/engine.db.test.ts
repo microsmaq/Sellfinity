@@ -11,7 +11,7 @@ import { MockEbayClient } from "@/lib/ebay/mock";
 import { MockAmazonScraper } from "@/lib/mirror/mock-amazon";
 import { mirrorUrl } from "@/lib/mirror/pipeline";
 import { ebayFeeCents } from "@/lib/fees";
-import type { EbayClient, ListingUpdate, RemoteOrder } from "@/lib/ebay/client";
+import type { EbayClient, ListingUpdate, RemoteListing, RemoteOrder } from "@/lib/ebay/client";
 import type { SupplierProductState, SupplierProvider } from "@/lib/sourcing/provider";
 
 class FakeProvider implements SupplierProvider {
@@ -40,6 +40,9 @@ class RecordingEbay implements EbayClient {
     this.ended.push(id);
   }
   async getOrders(): Promise<RemoteOrder[]> {
+    return [];
+  }
+  async getSellerListings(): Promise<RemoteListing[]> {
     return [];
   }
 }

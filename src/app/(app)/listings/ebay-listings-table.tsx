@@ -1,0 +1,312 @@
+"use client";
+
+import { useState, useTransition } from "react";
+import {
+  endEbayListing,
+  matchEbayListing,
+  repriceEbayListing,
+} from "@/lib/actions/ebay-listings";
+import { formatCents, parseDollarsToCents } from "@/lib/money";
+import { Badge, Button, Card, cx } from "@/components/ui";
+
+export type EbayRow = {
+  ebayListingId: string;
+  title: string;
+  priceCents: number;
+  url: string;
+  imageUrl: string | null;
+  quantity: number | null;
+  /** Amazon source data when this listing is matched/tracked. */
+  match: {
+    sku: string;
+    amazonPriceCents: number;
+    amazonUrl: string;
+    profitCents: number;
+    marginPct: number;
+    unavailable: boolean;
+  } | null;
+};
+
+function RepriceCell({
+  row,
+  pending,
+  onReprice,
+}: {
+  row: EbayRow;
+  pending: boolean;
+  onReprice: (priceCents: number) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [price, setPrice] = useState((row.priceCents / 100).toFixed(2));
+
+  if (!editing) {
+    return (
+      <button
+        className="font-medium tabular-nums text-slate-900 underline decoration-dotted underline-offset-2 hover:text-indigo-600"
+        onClick={() => setEditing(true)}
+        title="Adjust price"
+      >
+        {formatCents(row.priceCents)}
+      </button>
+    );
+  }
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      <input
+        value={price}
+        onChange={(e) => setPrice(e.target.value)}
+        className="w-20 rounded-md border border-slate-300 px-2 py-1 text-xs tabular-nums"
+        aria-label="New price (dollars)"
+        autoFocus
+      />
+      <Button
+        size="sm"
+        disabled={pending}
+        onClick={() => {
+          const cents = parseDollarsToCents(price);
+          if (cents !== null) {
+            onReprice(cents);
+            setEditing(false);
+          }
+        }}
+      >
+        Save
+      </Button>
+      <Button size="sm" variant="ghost" onClick={() => setEditing(false)}>
+        Cancel
+      </Button>
+    </span>
+  );
+}
+
+export function EbayListingsTable({
+  rows: initialRows,
+  fetchError,
+}: {
+  rows: EbayRow[];
+  fetchError: string | null;
+}) {
+  const [rows, setRows] = useState(initialRows);
+  const [pending, startTransition] = useTransition();
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [notice, setNotice] = useState<{ text: string; error: boolean } | null>(null);
+
+  function run(id: string, fn: () => Promise<{ error?: string }>, onOk: () => void, okText: string) {
+    setNotice(null);
+    setBusyId(id);
+    startTransition(async () => {
+      const result = await fn();
+      setBusyId(null);
+      if (result.error) setNotice({ text: result.error, error: true });
+      else {
+        onOk();
+        setNotice({ text: okText, error: false });
+      }
+    });
+  }
+
+  const problems = rows.filter(
+    (r) => r.match && (r.match.unavailable || r.match.profitCents <= 0),
+  ).length;
+  const unmatched = rows.filter((r) => !r.match).length;
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center gap-3 text-sm text-slate-500">
+        <span>{rows.length} active on eBay</span>
+        {problems > 0 && <Badge tone="red">{problems} need attention</Badge>}
+        {unmatched > 0 && (
+          <span>
+            {unmatched} without an Amazon match — match them to see margins and
+            enable inventory sync.
+          </span>
+        )}
+        {notice && (
+          <span
+            className={cx(
+              "rounded-lg px-3 py-1.5",
+              notice.error ? "bg-red-50 text-red-700" : "bg-emerald-50 text-emerald-700",
+            )}
+          >
+            {notice.text}
+          </span>
+        )}
+      </div>
+
+      {fetchError && (
+        <p className="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800">
+          Couldn&apos;t load your eBay listings: {fetchError}
+        </p>
+      )}
+
+      <Card className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-slate-200 text-left text-xs uppercase tracking-wide text-slate-500">
+              <th className="px-4 py-3">Listing</th>
+              <th className="px-4 py-3 text-right">My price</th>
+              <th className="px-4 py-3 text-right">Amazon price</th>
+              <th className="px-4 py-3 text-right">Profit / unit</th>
+              <th className="px-4 py-3">Status</th>
+              <th className="px-4 py-3" />
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => {
+              const problem =
+                r.match && (r.match.unavailable || r.match.profitCents <= 0);
+              return (
+                <tr
+                  key={r.ebayListingId}
+                  className={cx(
+                    "border-b border-slate-100 last:border-0",
+                    problem && "bg-red-50/40",
+                  )}
+                >
+                  <td className="max-w-md px-4 py-3">
+                    <div className="flex items-center gap-3">
+                      {r.imageUrl ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                          src={r.imageUrl}
+                          alt=""
+                          className="h-10 w-10 shrink-0 rounded-lg bg-slate-100 object-cover"
+                        />
+                      ) : (
+                        <div className="h-10 w-10 shrink-0 rounded-lg bg-slate-100" />
+                      )}
+                      <div className="min-w-0">
+                        <a
+                          href={r.url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="block truncate font-medium text-slate-900 hover:text-indigo-600"
+                          title={r.title}
+                        >
+                          {r.title}
+                        </a>
+                        <p className="text-xs text-slate-500">
+                          #{r.ebayListingId}
+                          {r.quantity !== null && ` · ${r.quantity} available`}
+                        </p>
+                      </div>
+                    </div>
+                  </td>
+                  <td className="px-4 py-3 text-right">
+                    <RepriceCell
+                      row={r}
+                      pending={pending}
+                      onReprice={(priceCents) =>
+                        run(
+                          r.ebayListingId,
+                          () => repriceEbayListing(r.ebayListingId, priceCents),
+                          () =>
+                            setRows((prev) =>
+                              prev.map((x) =>
+                                x.ebayListingId === r.ebayListingId
+                                  ? { ...x, priceCents }
+                                  : x,
+                              ),
+                            ),
+                          "Price updated on eBay.",
+                        )
+                      }
+                    />
+                  </td>
+                  <td className="px-4 py-3 text-right tabular-nums">
+                    {r.match ? (
+                      <a
+                        href={r.match.amazonUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-indigo-600 hover:underline"
+                      >
+                        {formatCents(r.match.amazonPriceCents)}
+                      </a>
+                    ) : (
+                      "—"
+                    )}
+                  </td>
+                  <td
+                    className={cx(
+                      "px-4 py-3 text-right font-medium tabular-nums",
+                      r.match &&
+                        (r.match.profitCents > 0 ? "text-emerald-600" : "text-red-600"),
+                    )}
+                  >
+                    {r.match
+                      ? `${formatCents(r.match.profitCents)} (${r.match.marginPct}%)`
+                      : "—"}
+                  </td>
+                  <td className="px-4 py-3">
+                    {!r.match ? (
+                      <Badge tone="slate">Unmatched</Badge>
+                    ) : r.match.unavailable ? (
+                      <Badge tone="red">Not on Amazon</Badge>
+                    ) : r.match.profitCents <= 0 ? (
+                      <Badge tone="red">Unprofitable</Badge>
+                    ) : (
+                      <Badge tone="green">OK</Badge>
+                    )}
+                  </td>
+                  <td className="whitespace-nowrap px-4 py-3 text-right">
+                    {!r.match && (
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        disabled={pending}
+                        onClick={() =>
+                          run(
+                            r.ebayListingId,
+                            () =>
+                              matchEbayListing({
+                                ebayListingId: r.ebayListingId,
+                                title: r.title,
+                                priceCents: r.priceCents,
+                                imageUrl: r.imageUrl,
+                                quantity: r.quantity,
+                              }),
+                            () => {},
+                            "Matched — reload to see the margin.",
+                          )
+                        }
+                      >
+                        {busyId === r.ebayListingId ? "Matching…" : "Find Amazon match"}
+                      </Button>
+                    )}{" "}
+                    <Button
+                      size="sm"
+                      variant="danger"
+                      disabled={pending}
+                      onClick={() => {
+                        if (!confirm(`End "${r.title.slice(0, 50)}…" on eBay?`)) return;
+                        run(
+                          r.ebayListingId,
+                          () => endEbayListing(r.ebayListingId),
+                          () =>
+                            setRows((prev) =>
+                              prev.filter((x) => x.ebayListingId !== r.ebayListingId),
+                            ),
+                          "Listing ended on eBay.",
+                        );
+                      }}
+                    >
+                      {busyId === r.ebayListingId ? "Working…" : "End"}
+                    </Button>
+                  </td>
+                </tr>
+              );
+            })}
+            {rows.length === 0 && !fetchError && (
+              <tr>
+                <td colSpan={6} className="px-4 py-12 text-center text-slate-500">
+                  No active listings found on your eBay account.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </Card>
+    </div>
+  );
+}

@@ -31,6 +31,17 @@ export type RemoteOrder = {
   saleDate: Date;
 };
 
+/** One of the seller's live eBay listings, regardless of how it was created. */
+export type RemoteListing = {
+  /** Legacy numeric item id (the one in ebay.com/itm/… URLs). */
+  ebayListingId: string;
+  title: string;
+  priceCents: number;
+  url: string;
+  imageUrl: string | null;
+  quantity: number | null; // null when eBay doesn't expose it
+};
+
 export class EbayApiError extends Error {}
 
 export interface EbayClient {
@@ -45,6 +56,11 @@ export interface EbayClient {
    * account/tokens to use.
    */
   getOrders(userId: string, since: Date): Promise<RemoteOrder[]>;
+  /**
+   * Every listing currently live on the seller's account — including ones
+   * not created through this app.
+   */
+  getSellerListings(userId: string): Promise<RemoteListing[]>;
 }
 
 /** Validation eBay itself enforces; the mock applies it too so failures show up in dev. */

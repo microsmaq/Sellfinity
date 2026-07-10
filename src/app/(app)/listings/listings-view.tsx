@@ -12,6 +12,7 @@ import {
 } from "@/lib/actions/listings";
 import { formatCents, parseDollarsToCents } from "@/lib/money";
 import { Badge, Button, Card, cx } from "@/components/ui";
+import { EbayListingsTable, type EbayRow } from "./ebay-listings-table";
 
 export type UnlistedRow = {
   productId: string;
@@ -36,7 +37,7 @@ export type ListingRow = {
   publishedAt: string | null;
 };
 
-type Tab = "unlisted" | "DRAFT" | "ACTIVE" | "ENDED";
+type Tab = "ebay" | "unlisted" | "DRAFT" | "ACTIVE" | "ENDED";
 
 const statusTone = { DRAFT: "amber", ACTIVE: "green", ENDED: "slate" } as const;
 
@@ -111,12 +112,16 @@ export function ListingsView({
   unlisted,
   listings,
   ebayConnected,
+  ebayRows,
+  ebayFetchError,
 }: {
   unlisted: UnlistedRow[];
   listings: ListingRow[];
   ebayConnected: boolean;
+  ebayRows: EbayRow[];
+  ebayFetchError: string | null;
 }) {
-  const [tab, setTab] = useState<Tab>("unlisted");
+  const [tab, setTab] = useState<Tab>(ebayConnected ? "ebay" : "unlisted");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [pending, startTransition] = useTransition();
   const [notice, setNotice] = useState<{ text: string; error: boolean } | null>(null);
@@ -128,6 +133,7 @@ export function ListingsView({
   }, [listings]);
 
   const tabs: { id: Tab; label: string; count: number }[] = [
+    { id: "ebay", label: "Active on eBay", count: ebayRows.length },
     { id: "unlisted", label: "Unlisted inventory", count: unlisted.length },
     { id: "DRAFT", label: "Drafts", count: byStatus.DRAFT.length },
     { id: "ACTIVE", label: "Active", count: byStatus.ACTIVE.length },
@@ -135,9 +141,11 @@ export function ListingsView({
   ];
 
   const currentIds =
-    tab === "unlisted"
-      ? unlisted.map((u) => u.productId)
-      : byStatus[tab].map((l) => l.id);
+    tab === "ebay"
+      ? []
+      : tab === "unlisted"
+        ? unlisted.map((u) => u.productId)
+        : byStatus[tab].map((l) => l.id);
   const allSelected =
     currentIds.length > 0 && currentIds.every((id) => selected.has(id));
 
@@ -250,6 +258,9 @@ export function ListingsView({
         </p>
       )}
 
+      {tab === "ebay" ? (
+        <EbayListingsTable rows={ebayRows} fetchError={ebayFetchError} />
+      ) : (
       <Card className="overflow-x-auto">
         {tab === "unlisted" ? (
           <table className="w-full text-sm">
@@ -378,6 +389,7 @@ export function ListingsView({
           </table>
         )}
       </Card>
+      )}
     </div>
   );
 }
