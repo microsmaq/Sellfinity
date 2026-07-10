@@ -8,7 +8,9 @@ import { db } from "@/lib/db";
 import { estimateMargin } from "@/lib/fees";
 import { appAccessToken, ebayEnvConfig } from "@/lib/ebay/oauth";
 import { findAmazonMatch } from "@/lib/mirror/match";
-import type { ArbitrageOpportunity, ArbitrageScanner } from "./scanner";
+import { persistOpportunities } from "./store";
+import type { ArbitrageOpportunity } from "./scanner";
+import type { ScanReport } from "./scan-types";
 
 // Category keyword rotation. Each keyword yields one Browse page of
 // candidates; scans walk this list in a day-dependent order for variety.
@@ -55,27 +57,35 @@ type EbayCandidate = {
   category: string;
 };
 
-type ScanState = {
-  opportunities: ArbitrageOpportunity[];
+type ScanCursor = {
   pending: EbayCandidate[];
   nextKeyword: number;
-  seenAsins: string[];
-  seenItemIds: string[];
   exhausted: boolean;
 };
 
-const EMPTY_STATE: ScanState = {
-  opportunities: [],
-  pending: [],
-  nextKeyword: 0,
-  seenAsins: [],
-  seenItemIds: [],
-  exhausted: false,
-};
+const EMPTY_CURSOR: ScanCursor = { pending: [], nextKeyword: 0, exhausted: false };
+
+/** Cap on the rolling examined-set (each entry saved one repeat credit). */
+const EXAMINED_CAP = 8000;
 
 function currentDayNumber(): number {
   return Math.floor(Date.now() / 86_400_000);
 }
+
+async function loadJson<T>(cacheKey: string, fallback: T): Promise<T> {
+  const row = await db.scanCache.findUnique({ where: { cacheKey } });
+  return row ? (JSON.parse(row.dataJson) as T) : structuredClone(fallback);
+}
+
+async function saveJson(cacheKey: string, data: unknown): Promise<void> {
+  const json = JSON.stringify(data);
+  await db.scanCache.upsert({
+    where: { cacheKey },
+    create: { cacheKey, dataJson: json },
+    update: { dataJson: json },
+  });
+}
+
 
 async function browseSearch(
   keyword: string,
@@ -165,74 +175,51 @@ async function amazonMatch(
   };
 }
 
-/** Stop scanning this far before the serverless function limit so the page
- * always renders with what it has; the next request resumes the cursor. */
-const TIME_BUDGET_MS = 22_000;
+/**
+ * Advance the research scan within a time budget, persisting every match to
+ * the ArbitrageItem table. The keyword cursor resets daily (fresh Browse
+ * pages); the examined-set is global so a candidate is never paid for twice.
+ */
+export async function realScanMore(timeBudgetMs = 22_000): Promise<ScanReport> {
+  const deadline = Date.now() + timeBudgetMs;
+  const cursorKey = `arbitrage:cursor:${currentDayNumber()}`;
+  const cursor = await loadJson<ScanCursor>(cursorKey, EMPTY_CURSOR);
+  const examinedList = await loadJson<string[]>("arbitrage:examined", []);
+  const examined = new Set(examinedList);
 
-export class RealArbitrageScanner implements ArbitrageScanner {
-  async findOpportunities(
-    count: number,
-    timeBudgetMs: number = TIME_BUDGET_MS,
-  ): Promise<ArbitrageOpportunity[]> {
-    const deadline = Date.now() + timeBudgetMs;
-    const cacheKey = `arbitrage:${currentDayNumber()}`;
-    const cached = await db.scanCache.findUnique({ where: { cacheKey } });
-    const state: ScanState = cached
-      ? (JSON.parse(cached.dataJson) as ScanState)
-      : structuredClone(EMPTY_STATE);
+  let added = 0;
+  let examinedNow = 0;
 
-    const seenAsins = new Set(state.seenAsins);
-    const seenItemIds = new Set(state.seenItemIds);
+  const save = async () => {
+    await saveJson(cursorKey, cursor);
+    await saveJson("arbitrage:examined", [...examined].slice(-EXAMINED_CAP));
+  };
 
-    const save = () => {
-      state.seenAsins = [...seenAsins];
-      state.seenItemIds = [...seenItemIds];
-      return db.scanCache.upsert({
-        where: { cacheKey },
-        create: { cacheKey, dataJson: JSON.stringify(state) },
-        update: { dataJson: JSON.stringify(state) },
-      });
-    };
-
-    while (
-      state.opportunities.length < count &&
-      !state.exhausted &&
-      Date.now() < deadline
-    ) {
-      if (state.pending.length === 0) {
-        if (state.nextKeyword >= CATEGORY_KEYWORDS.length) {
-          state.exhausted = true;
-          break;
-        }
-        // Day-dependent rotation so the feed varies across days.
-        const idx =
-          (state.nextKeyword + currentDayNumber()) % CATEGORY_KEYWORDS.length;
-        const { keyword, category } = CATEGORY_KEYWORDS[idx];
-        state.nextKeyword++;
-        const candidates = await browseSearch(keyword, category);
-        state.pending.push(
-          ...candidates.filter((c) => !seenItemIds.has(c.itemId)),
-        );
-        for (const c of candidates) seenItemIds.add(c.itemId);
-        continue;
+  while (!cursor.exhausted && Date.now() < deadline) {
+    if (cursor.pending.length === 0) {
+      if (cursor.nextKeyword >= CATEGORY_KEYWORDS.length) {
+        cursor.exhausted = true;
+        break;
       }
-
-      // Examine candidates in small parallel batches (one paid credit each),
-      // banking progress after every batch so an interrupted request never
-      // wastes credits.
-      const batch = state.pending.splice(0, LOOKUP_BATCH);
-      const matches = await Promise.all(batch.map(amazonMatch));
-      for (const match of matches) {
-        if (!match || seenAsins.has(match.amazon.asin)) continue;
-        seenAsins.add(match.amazon.asin);
-        state.opportunities.push(match);
-      }
-      await save();
+      const idx =
+        (cursor.nextKeyword + currentDayNumber()) % CATEGORY_KEYWORDS.length;
+      const { keyword, category } = CATEGORY_KEYWORDS[idx];
+      cursor.nextKeyword++;
+      const candidates = await browseSearch(keyword, category);
+      cursor.pending.push(...candidates.filter((c) => !examined.has(c.itemId)));
+      continue;
     }
 
+    const batch = cursor.pending.splice(0, LOOKUP_BATCH);
+    const matches = await Promise.all(batch.map(amazonMatch));
+    for (const c of batch) examined.add(c.itemId);
+    examinedNow += batch.length;
+    added += await persistOpportunities(
+      matches.filter((m): m is ArbitrageOpportunity => m !== null),
+    );
     await save();
-    return [...state.opportunities]
-      .sort((a, b) => b.margin.estimatedProfitCents - a.margin.estimatedProfitCents)
-      .slice(0, count);
   }
+
+  await save();
+  return { added, examined: examinedNow, exhausted: cursor.exhausted };
 }

@@ -162,6 +162,33 @@ model SyncRun {
   @@index([userId, startedAt])
 }
 
+// A researched arbitrage opportunity: a live eBay listing paired with a
+// cheaper Amazon source. Global (shared by all users); grows as scans run.
+model ArbitrageItem {
+  id               String   @id @default(cuid())
+  ebayItemId       String   @unique
+  ebayTitle        String
+  ebayPriceCents   Int
+  ebayUrl          String
+  imageUrl         String
+  category         String
+  asin             String
+  amazonTitle      String
+  amazonPriceCents Int
+  amazonUrl        String
+  profitCents      Int
+  marginPct        Int
+  feeCents         Int
+  salesEst         Int
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@index([profitCents])
+  @@index([category])
+  @@index([createdAt])
+  @@index([asin])
+}
+
 // Generic JSON cache for expensive external scans (e.g. the daily arbitrage
 // scan, which costs paid API credits) — shared across users.
 model ScanCache {

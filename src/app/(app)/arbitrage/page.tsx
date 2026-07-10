@@ -1,27 +1,31 @@
 import { requireUser } from "@/lib/auth";
-import { buildOpportunityRows } from "@/lib/arbitrage/rows";
+import { listArbitragePage } from "@/lib/arbitrage/store";
 import { PageHeader } from "@/components/ui";
 import { ArbitrageTable } from "./arbitrage-table";
 
 export const metadata = { title: "Arbitrage finder — Sellfinity" };
 
-// Real scans call paid external APIs; allow time for the first scan of the
-// day and keep the initial page conservative (Load more extends it).
+// Manual scans call paid external APIs; give the action room to run.
 export const maxDuration = 60;
-
-const INITIAL_COUNT = 20;
 
 export default async function ArbitragePage() {
   const user = await requireUser();
-  const rows = await buildOpportunityRows(user.id, INITIAL_COUNT);
+  const initial = await listArbitragePage(user.id, {
+    page: 1,
+    sortKey: "profit",
+    sortDesc: true,
+    category: "all",
+    minMarginPct: 0,
+    query: "",
+  });
 
   return (
     <>
       <PageHeader
         title="Arbitrage finder"
-        subtitle="Best-selling eBay products with a cheaper Amazon source right now — margins shown net of eBay fees. Refreshes daily."
+        subtitle="The research database: best-selling eBay products with a cheaper Amazon source, margins net of eBay fees. New opportunities are added automatically twice a day — or scan on demand."
       />
-      <ArbitrageTable initialRows={rows} />
+      <ArbitrageTable initial={initial} />
     </>
   );
 }

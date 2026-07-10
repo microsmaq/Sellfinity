@@ -2,15 +2,30 @@
 
 import { revalidatePath } from "next/cache";
 import { requireUser } from "@/lib/auth";
-import { buildOpportunityRows } from "@/lib/arbitrage/rows";
-import type { OpportunityRow } from "@/lib/arbitrage/scanner";
+import { scanMore } from "@/lib/arbitrage";
+import {
+  listArbitragePage,
+  type ArbitragePage,
+  type ArbitragePageParams,
+} from "@/lib/arbitrage/store";
+import type { ScanReport } from "@/lib/arbitrage/scan-types";
 import { getScraper } from "@/lib/mirror";
 import { mirrorUrl, type MirrorOutcome } from "@/lib/mirror/pipeline";
 
-/** Re-scan with a larger count ("Load 50 more"); globally profit-sorted. */
-export async function loadOpportunities(count: number): Promise<OpportunityRow[]> {
+/** One page of the research database (filters/sort/pagination server-side). */
+export async function fetchArbitragePage(
+  params: ArbitragePageParams,
+): Promise<ArbitragePage> {
   const user = await requireUser();
-  return buildOpportunityRows(user.id, count);
+  return listArbitragePage(user.id, params);
+}
+
+/** Advance the scan now ("add more to the database"). */
+export async function scanForNew(): Promise<ScanReport> {
+  await requireUser();
+  const report = await scanMore();
+  revalidatePath("/arbitrage");
+  return report;
 }
 
 /**

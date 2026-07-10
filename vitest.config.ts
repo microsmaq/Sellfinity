@@ -18,6 +18,7 @@ export default defineConfig({
       DIRECT_DATABASE_URL: testDbUrl,
       // Tests are hermetic: never select the real (paid) data providers.
       RAINFOREST_API_KEY: "",
+      ALLOW_MOCK_SCAN: "1",
     },
     // The integration suite shares one database — no parallel files. The
     // database is remote (Neon), so multi-query tests need generous time.

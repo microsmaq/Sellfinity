@@ -46,6 +46,8 @@ export type OpportunityRow = {
   /** The user's own live eBay listing for this product, when published;
    * null while it's still a draft (or ended without an id). */
   storeEbayUrl: string | null;
+  /** ISO date the scanner first found this opportunity. */
+  foundAt: string;
 };
 
 /** Ceiling on one scan — keeps "load more" from growing unbounded. */

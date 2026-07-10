@@ -1,40 +1,41 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState, useTransition } from "react";
+import { useRef, useState, useTransition } from "react";
 import {
-  loadOpportunities,
+  fetchArbitragePage,
   mirrorOpportunities,
   mirrorOpportunity,
+  scanForNew,
 } from "@/lib/actions/arbitrage";
-import { MAX_OPPORTUNITIES, type OpportunityRow } from "@/lib/arbitrage/scanner";
+import type { ArbitragePage, ArbitragePageParams } from "@/lib/arbitrage/store";
+import type { OpportunityRow } from "@/lib/arbitrage/scanner";
 import { formatCents } from "@/lib/money";
 import { Badge, Button, Card, Input, cx } from "@/components/ui";
 
-const LOAD_STEP = 50;
+type SortKey = ArbitragePageParams["sortKey"];
 
-type SortKey = "ebayPrice" | "sales" | "amazonPrice" | "profit" | "margin";
-
-const sortValue: Record<SortKey, (r: OpportunityRow) => number> = {
-  ebayPrice: (r) => r.ebayPriceCents,
-  sales: (r) => r.ebaySales30d,
-  amazonPrice: (r) => r.amazonPriceCents,
-  profit: (r) => r.profitCents,
-  margin: (r) => r.marginPct,
+const DEFAULT_PARAMS: ArbitragePageParams = {
+  page: 1,
+  sortKey: "profit",
+  sortDesc: true,
+  category: "all",
+  minMarginPct: 0,
+  query: "",
 };
 
 function SortHeader({
   label,
   sortKey,
-  sort,
+  params,
   onSort,
 }: {
   label: string;
   sortKey: SortKey;
-  sort: { key: SortKey; desc: boolean };
+  params: ArbitragePageParams;
   onSort: (key: SortKey) => void;
 }) {
-  const active = sort.key === sortKey;
+  const active = params.sortKey === sortKey;
   return (
     <th className="px-4 py-3 text-right">
       <button
@@ -45,72 +46,68 @@ function SortHeader({
         )}
       >
         {label}
-        <span className="w-2 text-slate-400">{active ? (sort.desc ? "↓" : "↑") : ""}</span>
+        <span className="w-2 text-slate-400">
+          {active ? (params.sortDesc ? "↓" : "↑") : ""}
+        </span>
       </button>
     </th>
   );
 }
 
-export function ArbitrageTable({ initialRows }: { initialRows: OpportunityRow[] }) {
-  const [rows, setRows] = useState(initialRows);
-  const [category, setCategory] = useState("all");
-  const [minMargin, setMinMargin] = useState(0);
-  const [query, setQuery] = useState("");
-  const [sort, setSort] = useState<{ key: SortKey; desc: boolean }>({
-    key: "profit",
-    desc: true,
-  });
+export function ArbitrageTable({ initial }: { initial: ArbitragePage }) {
+  const [data, setData] = useState(initial);
+  const [params, setParams] = useState(DEFAULT_PARAMS);
+  const [queryInput, setQueryInput] = useState("");
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [mirroredNow, setMirroredNow] = useState<Set<string>>(new Set());
   const [pending, startTransition] = useTransition();
-  const [loadingMore, startLoadMore] = useTransition();
+  const [scanning, startScan] = useTransition();
   const [busyAsin, setBusyAsin] = useState<string | null>(null);
-  const [exhausted, setExhausted] = useState(false);
   const [notice, setNotice] = useState<{ text: string; error: boolean } | null>(null);
+  const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const categories = useMemo(
-    () => [...new Set(rows.map((r) => r.category))].sort(),
-    [rows],
-  );
-
-  const visible = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    const filtered = rows.filter(
-      (r) =>
-        (category === "all" || r.category === category) &&
-        r.marginPct >= minMargin &&
-        (q === "" || r.title.toLowerCase().includes(q)),
-    );
-    const value = sortValue[sort.key];
-    return filtered.sort((a, b) =>
-      sort.desc ? value(b) - value(a) : value(a) - value(b),
-    );
-  }, [rows, category, minMargin, query, sort]);
-
-  const selectableVisible = visible.filter((r) => !r.mirrored);
-  const allSelected =
-    selectableVisible.length > 0 &&
-    selectableVisible.every((r) => selected.has(r.asin));
-
-  function onSort(key: SortKey) {
-    setSort((prev) =>
-      prev.key === key ? { key, desc: !prev.desc } : { key, desc: true },
-    );
-  }
-
-  function toggle(asin: string) {
-    setSelected((prev) => {
-      const next = new Set(prev);
-      if (next.has(asin)) next.delete(asin);
-      else next.add(asin);
-      return next;
+  function load(next: ArbitragePageParams) {
+    setParams(next);
+    startTransition(async () => {
+      setData(await fetchArbitragePage(next));
     });
   }
 
-  function markMirrored(asins: Iterable<string>) {
-    const set = new Set(asins);
-    setRows((prev) =>
-      prev.map((r) => (set.has(r.asin) ? { ...r, mirrored: true } : r)),
+  function update(partial: Partial<ArbitragePageParams>) {
+    load({ ...params, ...partial, page: partial.page ?? 1 });
+  }
+
+  function onSearchChange(value: string) {
+    setQueryInput(value);
+    if (searchTimer.current) clearTimeout(searchTimer.current);
+    searchTimer.current = setTimeout(() => update({ query: value }), 400);
+  }
+
+  function onSort(key: SortKey) {
+    update(
+      params.sortKey === key
+        ? { sortDesc: !params.sortDesc }
+        : { sortKey: key, sortDesc: true },
     );
+  }
+
+  function isMirrored(r: OpportunityRow) {
+    return r.mirrored || mirroredNow.has(r.asin);
+  }
+
+  function scanNow() {
+    setNotice(null);
+    startScan(async () => {
+      const report = await scanForNew();
+      setNotice({
+        text:
+          `Scan complete: ${report.added} new opportunit${report.added === 1 ? "y" : "ies"} added` +
+          ` (${report.examined} candidates examined)` +
+          (report.exhausted ? " — today's sources are fully scanned; more tomorrow." : "."),
+        error: false,
+      });
+      setData(await fetchArbitragePage(params));
+    });
   }
 
   function mirrorOne(row: OpportunityRow) {
@@ -120,7 +117,7 @@ export function ArbitrageTable({ initialRows }: { initialRows: OpportunityRow[] 
       const outcome = await mirrorOpportunity(row.asin, row.ebayPriceCents);
       setBusyAsin(null);
       if (outcome.ok) {
-        markMirrored([row.asin]);
+        setMirroredNow((prev) => new Set(prev).add(row.asin));
         setNotice({
           text: `Mirrored "${outcome.title}" as a draft priced at ${formatCents(outcome.priceCents!)}.`,
           error: false,
@@ -132,13 +129,17 @@ export function ArbitrageTable({ initialRows }: { initialRows: OpportunityRow[] 
   }
 
   function mirrorSelected() {
-    const items = visible
-      .filter((r) => selected.has(r.asin) && !r.mirrored)
+    const items = data.rows
+      .filter((r) => selected.has(r.asin) && !isMirrored(r))
       .map((r) => ({ asin: r.asin, ebayPriceCents: r.ebayPriceCents }));
     setNotice(null);
     startTransition(async () => {
       const result = await mirrorOpportunities(items);
-      markMirrored(result.mirroredAsins);
+      setMirroredNow((prev) => {
+        const next = new Set(prev);
+        for (const asin of result.mirroredAsins) next.add(asin);
+        return next;
+      });
       setSelected(new Set());
       const done = result.mirroredAsins.length;
       setNotice({
@@ -151,42 +152,35 @@ export function ArbitrageTable({ initialRows }: { initialRows: OpportunityRow[] 
     });
   }
 
-  function loadMore() {
-    setNotice(null);
-    startLoadMore(async () => {
-      const next = await loadOpportunities(rows.length + LOAD_STEP);
-      if (next.length <= rows.length) setExhausted(true);
-      setRows(next);
-    });
-  }
-
-  const atCap = rows.length >= MAX_OPPORTUNITIES;
+  const selectable = data.rows.filter((r) => !isMirrored(r));
+  const allSelected =
+    selectable.length > 0 && selectable.every((r) => selected.has(r.asin));
 
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-3">
         <Input
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
+          value={queryInput}
+          onChange={(e) => onSearchChange(e.target.value)}
           placeholder="Search products…"
           className="w-56"
           aria-label="Search products"
         />
         <select
-          value={category}
-          onChange={(e) => setCategory(e.target.value)}
+          value={params.category}
+          onChange={(e) => update({ category: e.target.value })}
           className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
         >
           <option value="all">All categories</option>
-          {categories.map((c) => (
+          {data.categories.map((c) => (
             <option key={c} value={c}>
               {c}
             </option>
           ))}
         </select>
         <select
-          value={minMargin}
-          onChange={(e) => setMinMargin(Number(e.target.value))}
+          value={params.minMarginPct}
+          onChange={(e) => update({ minMarginPct: Number(e.target.value) })}
           className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
         >
           <option value={0}>Any margin</option>
@@ -195,16 +189,14 @@ export function ArbitrageTable({ initialRows }: { initialRows: OpportunityRow[] 
           <option value={35}>Margin ≥ 35%</option>
         </select>
         <p className="text-sm text-slate-500">
-          {visible.length} of {rows.length} opportunities
+          {data.total.toLocaleString()} researched
         </p>
-        <div className="ml-auto">
-          <Button
-            disabled={pending || selected.size === 0}
-            onClick={mirrorSelected}
-          >
-            {pending && busyAsin === null
-              ? "Mirroring…"
-              : `Mirror selected (${selected.size})`}
+        <div className="ml-auto flex items-center gap-2">
+          <Button variant="secondary" disabled={scanning} onClick={scanNow}>
+            {scanning ? "Scanning…" : "Scan for new products"}
+          </Button>
+          <Button disabled={pending || selected.size === 0} onClick={mirrorSelected}>
+            {`Mirror selected (${selected.size})`}
           </Button>
         </div>
       </div>
@@ -225,7 +217,7 @@ export function ArbitrageTable({ initialRows }: { initialRows: OpportunityRow[] 
         </p>
       )}
 
-      <Card className="overflow-x-auto">
+      <Card className={cx("overflow-x-auto", pending && "opacity-60")}>
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-slate-200 text-left text-xs uppercase tracking-wide text-slate-500">
@@ -235,26 +227,24 @@ export function ArbitrageTable({ initialRows }: { initialRows: OpportunityRow[] 
                   checked={allSelected}
                   onChange={() =>
                     setSelected(
-                      allSelected
-                        ? new Set()
-                        : new Set(selectableVisible.map((r) => r.asin)),
+                      allSelected ? new Set() : new Set(selectable.map((r) => r.asin)),
                     )
                   }
                   aria-label="Select all"
                 />
               </th>
               <th className="px-4 py-3">Product</th>
-              <SortHeader label="eBay price" sortKey="ebayPrice" sort={sort} onSort={onSort} />
-              <SortHeader label="Est. sales/30d" sortKey="sales" sort={sort} onSort={onSort} />
-              <SortHeader label="Amazon price" sortKey="amazonPrice" sort={sort} onSort={onSort} />
-              <th className="px-4 py-3 text-right">eBay fees</th>
-              <SortHeader label="Profit / unit" sortKey="profit" sort={sort} onSort={onSort} />
-              <SortHeader label="Margin" sortKey="margin" sort={sort} onSort={onSort} />
+              <SortHeader label="eBay price" sortKey="ebayPrice" params={params} onSort={onSort} />
+              <SortHeader label="Est. sales/30d" sortKey="sales" params={params} onSort={onSort} />
+              <SortHeader label="Amazon price" sortKey="amazonPrice" params={params} onSort={onSort} />
+              <SortHeader label="Profit / unit" sortKey="profit" params={params} onSort={onSort} />
+              <SortHeader label="Margin" sortKey="margin" params={params} onSort={onSort} />
+              <SortHeader label="Found" sortKey="newest" params={params} onSort={onSort} />
               <th className="px-4 py-3" />
             </tr>
           </thead>
           <tbody>
-            {visible.map((r) => (
+            {data.rows.map((r) => (
               <tr
                 key={r.asin}
                 className={cx(
@@ -266,8 +256,15 @@ export function ArbitrageTable({ initialRows }: { initialRows: OpportunityRow[] 
                   <input
                     type="checkbox"
                     checked={selected.has(r.asin)}
-                    onChange={() => toggle(r.asin)}
-                    disabled={r.mirrored}
+                    onChange={() =>
+                      setSelected((prev) => {
+                        const next = new Set(prev);
+                        if (next.has(r.asin)) next.delete(r.asin);
+                        else next.add(r.asin);
+                        return next;
+                      })
+                    }
+                    disabled={isMirrored(r)}
                     aria-label={`Select ${r.title}`}
                   />
                 </td>
@@ -285,21 +282,11 @@ export function ArbitrageTable({ initialRows }: { initialRows: OpportunityRow[] 
                       </p>
                       <p className="text-xs text-slate-500">
                         {r.category} ·{" "}
-                        <a
-                          href={r.ebayUrl}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="text-indigo-600 hover:underline"
-                        >
+                        <a href={r.ebayUrl} target="_blank" rel="noreferrer" className="text-indigo-600 hover:underline">
                           eBay comp
                         </a>{" "}
                         ·{" "}
-                        <a
-                          href={r.amazonUrl}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="text-indigo-600 hover:underline"
-                        >
+                        <a href={r.amazonUrl} target="_blank" rel="noreferrer" className="text-indigo-600 hover:underline">
                           Amazon source
                         </a>
                       </p>
@@ -313,15 +300,18 @@ export function ArbitrageTable({ initialRows }: { initialRows: OpportunityRow[] 
                 <td className="px-4 py-3 text-right tabular-nums">
                   {formatCents(r.amazonPriceCents)}
                 </td>
-                <td className="px-4 py-3 text-right tabular-nums text-slate-500">
-                  {formatCents(r.feeCents)}
-                </td>
                 <td className="px-4 py-3 text-right font-medium tabular-nums text-emerald-600">
                   {formatCents(r.profitCents)}
                 </td>
                 <td className="px-4 py-3 text-right tabular-nums">{r.marginPct}%</td>
+                <td className="whitespace-nowrap px-4 py-3 text-right text-xs text-slate-500">
+                  {new Date(r.foundAt).toLocaleDateString("en-US", {
+                    month: "short",
+                    day: "numeric",
+                  })}
+                </td>
                 <td className="whitespace-nowrap px-4 py-3 text-right">
-                  {r.mirrored ? (
+                  {isMirrored(r) ? (
                     r.storeEbayUrl ? (
                       <a
                         href={r.storeEbayUrl}
@@ -344,10 +334,12 @@ export function ArbitrageTable({ initialRows }: { initialRows: OpportunityRow[] 
                 </td>
               </tr>
             ))}
-            {visible.length === 0 && (
+            {data.rows.length === 0 && (
               <tr>
                 <td colSpan={9} className="px-4 py-12 text-center text-slate-500">
-                  No opportunities match these filters.
+                  {data.total === 0
+                    ? "The research database is empty — run a scan to start filling it."
+                    : "No opportunities match these filters."}
                 </td>
               </tr>
             )}
@@ -355,16 +347,26 @@ export function ArbitrageTable({ initialRows }: { initialRows: OpportunityRow[] 
         </table>
       </Card>
 
-      <div className="flex justify-center">
-        {atCap || exhausted ? (
-          <p className="text-sm text-slate-500">
-            That&apos;s everything the scanner found today — check back tomorrow.
-          </p>
-        ) : (
-          <Button variant="secondary" disabled={loadingMore} onClick={loadMore}>
-            {loadingMore ? "Scanning…" : `Load ${LOAD_STEP} more`}
-          </Button>
-        )}
+      <div className="flex items-center justify-center gap-4 text-sm">
+        <Button
+          variant="secondary"
+          size="sm"
+          disabled={pending || data.page <= 1}
+          onClick={() => update({ page: data.page - 1 })}
+        >
+          ← Previous
+        </Button>
+        <span className="text-slate-500">
+          Page {data.page} of {data.pageCount}
+        </span>
+        <Button
+          variant="secondary"
+          size="sm"
+          disabled={pending || data.page >= data.pageCount}
+          onClick={() => update({ page: data.page + 1 })}
+        >
+          Next →
+        </Button>
       </div>
     </div>
   );
