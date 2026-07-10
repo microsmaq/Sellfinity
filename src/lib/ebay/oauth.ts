@@ -187,12 +187,14 @@ export async function freshAccessToken(
   if (!connection.refreshToken) {
     throw new EbayApiError("eBay session expired — reconnect in Settings.");
   }
+  // No scope parameter: eBay then issues the originally-granted scopes.
+  // Passing the current EBAY_SCOPES list would break refreshes for tokens
+  // granted before a scope was added (invalid_scope).
   const token = await tokenRequest(
     config,
     new URLSearchParams({
       grant_type: "refresh_token",
       refresh_token: connection.refreshToken,
-      scope: EBAY_SCOPES.join(" "),
     }),
   );
   await db.ebayConnection.update({
