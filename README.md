@@ -70,8 +70,8 @@ the whole app works offline with zero credentials:
 
 | Integration | Interface | Mock today | Real implementation |
 | --- | --- | --- | --- |
-| Amazon product pages | `ProductPageScraper` (`src/lib/mirror/scraper.ts`) | Deterministic fabricated product per ASIN | Amazon PA-API or a scraping API (Rainforest, Oxylabs); swap in `src/lib/mirror/index.ts` |
-| Arbitrage scan | `ArbitrageScanner` (`src/lib/arbitrage/scanner.ts`) | Deterministic daily eBay-vs-Amazon pairs from the mirror sandbox catalog | eBay Browse/Marketplace Insights + Amazon product search, matched by UPC/title; swap in `src/lib/arbitrage/index.ts` |
+| Amazon product pages | `ProductPageScraper` (`src/lib/mirror/scraper.ts`) | Deterministic fabricated product per ASIN | **Built**: Rainforest API (`src/lib/mirror/rainforest.ts`), selected when `RAINFOREST_API_KEY` is set |
+| Arbitrage scan | `ArbitrageScanner` (`src/lib/arbitrage/scanner.ts`) | Deterministic daily eBay-vs-Amazon pairs from the mirror sandbox catalog | **Built**: eBay Browse + Rainforest search matching (`src/lib/arbitrage/real-scanner.ts`), selected when `RAINFOREST_API_KEY` is set and `EBAY_ENV=PRODUCTION`; day-cached in `ScanCache` (~1 Rainforest credit per candidate examined). Demand column is estimated pending Marketplace Insights API access |
 | Supplier/market data | `SupplierProvider` (`src/lib/sourcing/provider.ts`) | Deterministic 35-product catalog with daily stock/cost drift | CJ Dropshipping, AutoDS-style feed, or Zik-style analytics; swap in `src/lib/sourcing/index.ts` |
 | eBay Sell APIs | `EbayClient` (`src/lib/ebay/client.ts`) | Demo sandbox: validates like eBay, mints ids, fabricates deterministic orders | **Built**: `RealEbayClient` (`src/lib/ebay/real.ts`) + OAuth flow (`src/lib/ebay/oauth.ts`, `/api/ebay/connect` + `/api/ebay/callback`). Selected per user in `src/lib/ebay/index.ts` once connected. |
 
@@ -109,3 +109,5 @@ connection keep the built-in demo sandbox.
 - Order statuses SHIPPED/REFUNDED exist in the schema and P&L logic, but no
   flow sets them until the real eBay order import lands.
 - Daily chart buckets use UTC day boundaries, not the seller's timezone.
+- Arbitrage matching is title-based; verify both links before mirroring —
+  a cheap look-alike can inflate an apparent margin.

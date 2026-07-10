@@ -162,6 +162,16 @@ model SyncRun {
   @@index([userId, startedAt])
 }
 
+// Generic JSON cache for expensive external scans (e.g. the daily arbitrage
+// scan, which costs paid API credits) — shared across users.
+model ScanCache {
+  id        String   @id @default(cuid())
+  cacheKey  String   @unique
+  dataJson  String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
 // A detected mismatch between supplier truth and the live listing.
 model SyncIssue {
   id        String    @id @default(cuid())

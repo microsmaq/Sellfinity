@@ -1,6 +1,6 @@
 import type { SupplierProductState, SupplierProvider } from "./provider";
 import { MockSupplierProvider } from "./mock-supplier";
-import { amazonStateForDay } from "@/lib/mirror/mock-amazon";
+import { amazonProductState } from "@/lib/mirror";
 
 // Swap point for real supplier/market-data integrations: replace either
 // branch (feed supplier, Amazon state lookups) and the rest of the app
@@ -8,14 +8,12 @@ import { amazonStateForDay } from "@/lib/mirror/mock-amazon";
 
 const megaSupply = new MockSupplierProvider();
 
-function currentDayNumber(): number {
-  return Math.floor(Date.now() / 86_400_000);
-}
-
 /**
  * Routes by supplier product id: the sourcing feed comes from the wholesale
  * supplier; product-state lookups (inventory sync) also cover mirrored Amazon
  * products, whose ids are ASINs (10 alphanumerics) rather than MS-xxxx.
+ * Amazon lookups go through the active scraper (real when Rainforest is
+ * configured, sandbox otherwise).
  */
 class RoutingSupplierProvider implements SupplierProvider {
   getTrendingCandidates() {
@@ -28,7 +26,7 @@ class RoutingSupplierProvider implements SupplierProvider {
 
   async getProductState(supplierProductId: string): Promise<SupplierProductState> {
     if (/^[A-Z0-9]{10}$/.test(supplierProductId)) {
-      return amazonStateForDay(supplierProductId, currentDayNumber());
+      return amazonProductState(supplierProductId);
     }
     return megaSupply.getProductState(supplierProductId);
   }

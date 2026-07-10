@@ -5,7 +5,11 @@ import { ArbitrageTable } from "./arbitrage-table";
 
 export const metadata = { title: "Arbitrage finder — Sellfinity" };
 
-const INITIAL_COUNT = 50;
+// Real scans call paid external APIs; allow time for the first scan of the
+// day and keep the initial page conservative (Load more extends it).
+export const maxDuration = 60;
+
+const INITIAL_COUNT = 20;
 
 export default async function ArbitragePage() {
   const user = await requireUser();

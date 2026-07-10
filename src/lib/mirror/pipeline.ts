@@ -5,7 +5,8 @@
 import { db } from "@/lib/db";
 import { getScraper } from "./index";
 import type { ProductPageScraper } from "./scraper";
-import { AMAZON_SUPPLIER_NAME } from "./mock-amazon";
+
+const AMAZON_SUPPLIER_NAME = "Amazon";
 import { generateMirrorDescription, generateSeoTitle } from "./seo";
 import { LISTING_QUANTITY_CAP } from "@/lib/listings/generate";
 import { suggestPriceCents } from "@/lib/sourcing/scoring";

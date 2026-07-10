@@ -245,7 +245,7 @@ export function ArbitrageTable({ initialRows }: { initialRows: OpportunityRow[] 
               </th>
               <th className="px-4 py-3">Product</th>
               <SortHeader label="eBay price" sortKey="ebayPrice" sort={sort} onSort={onSort} />
-              <SortHeader label="Sales (30d)" sortKey="sales" sort={sort} onSort={onSort} />
+              <SortHeader label="Est. sales/30d" sortKey="sales" sort={sort} onSort={onSort} />
               <SortHeader label="Amazon price" sortKey="amazonPrice" sort={sort} onSort={onSort} />
               <th className="px-4 py-3 text-right">eBay fees</th>
               <SortHeader label="Profit / unit" sortKey="profit" sort={sort} onSort={onSort} />

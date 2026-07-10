@@ -16,6 +16,8 @@ export default defineConfig({
     env: {
       DATABASE_URL: testDbUrl,
       DIRECT_DATABASE_URL: testDbUrl,
+      // Tests are hermetic: never select the real (paid) data providers.
+      RAINFOREST_API_KEY: "",
     },
     // The integration suite shares one database — no parallel files.
     fileParallelism: false,
