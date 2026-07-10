@@ -1,7 +1,7 @@
 import { requireUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { getEbayClientForUser } from "@/lib/ebay";
-import { estimateMargin } from "@/lib/fees";
+import { buildEbayRows } from "@/lib/listings/ebay-rows";
 import { parseImageUrls } from "@/lib/types";
 import { PageHeader, Badge } from "@/components/ui";
 import { ListingsView, type ListingRow, type UnlistedRow } from "./listings-view";
@@ -48,54 +48,7 @@ export default async function ListingsPage() {
     try {
       const client = await getEbayClientForUser(user.id);
       const remote = await client.getSellerListings(user.id);
-      const byEbayId = new Map(
-        listings
-          .filter((l) => l.ebayListingId)
-          .map((l) => [l.ebayListingId!, l]),
-      );
-      ebayRows = remote.map((r) => {
-        const local = byEbayId.get(r.ebayListingId);
-        if (!local) {
-          return {
-            ebayListingId: r.ebayListingId,
-            title: r.title,
-            priceCents: r.priceCents,
-            url: r.url,
-            imageUrl: r.imageUrl,
-            quantity: r.quantity,
-            match: null,
-          };
-        }
-        const margin = estimateMargin(
-          r.priceCents,
-          local.product.costCents,
-          local.product.shippingCostCents,
-        );
-        return {
-          ebayListingId: r.ebayListingId,
-          title: r.title,
-          priceCents: r.priceCents,
-          url: r.url,
-          imageUrl: r.imageUrl ?? parseImageUrls(local.imageUrlsJson)[0] ?? null,
-          quantity: r.quantity,
-          match: {
-            sku: local.product.sku,
-            amazonPriceCents: local.product.costCents,
-            amazonUrl: local.product.supplierUrl,
-            profitCents: margin.estimatedProfitCents,
-            marginPct: Math.round(margin.marginPct),
-            unavailable: local.product.supplierStock === 0,
-          },
-        };
-      });
-      // Problems first: unavailable, then unprofitable, then thinnest margins.
-      ebayRows.sort((a, b) => {
-        const rank = (r: EbayRow) =>
-          !r.match ? 2 : r.match.unavailable ? 0 : r.match.profitCents <= 0 ? 1 : 3;
-        const d = rank(a) - rank(b);
-        if (d !== 0) return d;
-        return (a.match?.profitCents ?? 0) - (b.match?.profitCents ?? 0);
-      });
+      ebayRows = buildEbayRows(remote, listings);
     } catch (e) {
       ebayFetchError = e instanceof Error ? e.message.slice(0, 200) : "eBay lookup failed";
     }
