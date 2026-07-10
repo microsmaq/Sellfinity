@@ -95,15 +95,31 @@ export function ArbitrageTable({ initial }: { initial: ArbitragePage }) {
     return r.mirrored || mirroredNow.has(r.asin);
   }
 
+  const SCAN_TARGET = 50;
+
   function scanNow() {
     setNotice(null);
     startScan(async () => {
-      const report = await scanForNew();
+      let added = 0;
+      let examined = 0;
+      let exhausted = false;
+      // Each call is time-boxed server-side; loop until the full target of
+      // new items has been researched (or today's sources run dry).
+      while (added < SCAN_TARGET && !exhausted) {
+        const report = await scanForNew(SCAN_TARGET - added);
+        added += report.added;
+        examined += report.examined;
+        exhausted = report.exhausted;
+        setNotice({
+          text: `Researching… ${added}/${SCAN_TARGET} new items added (${examined} candidates examined)`,
+          error: false,
+        });
+        if (report.added === 0 && report.examined === 0 && !exhausted) break; // safety
+      }
       setNotice({
         text:
-          `Scan complete: ${report.added} new opportunit${report.added === 1 ? "y" : "ies"} added` +
-          ` (${report.examined} candidates examined)` +
-          (report.exhausted ? " — today's sources are fully scanned; more tomorrow." : "."),
+          `Scan complete: ${added} new item${added === 1 ? "" : "s"} added (${examined} candidates examined)` +
+          (exhausted ? " — today's sources are fully scanned; more tomorrow." : "."),
         error: false,
       });
       setData(await fetchArbitragePage(params));
@@ -193,7 +209,7 @@ export function ArbitrageTable({ initial }: { initial: ArbitragePage }) {
         </p>
         <div className="ml-auto flex items-center gap-2">
           <Button variant="secondary" disabled={scanning} onClick={scanNow}>
-            {scanning ? "Scanning…" : "Scan for new products"}
+            {scanning ? "Researching…" : "Scan for 50 new items"}
           </Button>
           <Button disabled={pending || selected.size === 0} onClick={mirrorSelected}>
             {`Mirror selected (${selected.size})`}

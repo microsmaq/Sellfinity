@@ -17,23 +17,41 @@ import type { ScanReport } from "./scan-types";
 const CATEGORY_KEYWORDS: { category: string; keyword: string }[] = [
   { category: "Home & Kitchen", keyword: "kitchen gadgets" },
   { category: "Home & Kitchen", keyword: "coffee accessories" },
+  { category: "Home & Kitchen", keyword: "air fryer accessories" },
+  { category: "Home & Kitchen", keyword: "kitchen organization" },
+  { category: "Home & Kitchen", keyword: "baking tools" },
   { category: "Pet Supplies", keyword: "dog grooming kit" },
   { category: "Pet Supplies", keyword: "cat toys interactive" },
+  { category: "Pet Supplies", keyword: "dog training supplies" },
+  { category: "Pet Supplies", keyword: "pet travel accessories" },
   { category: "Fitness & Outdoors", keyword: "home workout equipment" },
   { category: "Fitness & Outdoors", keyword: "camping accessories" },
+  { category: "Fitness & Outdoors", keyword: "resistance bands set" },
+  { category: "Fitness & Outdoors", keyword: "hiking gear" },
+  { category: "Fitness & Outdoors", keyword: "yoga accessories" },
   { category: "Electronics", keyword: "phone accessories" },
   { category: "Electronics", keyword: "bluetooth speaker portable" },
+  { category: "Electronics", keyword: "wireless charger stand" },
+  { category: "Electronics", keyword: "car accessories electronics" },
+  { category: "Electronics", keyword: "led strip lights" },
   { category: "Garden & Tools", keyword: "garden tools set" },
   { category: "Garden & Tools", keyword: "solar outdoor lights" },
+  { category: "Garden & Tools", keyword: "plant care tools" },
+  { category: "Garden & Tools", keyword: "outdoor patio decor" },
   { category: "Toys & Games", keyword: "kids educational toys" },
   { category: "Toys & Games", keyword: "sensory toys" },
+  { category: "Toys & Games", keyword: "building blocks toys" },
+  { category: "Toys & Games", keyword: "party games kids" },
+  { category: "Home Improvement", keyword: "bathroom organizer" },
+  { category: "Home Improvement", keyword: "wall mounted shelf" },
+  { category: "Beauty & Health", keyword: "massage tools" },
 ];
 
 const BROWSE_PAGE_SIZE = 40;
+/** How deep to paginate each keyword's Browse results. */
+const MAX_PAGES_PER_KEYWORD = 5;
 const MIN_EBAY_PRICE_CENTS = 800;
 const MAX_EBAY_PRICE_CENTS = 15000;
-/** Amazon price must be at most this fraction of the eBay price. */
-const MAX_SOURCE_RATIO = 0.85;
 const LOOKUP_BATCH = 5;
 
 /** Deterministic demand estimate (real sold-velocity needs the
@@ -59,14 +77,20 @@ type EbayCandidate = {
 
 type ScanCursor = {
   pending: EbayCandidate[];
-  nextKeyword: number;
+  keywordIdx: number;
+  pageOffset: number;
   exhausted: boolean;
 };
 
-const EMPTY_CURSOR: ScanCursor = { pending: [], nextKeyword: 0, exhausted: false };
+const EMPTY_CURSOR: ScanCursor = {
+  pending: [],
+  keywordIdx: 0,
+  pageOffset: 0,
+  exhausted: false,
+};
 
 /** Cap on the rolling examined-set (each entry saved one repeat credit). */
-const EXAMINED_CAP = 8000;
+const EXAMINED_CAP = 20000;
 
 function currentDayNumber(): number {
   return Math.floor(Date.now() / 86_400_000);
@@ -86,10 +110,10 @@ async function saveJson(cacheKey: string, data: unknown): Promise<void> {
   });
 }
 
-
 async function browseSearch(
   keyword: string,
   category: string,
+  offset = 0,
 ): Promise<EbayCandidate[]> {
   const config = ebayEnvConfig();
   if (!config) return [];
@@ -97,6 +121,7 @@ async function browseSearch(
   const params = new URLSearchParams({
     q: keyword,
     limit: String(BROWSE_PAGE_SIZE),
+    offset: String(offset),
     filter: `price:[${(MIN_EBAY_PRICE_CENTS / 100).toFixed(0)}..${(MAX_EBAY_PRICE_CENTS / 100).toFixed(0)}],priceCurrency:USD,buyingOptions:{FIXED_PRICE}`,
   });
   const res = await fetch(
@@ -150,10 +175,11 @@ async function amazonMatch(
 ): Promise<ArbitrageOpportunity | null> {
   const match = await findAmazonMatch(candidate.title);
   if (!match) return null;
-  if (match.priceCents > candidate.priceCents * MAX_SOURCE_RATIO) return null;
+  // Break-even and better both qualify: the Amazon source just can't cost
+  // more than the eBay comp — the seller adds their margin at publish time.
+  if (match.priceCents > candidate.priceCents) return null;
 
   const margin = estimateMargin(candidate.priceCents, match.priceCents, 0);
-  if (margin.estimatedProfitCents <= 0) return null;
 
   return {
     category: candidate.category,
@@ -176,13 +202,18 @@ async function amazonMatch(
 }
 
 /**
- * Advance the research scan within a time budget, persisting every match to
- * the ArbitrageItem table. The keyword cursor resets daily (fresh Browse
- * pages); the examined-set is global so a candidate is never paid for twice.
+ * Advance the research scan until `target` NEW items are added (or all of
+ * today's sources are exhausted), within a per-request time budget — callers
+ * loop requests to finish the target. Every match is persisted immediately;
+ * the examined-set is global so no candidate lookup is ever paid for twice.
  */
-export async function realScanMore(timeBudgetMs = 22_000): Promise<ScanReport> {
-  const deadline = Date.now() + timeBudgetMs;
-  const cursorKey = `arbitrage:cursor:${currentDayNumber()}`;
+export async function realScanMore(opts: {
+  target?: number;
+  timeBudgetMs?: number;
+} = {}): Promise<ScanReport> {
+  const target = opts.target ?? 50;
+  const deadline = Date.now() + (opts.timeBudgetMs ?? 22_000);
+  const cursorKey = `arbitrage:cursor2:${currentDayNumber()}`;
   const cursor = await loadJson<ScanCursor>(cursorKey, EMPTY_CURSOR);
   const examinedList = await loadJson<string[]>("arbitrage:examined", []);
   const examined = new Set(examinedList);
@@ -195,17 +226,28 @@ export async function realScanMore(timeBudgetMs = 22_000): Promise<ScanReport> {
     await saveJson("arbitrage:examined", [...examined].slice(-EXAMINED_CAP));
   };
 
-  while (!cursor.exhausted && Date.now() < deadline) {
+  while (added < target && !cursor.exhausted && Date.now() < deadline) {
     if (cursor.pending.length === 0) {
-      if (cursor.nextKeyword >= CATEGORY_KEYWORDS.length) {
+      if (cursor.keywordIdx >= CATEGORY_KEYWORDS.length) {
         cursor.exhausted = true;
         break;
       }
+      // Day-dependent rotation so scanning starts somewhere new each day.
       const idx =
-        (cursor.nextKeyword + currentDayNumber()) % CATEGORY_KEYWORDS.length;
+        (cursor.keywordIdx + currentDayNumber()) % CATEGORY_KEYWORDS.length;
       const { keyword, category } = CATEGORY_KEYWORDS[idx];
-      cursor.nextKeyword++;
-      const candidates = await browseSearch(keyword, category);
+      const candidates = await browseSearch(keyword, category, cursor.pageOffset);
+      // Advance: next page of this keyword, or the next keyword when the
+      // pages run dry.
+      if (
+        candidates.length < BROWSE_PAGE_SIZE ||
+        cursor.pageOffset + BROWSE_PAGE_SIZE >= BROWSE_PAGE_SIZE * MAX_PAGES_PER_KEYWORD
+      ) {
+        cursor.keywordIdx++;
+        cursor.pageOffset = 0;
+      } else {
+        cursor.pageOffset += BROWSE_PAGE_SIZE;
+      }
       cursor.pending.push(...candidates.filter((c) => !examined.has(c.itemId)));
       continue;
     }

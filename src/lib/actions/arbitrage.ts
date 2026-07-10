@@ -20,10 +20,11 @@ export async function fetchArbitragePage(
   return listArbitragePage(user.id, params);
 }
 
-/** Advance the scan now ("add more to the database"). */
-export async function scanForNew(): Promise<ScanReport> {
+/** Advance the scan now ("add more to the database"). Each call is
+ * time-boxed; the client loops until its target is reached. */
+export async function scanForNew(target = 50): Promise<ScanReport> {
   await requireUser();
-  const report = await scanMore();
+  const report = await scanMore({ target: Math.min(Math.max(1, target), 50) });
   revalidatePath("/arbitrage");
   return report;
 }

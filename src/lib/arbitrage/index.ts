@@ -11,7 +11,7 @@ function isRealScan(): boolean {
   );
 }
 
-const MOCK_STEP = 25;
+const MOCK_STEP = 50;
 
 /** Sandbox scan: deterministically extend the research database. Requires an
  * explicit opt-in — a dev machine pointed at the production database must
@@ -39,6 +39,9 @@ async function mockScanMore(): Promise<ScanReport> {
  * Advance the research scan (real APIs on production with a Rainforest key,
  * deterministic sandbox otherwise). New matches land in ArbitrageItem.
  */
-export async function scanMore(timeBudgetMs?: number): Promise<ScanReport> {
-  return isRealScan() ? realScanMore(timeBudgetMs) : mockScanMore();
+export async function scanMore(opts?: {
+  target?: number;
+  timeBudgetMs?: number;
+}): Promise<ScanReport> {
+  return isRealScan() ? realScanMore(opts) : mockScanMore();
 }

@@ -11,7 +11,7 @@ export async function GET(request: Request) {
   if (!secret || request.headers.get("authorization") !== `Bearer ${secret}`) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
-  const report = await scanMore(45_000);
+  const report = await scanMore({ target: 50, timeBudgetMs: 50_000 });
   console.log(
     `cron arbitrage scan: +${report.added} added, ${report.examined} examined, exhausted=${report.exhausted}`,
   );
