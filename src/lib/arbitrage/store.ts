@@ -3,39 +3,55 @@ import { db } from "@/lib/db";
 import { ebayEnvConfig } from "@/lib/ebay/oauth";
 import type { ArbitrageOpportunity, OpportunityRow } from "./scanner";
 
-/** Upsert scanned opportunities into the shared research database. */
+/** Upsert scanned opportunities into the shared research database.
+ * Batched: one lookup + one createMany for new rows, individual updates
+ * only for repeats (rare). Returns how many were genuinely new. */
 export async function persistOpportunities(
   opportunities: ArbitrageOpportunity[],
 ): Promise<number> {
-  let added = 0;
-  for (const o of opportunities) {
-    const data = {
-      ebayTitle: o.ebay.title,
-      ebayPriceCents: o.ebay.priceCents,
-      ebayUrl: o.ebay.url,
-      imageUrl: o.ebay.imageUrl,
-      category: o.category,
-      asin: o.amazon.asin,
-      amazonTitle: o.amazon.title,
-      amazonPriceCents: o.amazon.priceCents,
-      amazonUrl: o.amazon.url,
-      profitCents: o.margin.estimatedProfitCents,
-      marginPct: Math.round(o.margin.marginPct),
-      feeCents: o.margin.estimatedFeeCents,
-      salesEst: o.ebay.salesLast30d,
-    };
-    const existing = await db.arbitrageItem.findUnique({
-      where: { ebayItemId: o.ebay.itemId },
-      select: { id: true },
+  if (opportunities.length === 0) return 0;
+  // Dedupe within the batch (last one wins), then split new vs. existing.
+  const byId = new Map(opportunities.map((o) => [o.ebay.itemId, o]));
+  const ids = [...byId.keys()];
+  const existing = new Set(
+    (
+      await db.arbitrageItem.findMany({
+        where: { ebayItemId: { in: ids } },
+        select: { ebayItemId: true },
+      })
+    ).map((r) => r.ebayItemId),
+  );
+
+  const toData = (o: ArbitrageOpportunity) => ({
+    ebayTitle: o.ebay.title,
+    ebayPriceCents: o.ebay.priceCents,
+    ebayUrl: o.ebay.url,
+    imageUrl: o.ebay.imageUrl,
+    category: o.category,
+    asin: o.amazon.asin,
+    amazonTitle: o.amazon.title,
+    amazonPriceCents: o.amazon.priceCents,
+    amazonUrl: o.amazon.url,
+    profitCents: o.margin.estimatedProfitCents,
+    marginPct: Math.round(o.margin.marginPct),
+    feeCents: o.margin.estimatedFeeCents,
+    salesEst: o.ebay.salesLast30d,
+  });
+
+  const fresh = [...byId.values()].filter((o) => !existing.has(o.ebay.itemId));
+  if (fresh.length > 0) {
+    await db.arbitrageItem.createMany({
+      data: fresh.map((o) => ({ ebayItemId: o.ebay.itemId, ...toData(o) })),
+      skipDuplicates: true,
     });
-    if (existing) {
-      await db.arbitrageItem.update({ where: { id: existing.id }, data });
-    } else {
-      await db.arbitrageItem.create({ data: { ebayItemId: o.ebay.itemId, ...data } });
-      added++;
-    }
   }
-  return added;
+  for (const o of [...byId.values()].filter((o) => existing.has(o.ebay.itemId))) {
+    await db.arbitrageItem.update({
+      where: { ebayItemId: o.ebay.itemId },
+      data: toData(o),
+    });
+  }
+  return fresh.length;
 }
 
 export const PAGE_SIZE = 25;

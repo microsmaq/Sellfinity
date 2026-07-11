@@ -11,6 +11,8 @@ import {
   type TrackInput,
   type TrackResult,
 } from "@/lib/mirror/track";
+import { classifyListing } from "@/lib/listings/cleanup";
+import { estimateMargin } from "@/lib/fees";
 
 export type EbayListingResult = { error?: string };
 
@@ -105,4 +107,85 @@ export async function endEbayListing(
   });
   revalidate();
   return {};
+}
+
+export type CleanupItemResult = {
+  ebayListingId: string;
+  action: "ok" | "repriced" | "ended" | "error";
+  newPriceCents?: number;
+  profitCents?: number;
+  marginPct?: number;
+  error?: string;
+};
+
+/** How many listings one clean-up batch call processes. */
+const CLEANUP_BATCH_SIZE = 10;
+
+/**
+ * Clean up a batch of tracked listings: raise prices to the 30%-margin /
+ * $7-profit target (whichever is cheaper), end listings whose margin is
+ * beyond -30%. The client loops batches with progress.
+ */
+export async function cleanupEbayListings(
+  ebayListingIds: string[],
+): Promise<CleanupItemResult[]> {
+  const user = await requireUser();
+  const client = await getEbayClientForUser(user.id);
+  const results: CleanupItemResult[] = [];
+
+  for (const ebayListingId of ebayListingIds.slice(0, CLEANUP_BATCH_SIZE)) {
+    const listing = await db.listing.findFirst({
+      where: { userId: user.id, ebayListingId, status: "ACTIVE" },
+      include: { product: true },
+    });
+    if (!listing) {
+      results.push({ ebayListingId, action: "error", error: "Not tracked/active" });
+      continue;
+    }
+    const decision = classifyListing(
+      listing.priceCents,
+      listing.product.costCents,
+      listing.product.shippingCostCents,
+    );
+    try {
+      if (decision.action === "reprice") {
+        await client.updateListing(ebayListingId, {
+          priceCents: decision.newPriceCents,
+        });
+        await db.listing.update({
+          where: { id: listing.id },
+          data: { priceCents: decision.newPriceCents },
+        });
+        const margin = estimateMargin(
+          decision.newPriceCents,
+          listing.product.costCents,
+          listing.product.shippingCostCents,
+        );
+        results.push({
+          ebayListingId,
+          action: "repriced",
+          newPriceCents: decision.newPriceCents,
+          profitCents: margin.estimatedProfitCents,
+          marginPct: Math.round(margin.marginPct),
+        });
+      } else if (decision.action === "end") {
+        await client.endListing(ebayListingId);
+        await db.listing.update({
+          where: { id: listing.id },
+          data: { status: "ENDED", endedAt: new Date() },
+        });
+        results.push({ ebayListingId, action: "ended" });
+      } else {
+        results.push({ ebayListingId, action: "ok" });
+      }
+    } catch (e) {
+      results.push({
+        ebayListingId,
+        action: "error",
+        error: e instanceof EbayApiError ? e.message.slice(0, 150) : "failed",
+      });
+    }
+  }
+  revalidate();
+  return results;
 }
