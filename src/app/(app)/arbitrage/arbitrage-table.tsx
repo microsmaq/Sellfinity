@@ -6,6 +6,7 @@ import {
   fetchArbitragePage,
   mirrorOpportunities,
   mirrorOpportunity,
+  researchArbitrageMarket,
   scanForNew,
 } from "@/lib/actions/arbitrage";
 import type { ArbitragePage, ArbitragePageParams } from "@/lib/arbitrage/store";
@@ -62,6 +63,7 @@ export function ArbitrageTable({ initial }: { initial: ArbitragePage }) {
   const [mirroredNow, setMirroredNow] = useState<Set<string>>(new Set());
   const [pending, startTransition] = useTransition();
   const [scanning, startScan] = useTransition();
+  const [researching, startResearch] = useTransition();
   const [busyAsin, setBusyAsin] = useState<string | null>(null);
   const [notice, setNotice] = useState<{ text: string; error: boolean } | null>(null);
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -123,6 +125,53 @@ export function ArbitrageTable({ initial }: { initial: ArbitragePage }) {
         error: false,
       });
       setData(await fetchArbitragePage(params));
+    });
+  }
+
+  function researchPage() {
+    setNotice(null);
+    startResearch(async () => {
+      let updated = 0;
+      let unavailable = 0;
+      let errors = 0;
+      for (let i = 0; i < data.rows.length; i += 10) {
+        const results = await researchArbitrageMarket(
+          data.rows.slice(i, i + 10).map((row) => ({
+            asin: row.asin,
+            ebayItemId: row.ebayItemId,
+            title: row.title,
+          })),
+        );
+        setData((previous) => ({
+          ...previous,
+          rows: previous.rows.map((row) => {
+            const result = results.find(
+              (item) => item.ebayItemId === row.ebayItemId,
+            );
+            return result?.market
+              ? {
+                  ...row,
+                  ebaySales30d: result.market.estimatedSales30d,
+                  competitorCount: result.market.competitorCount,
+                  avgCompPriceCents: result.market.averageCompetitorPriceCents,
+                }
+              : row;
+          }),
+        }));
+        updated += results.filter((result) => result.market).length;
+        unavailable += results.filter(
+          (result) => !result.market && !result.error,
+        ).length;
+        errors += results.filter((result) => result.error).length;
+        setNotice({
+          text: `Researching page… ${Math.min(i + 10, data.rows.length)}/${data.rows.length} (${updated} updated)`,
+          error: false,
+        });
+      }
+      setNotice({
+        text: `Market research complete: ${updated} updated${unavailable ? `, ${unavailable} without comparable results` : ""}${errors ? `, ${errors} failed` : ""}.`,
+        error: errors > 0,
+      });
     });
   }
 
@@ -211,6 +260,9 @@ export function ArbitrageTable({ initial }: { initial: ArbitragePage }) {
           <Button variant="secondary" disabled={scanning} onClick={scanNow}>
             {scanning ? "Researching…" : "Scan for 50 new items"}
           </Button>
+          <Button variant="secondary" disabled={researching} onClick={researchPage}>
+            {researching ? "Researching market…" : "Research market data"}
+          </Button>
           <Button disabled={pending || selected.size === 0} onClick={mirrorSelected}>
             {`Mirror selected (${selected.size})`}
           </Button>
@@ -252,6 +304,8 @@ export function ArbitrageTable({ initial }: { initial: ArbitragePage }) {
               <th className="px-4 py-3">Product</th>
               <SortHeader label="eBay price" sortKey="ebayPrice" params={params} onSort={onSort} />
               <SortHeader label="Est. sales/30d" sortKey="sales" params={params} onSort={onSort} />
+              <th className="px-4 py-3 text-right">Competition</th>
+              <th className="px-4 py-3 text-right">Avg. comp price</th>
               <SortHeader label="Amazon price" sortKey="amazonPrice" params={params} onSort={onSort} />
               <SortHeader label="Profit / unit" sortKey="profit" params={params} onSort={onSort} />
               <SortHeader label="Margin" sortKey="margin" params={params} onSort={onSort} />
@@ -262,7 +316,7 @@ export function ArbitrageTable({ initial }: { initial: ArbitragePage }) {
           <tbody>
             {data.rows.map((r) => (
               <tr
-                key={r.asin}
+                key={r.ebayItemId}
                 className={cx(
                   "border-b border-slate-100 last:border-0",
                   selected.has(r.asin) && "bg-indigo-50/50",
@@ -314,6 +368,14 @@ export function ArbitrageTable({ initial }: { initial: ArbitragePage }) {
                 </td>
                 <td className="px-4 py-3 text-right tabular-nums">{r.ebaySales30d}</td>
                 <td className="px-4 py-3 text-right tabular-nums">
+                  {r.competitorCount ?? "—"}
+                </td>
+                <td className="px-4 py-3 text-right tabular-nums">
+                  {r.avgCompPriceCents !== null
+                    ? formatCents(r.avgCompPriceCents)
+                    : "—"}
+                </td>
+                <td className="px-4 py-3 text-right tabular-nums">
                   {formatCents(r.amazonPriceCents)}
                 </td>
                 <td className="px-4 py-3 text-right font-medium tabular-nums text-emerald-600">
@@ -352,7 +414,7 @@ export function ArbitrageTable({ initial }: { initial: ArbitragePage }) {
             ))}
             {data.rows.length === 0 && (
               <tr>
-                <td colSpan={9} className="px-4 py-12 text-center text-slate-500">
+                <td colSpan={11} className="px-4 py-12 text-center text-slate-500">
                   {data.total === 0
                     ? "The research database is empty — run a scan to start filling it."
                     : "No opportunities match these filters."}

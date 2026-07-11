@@ -61,6 +61,7 @@ export function buildEbayRows(
         url: r.url,
         imageUrl: r.imageUrl,
         quantity: r.quantity,
+        market: marketMetrics.get(r.ebayListingId) ?? null,
         match: null,
       });
       continue;
@@ -77,6 +78,10 @@ export function buildEbayRows(
       url: r.url,
       imageUrl: r.imageUrl ?? firstImage(localListing.imageUrlsJson),
       quantity: r.quantity,
+      market:
+        marketMetrics.get(r.ebayListingId) ??
+        marketMetrics.get(localListing.product.sku) ??
+        null,
       match: {
         sku: localListing.product.sku,
         amazonPriceCents: localListing.product.costCents,
@@ -84,7 +89,6 @@ export function buildEbayRows(
         profitCents: margin.estimatedProfitCents,
         marginPct: Math.round(margin.marginPct),
         unavailable: localListing.product.supplierStock === 0,
-        market: marketMetrics.get(localListing.product.sku) ?? null,
       },
     });
   }

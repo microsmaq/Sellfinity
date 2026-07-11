@@ -145,11 +145,14 @@ export async function listArbitragePage(
   return {
     rows: items.map((i) => ({
       asin: i.asin,
+      ebayItemId: i.ebayItemId,
       category: i.category,
       title: i.ebayTitle,
       imageUrl: i.imageUrl,
       ebayPriceCents: i.ebayPriceCents,
       ebaySales30d: i.salesEst,
+      competitorCount: i.competitorCount,
+      avgCompPriceCents: i.avgCompPriceCents,
       ebayUrl: i.ebayUrl,
       amazonPriceCents: i.amazonPriceCents,
       amazonUrl: i.amazonUrl,

@@ -6,6 +6,8 @@ import { db } from "@/lib/db";
 import { getEbayClientForUser } from "@/lib/ebay";
 import { EbayApiError } from "@/lib/ebay/client";
 import { isAlreadyEndedEbayError } from "@/lib/ebay/errors";
+import { researchEbayMarket } from "@/lib/ebay/market";
+import type { ListingMarketMetrics } from "@/lib/listings/market-metrics";
 import {
   matchAndTrackListing,
   untrackListing,
@@ -39,6 +41,56 @@ export async function matchEbayListing(input: TrackInput): Promise<TrackResult> 
  * serverless time limit; the client loops batches for Match-all). */
 const MATCH_BATCH_SIZE = 10;
 const MATCH_CONCURRENCY = 5;
+
+export type MarketResearchResult = {
+  ebayListingId: string;
+  market: ListingMarketMetrics | null;
+  error?: string;
+};
+
+/** Research live eBay competitors in small batches; the client loops over
+ * larger sets and cached results are reused on future page loads. */
+export async function researchEbayListingsMarket(
+  items: { ebayListingId: string; title: string }[],
+): Promise<MarketResearchResult[]> {
+  const user = await requireUser();
+  const batch = items.slice(0, 10);
+  const results: MarketResearchResult[] = [];
+  // Sequential within each small batch avoids racing multiple client-token
+  // requests on a cold serverless instance and stays below eBay burst limits.
+  for (const item of batch) {
+    try {
+      const result = await researchEbayMarket(item.title, item.ebayListingId);
+      if (!result) {
+        results.push({ ebayListingId: item.ebayListingId, market: null });
+        continue;
+      }
+      await db.ebayMarketMetric.upsert({
+        where: {
+          userId_ebayListingId: {
+            userId: user.id,
+            ebayListingId: item.ebayListingId,
+          },
+        },
+        create: {
+          userId: user.id,
+          ebayListingId: item.ebayListingId,
+          query: result.query,
+          ...result.metrics,
+        },
+        update: { query: result.query, ...result.metrics },
+      });
+      results.push({ ebayListingId: item.ebayListingId, market: result.metrics });
+    } catch (error) {
+      results.push({
+        ebayListingId: item.ebayListingId,
+        market: null,
+        error: error instanceof Error ? error.message.slice(0, 120) : "Research failed",
+      });
+    }
+  }
+  return results;
+}
 
 /** Match a batch of listings; the client drives successive batches. */
 export async function matchEbayListingsBatch(

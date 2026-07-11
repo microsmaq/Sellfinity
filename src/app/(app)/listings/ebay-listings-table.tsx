@@ -7,6 +7,7 @@ import {
   matchEbayListing,
   matchEbayListingsBatch,
   repriceEbayListing,
+  researchEbayListingsMarket,
   unmatchEbayListing,
 } from "@/lib/actions/ebay-listings";
 import { classifyListing } from "@/lib/listings/cleanup";
@@ -20,6 +21,11 @@ export type EbayRow = {
   url: string;
   imageUrl: string | null;
   quantity: number | null;
+  market: {
+    estimatedSales30d: number;
+    competitorCount: number;
+    averageCompetitorPriceCents: number;
+  } | null;
   /** Amazon source data when this listing is matched/tracked. */
   match: {
     sku: string;
@@ -28,11 +34,6 @@ export type EbayRow = {
     profitCents: number;
     marginPct: number;
     unavailable: boolean;
-    market: {
-      estimatedSales30d: number;
-      competitorCount: number;
-      averageCompetitorPriceCents: number;
-    } | null;
   } | null;
 };
 
@@ -105,7 +106,7 @@ export function EbayListingsTable({
     setRows((prev) =>
       prev.map((row) => {
         const r = results.find((x) => x.ebayListingId === row.ebayListingId);
-        return r && r.ok ? { ...row, match: { ...r.match, market: null } } : row;
+        return r && r.ok ? { ...row, match: r.match } : row;
       }),
     );
   }
@@ -197,6 +198,48 @@ export function EbayListingsTable({
     });
   }
 
+  function researchMarket() {
+    const missing = rows.filter((row) => !row.market);
+    if (missing.length === 0) {
+      setNotice({ text: "Market research is already available for every matched listing.", error: false });
+      return;
+    }
+    setNotice(null);
+    startTransition(async () => {
+      let researched = 0;
+      let unavailable = 0;
+      let errors = 0;
+      for (let i = 0; i < missing.length; i += 10) {
+        const batch = missing.slice(i, i + 10).map((row) => ({
+          ebayListingId: row.ebayListingId,
+          title: row.title,
+        }));
+        const results = await researchEbayListingsMarket(batch);
+        setRows((previous) =>
+          previous.map((row) => {
+            const result = results.find(
+              (item) => item.ebayListingId === row.ebayListingId,
+            );
+            return result?.market
+              ? { ...row, market: result.market }
+              : row;
+          }),
+        );
+        researched += results.filter((result) => result.market).length;
+        unavailable += results.filter((result) => !result.market && !result.error).length;
+        errors += results.filter((result) => result.error).length;
+        setBulkProgress(
+          `Researching… ${Math.min(i + 10, missing.length)}/${missing.length} (${researched} found)`,
+        );
+      }
+      setBulkProgress(null);
+      setNotice({
+        text: `Market research complete: ${researched} updated${unavailable ? `, ${unavailable} without comparable results` : ""}${errors ? `, ${errors} failed` : ""}.`,
+        error: errors > 0,
+      });
+    });
+  }
+
   function run(id: string, fn: () => Promise<{ error?: string }>, onOk: () => void, okText: string) {
     setNotice(null);
     setBusyId(id);
@@ -223,6 +266,9 @@ export function EbayListingsTable({
         {problems > 0 && <Badge tone="red">{problems} need attention</Badge>}
         <Button size="sm" variant="secondary" disabled={pending} onClick={cleanUp}>
           {bulkProgress?.startsWith("Cleaning") ? bulkProgress : "Clean up prices"}
+        </Button>
+        <Button size="sm" variant="secondary" disabled={pending} onClick={researchMarket}>
+          {bulkProgress?.startsWith("Researching") ? bulkProgress : "Research market data"}
         </Button>
         {unmatched > 0 && (
           <Button size="sm" disabled={pending} onClick={matchAll}>
@@ -354,14 +400,14 @@ export function EbayListingsTable({
                       : "—"}
                   </td>
                   <td className="px-4 py-3 text-right tabular-nums">
-                    {r.match?.market ? `~${r.match.market.estimatedSales30d}/mo` : "—"}
+                    {r.market ? `~${r.market.estimatedSales30d}/mo` : "—"}
                   </td>
                   <td className="px-4 py-3 text-right tabular-nums">
-                    {r.match?.market?.competitorCount ?? "—"}
+                    {r.market?.competitorCount ?? "—"}
                   </td>
                   <td className="px-4 py-3 text-right tabular-nums">
-                    {r.match?.market
-                      ? formatCents(r.match.market.averageCompetitorPriceCents)
+                    {r.market
+                      ? formatCents(r.market.averageCompetitorPriceCents)
                       : "—"}
                   </td>
                   <td className="px-4 py-3">

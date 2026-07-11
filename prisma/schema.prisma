@@ -33,6 +33,7 @@ model User {
   syncRuns                SyncRun[]
   syncIssues              SyncIssue[]
   ebayListingSuppressions EbayListingSuppression[]
+  ebayMarketMetrics       EbayMarketMetric[]
   ebayConnection          EbayConnection?
 }
 
@@ -44,6 +45,25 @@ model EbayListingSuppression {
   userId        String
   ebayListingId String
   createdAt     DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, ebayListingId])
+  @@index([userId])
+}
+
+// Cached market research for one of the seller's eBay listings. Refreshed on
+// demand in batches so opening Listings never fans out hundreds of API calls.
+model EbayMarketMetric {
+  id                          String   @id @default(cuid())
+  userId                      String
+  ebayListingId               String
+  estimatedSales30d           Int
+  competitorCount             Int
+  averageCompetitorPriceCents Int
+  query                       String
+  updatedAt                   DateTime @updatedAt
+  createdAt                   DateTime @default(now())
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -183,23 +203,25 @@ model SyncRun {
 // A researched arbitrage opportunity: a live eBay listing paired with a
 // cheaper Amazon source. Global (shared by all users); grows as scans run.
 model ArbitrageItem {
-  id               String   @id @default(cuid())
-  ebayItemId       String   @unique
-  ebayTitle        String
-  ebayPriceCents   Int
-  ebayUrl          String
-  imageUrl         String
-  category         String
-  asin             String
-  amazonTitle      String
-  amazonPriceCents Int
-  amazonUrl        String
-  profitCents      Int
-  marginPct        Int
-  feeCents         Int
-  salesEst         Int
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
+  id                String   @id @default(cuid())
+  ebayItemId        String   @unique
+  ebayTitle         String
+  ebayPriceCents    Int
+  ebayUrl           String
+  imageUrl          String
+  category          String
+  asin              String
+  amazonTitle       String
+  amazonPriceCents  Int
+  amazonUrl         String
+  profitCents       Int
+  marginPct         Int
+  feeCents          Int
+  salesEst          Int
+  competitorCount   Int?
+  avgCompPriceCents Int?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
 
   @@index([profitCents])
   @@index([category])

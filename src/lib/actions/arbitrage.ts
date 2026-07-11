@@ -11,6 +11,9 @@ import {
 import type { ScanReport } from "@/lib/arbitrage/scan-types";
 import { getScraper } from "@/lib/mirror";
 import { mirrorUrl, type MirrorOutcome } from "@/lib/mirror/pipeline";
+import { researchEbayMarket } from "@/lib/ebay/market";
+import { db } from "@/lib/db";
+import type { ListingMarketMetrics } from "@/lib/listings/market-metrics";
 
 /** One page of the research database (filters/sort/pagination server-side). */
 export async function fetchArbitragePage(
@@ -27,6 +30,53 @@ export async function scanForNew(target = 50): Promise<ScanReport> {
   const report = await scanMore({ target: Math.min(Math.max(1, target), 50) });
   revalidatePath("/arbitrage");
   return report;
+}
+
+export type ArbitrageMarketResult = {
+  asin: string;
+  ebayItemId: string;
+  market: ListingMarketMetrics | null;
+  error?: string;
+};
+
+/** Refresh demand, competition, and average comp price for a small batch of
+ * arbitrage rows using the same eBay market research as Listings. */
+export async function researchArbitrageMarket(
+  items: { asin: string; ebayItemId: string; title: string }[],
+): Promise<ArbitrageMarketResult[]> {
+  await requireUser();
+  const results: ArbitrageMarketResult[] = [];
+  for (const item of items.slice(0, 10)) {
+    try {
+      const result = await researchEbayMarket(item.title, item.ebayItemId);
+      if (!result) {
+        results.push({ asin: item.asin, ebayItemId: item.ebayItemId, market: null });
+        continue;
+      }
+      await db.arbitrageItem.updateMany({
+        where: { asin: item.asin, ebayItemId: item.ebayItemId },
+        data: {
+          salesEst: result.metrics.estimatedSales30d,
+          competitorCount: result.metrics.competitorCount,
+          avgCompPriceCents: result.metrics.averageCompetitorPriceCents,
+        },
+      });
+      results.push({
+        asin: item.asin,
+        ebayItemId: item.ebayItemId,
+        market: result.metrics,
+      });
+    } catch (error) {
+      results.push({
+        asin: item.asin,
+        ebayItemId: item.ebayItemId,
+        market: null,
+        error: error instanceof Error ? error.message.slice(0, 120) : "Research failed",
+      });
+    }
+  }
+  revalidatePath("/arbitrage");
+  return results;
 }
 
 /**

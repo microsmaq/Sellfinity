@@ -16,7 +16,7 @@ export const maxDuration = 60;
 export default async function ListingsPage() {
   const user = await requireUser();
 
-  const [products, listings, connection, suppressions] = await Promise.all([
+  const [products, listings, connection, suppressions, cachedMarketMetrics] = await Promise.all([
     db.product.findMany({
       where: { userId: user.id },
       include: { listings: { where: { status: { in: ["DRAFT", "ACTIVE"] } } } },
@@ -42,12 +42,28 @@ export default async function ListingsPage() {
       where: { userId: user.id },
       select: { ebayListingId: true },
     }),
+    db.ebayMarketMetric.findMany({
+      where: { userId: user.id },
+      select: {
+        ebayListingId: true,
+        estimatedSales30d: true,
+        competitorCount: true,
+        averageCompetitorPriceCents: true,
+      },
+    }),
   ]);
 
   const ebayConnected = !!connection && connection.status !== "DISCONNECTED";
   const marketMetrics = await getListingMarketMetrics(
     listings.map((listing) => listing.product.sku),
   );
+  for (const metric of cachedMarketMetrics) {
+    marketMetrics.set(metric.ebayListingId, {
+      estimatedSales30d: metric.estimatedSales30d,
+      competitorCount: metric.competitorCount,
+      averageCompetitorPriceCents: metric.averageCompetitorPriceCents,
+    });
+  }
 
   // The seller's live eBay listings, joined to tracked products for margin.
   let ebayRows: EbayRow[] = [];

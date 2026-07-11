@@ -11,6 +11,8 @@ import { findAmazonMatch } from "@/lib/mirror/match";
 import { persistOpportunities } from "./store";
 import type { ArbitrageOpportunity } from "./scanner";
 import type { ScanReport } from "./scan-types";
+export { estimatedSales30d } from "./demand";
+import { estimatedSales30d } from "./demand";
 
 // Category keyword rotation. Each keyword yields one Browse page of
 // candidates; scans walk this list in a day-dependent order for variety.
@@ -53,18 +55,6 @@ const MAX_PAGES_PER_KEYWORD = 5;
 const MIN_EBAY_PRICE_CENTS = 800;
 const MAX_EBAY_PRICE_CENTS = 15000;
 const LOOKUP_BATCH = 5;
-
-/** Deterministic demand estimate (real sold-velocity needs the
- * limited-release Marketplace Insights API). */
-export function estimatedSales30d(itemId: string, priceCents: number): number {
-  let h = 2166136261;
-  for (let i = 0; i < itemId.length; i++) {
-    h ^= itemId.charCodeAt(i);
-    h = Math.imul(h, 16777619);
-  }
-  const band = priceCents < 1500 ? 60 : priceCents < 3000 ? 40 : 25;
-  return 5 + ((h >>> 0) % band);
-}
 
 type EbayCandidate = {
   itemId: string;

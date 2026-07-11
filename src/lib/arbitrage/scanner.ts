@@ -31,11 +31,14 @@ export type ArbitrageOpportunity = {
 /** UI row for the arbitrage table — shared by server rows builder and client table. */
 export type OpportunityRow = {
   asin: string;
+  ebayItemId: string;
   category: string;
   title: string;
   imageUrl: string;
   ebayPriceCents: number;
   ebaySales30d: number;
+  competitorCount: number | null;
+  avgCompPriceCents: number | null;
   ebayUrl: string;
   amazonPriceCents: number;
   amazonUrl: string;
