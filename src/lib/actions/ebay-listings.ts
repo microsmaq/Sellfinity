@@ -9,6 +9,10 @@ import { isAlreadyEndedEbayError } from "@/lib/ebay/errors";
 import { researchEbayMarket } from "@/lib/ebay/market";
 import type { ListingMarketMetrics } from "@/lib/listings/market-metrics";
 import {
+  createListingsWorkbook,
+  type ListingsExcelRow,
+} from "@/lib/export/excel";
+import {
   matchAndTrackListing,
   untrackListing,
   type TrackInput,
@@ -18,6 +22,11 @@ import { classifyListing } from "@/lib/listings/cleanup";
 import { estimateMargin } from "@/lib/fees";
 
 export type EbayListingResult = { error?: string };
+
+export async function exportEbayListings(rows: ListingsExcelRow[]) {
+  await requireUser();
+  return createListingsWorkbook(rows.slice(0, 2000));
+}
 
 function revalidate() {
   revalidatePath("/listings");

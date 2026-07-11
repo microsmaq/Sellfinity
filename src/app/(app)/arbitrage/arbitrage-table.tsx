@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRef, useState, useTransition } from "react";
 import {
   fetchArbitragePage,
+  exportArbitrageExcel,
   mirrorOpportunities,
   mirrorOpportunity,
   researchArbitrageMarket,
@@ -14,11 +15,13 @@ import type { OpportunityRow } from "@/lib/arbitrage/scanner";
 import { formatCents } from "@/lib/money";
 import { suggestedListingPriceCents } from "@/lib/listings/cleanup";
 import { Badge, Button, Card, Input, cx } from "@/components/ui";
+import { downloadBase64File } from "@/lib/download";
 
 type SortKey = ArbitragePageParams["sortKey"];
 
 const DEFAULT_PARAMS: ArbitragePageParams = {
   page: 1,
+  pageSize: 25,
   sortKey: "profit",
   sortDesc: true,
   category: "all",
@@ -181,6 +184,18 @@ export function ArbitrageTable({ initial }: { initial: ArbitragePage }) {
     });
   }
 
+  function exportExcel() {
+    startTransition(async () => {
+      const file = await exportArbitrageExcel(params);
+      downloadBase64File(
+        file.filename,
+        file.base64,
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      );
+      setNotice({ text: `Exported all ${data.total} matching opportunities to Excel.`, error: false });
+    });
+  }
+
   function mirrorOne(row: OpportunityRow) {
     setNotice(null);
     setBusyAsin(row.asin);
@@ -250,6 +265,16 @@ export function ArbitrageTable({ initial }: { initial: ArbitragePage }) {
           ))}
         </select>
         <select
+          value={params.pageSize}
+          onChange={(e) => update({ pageSize: Number(e.target.value), page: 1 })}
+          className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
+          aria-label="Items per page"
+        >
+          <option value={25}>25 per page</option>
+          <option value={50}>50 per page</option>
+          <option value={100}>100 per page</option>
+        </select>
+        <select
           value={params.minMarginPct}
           onChange={(e) => update({ minMarginPct: Number(e.target.value) })}
           className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
@@ -268,6 +293,9 @@ export function ArbitrageTable({ initial }: { initial: ArbitragePage }) {
           </Button>
           <Button variant="secondary" disabled={researching} onClick={researchPage}>
             {researching ? "Researching market…" : "Research market data"}
+          </Button>
+          <Button variant="secondary" disabled={pending} onClick={exportExcel}>
+            Export Excel
           </Button>
           <Button disabled={pending || selected.size === 0} onClick={mirrorSelected}>
             {`Mirror selected (${selected.size})`}
@@ -310,8 +338,8 @@ export function ArbitrageTable({ initial }: { initial: ArbitragePage }) {
               <th className="px-4 py-3">Product</th>
               <SortHeader label="eBay price" sortKey="ebayPrice" params={params} onSort={onSort} />
               <SortHeader label="Est. sales/30d" sortKey="sales" params={params} onSort={onSort} />
-              <th className="px-4 py-3 text-right">Competition</th>
-              <th className="px-4 py-3 text-right">Avg. comp price</th>
+              <SortHeader label="Competition" sortKey="competition" params={params} onSort={onSort} />
+              <SortHeader label="Avg. comp price" sortKey="avgCompPrice" params={params} onSort={onSort} />
               <th className="px-4 py-3 text-right">Suggested price</th>
               <SortHeader label="Amazon price" sortKey="amazonPrice" params={params} onSort={onSort} />
               <SortHeader label="Profit / unit" sortKey="profit" params={params} onSort={onSort} />

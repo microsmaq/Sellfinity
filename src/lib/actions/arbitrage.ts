@@ -14,6 +14,7 @@ import { mirrorUrl, type MirrorOutcome } from "@/lib/mirror/pipeline";
 import { researchEbayMarket } from "@/lib/ebay/market";
 import { db } from "@/lib/db";
 import type { ListingMarketMetrics } from "@/lib/listings/market-metrics";
+import { createArbitrageWorkbook } from "@/lib/export/excel";
 
 /** One page of the research database (filters/sort/pagination server-side). */
 export async function fetchArbitragePage(
@@ -21,6 +22,39 @@ export async function fetchArbitragePage(
 ): Promise<ArbitragePage> {
   const user = await requireUser();
   return listArbitragePage(user.id, params);
+}
+
+export async function exportArbitrageExcel(params: ArbitragePageParams) {
+  const user = await requireUser();
+  const rows = [];
+  let page = 1;
+  let pageCount = 1;
+  do {
+    const result = await listArbitragePage(user.id, {
+      ...params,
+      page,
+      pageSize: 100,
+    });
+    rows.push(...result.rows);
+    pageCount = result.pageCount;
+    page++;
+  } while (page <= pageCount && rows.length < 2000);
+  return createArbitrageWorkbook(
+    rows.map((row) => ({
+      title: row.title,
+      category: row.category,
+      ebayPriceCents: row.ebayPriceCents,
+      amazonPriceCents: row.amazonPriceCents,
+      profitCents: row.profitCents,
+      marginPct: row.marginPct,
+      estimatedSales30d: row.ebaySales30d,
+      competitorCount: row.competitorCount,
+      averageCompetitorPriceCents: row.avgCompPriceCents,
+      suggestedPriceCents: row.suggestedListingPriceCents,
+      ebayUrl: row.ebayUrl,
+      amazonUrl: row.amazonUrl,
+    })),
+  );
 }
 
 /** Advance the scan now ("add more to the database"). Each call is

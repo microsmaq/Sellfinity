@@ -12,6 +12,7 @@ export default async function ArbitragePage() {
   const user = await requireUser();
   const initial = await listArbitragePage(user.id, {
     page: 1,
+    pageSize: 25,
     sortKey: "profit",
     sortDesc: true,
     category: "all",

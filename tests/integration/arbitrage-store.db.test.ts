@@ -121,6 +121,37 @@ describe("listArbitragePage", () => {
     expect(margin.rows.every((r) => r.marginPct >= 15)).toBe(true);
   });
 
+  it("supports 100 rows and sorts the entire dataset by requested metrics", async () => {
+    await persistOpportunities(Array.from({ length: 120 }, (_, index) => opportunity(index)));
+    await db.arbitrageItem.update({
+      where: { ebayItemId: "v1|1005|0" },
+      data: { competitorCount: 999 },
+    });
+    const user = await db.user.create({
+      data: { email: "sort@t.dev", passwordHash: "x", name: "T" },
+    });
+
+    const margin = await listArbitragePage(user.id, {
+      ...base,
+      page: 1,
+      pageSize: 100,
+      sortKey: "margin",
+    });
+    expect(margin.rows).toHaveLength(100);
+    expect(margin.pageCount).toBe(2);
+    expect(margin.rows[0].marginPct).toBeGreaterThanOrEqual(
+      margin.rows[99].marginPct,
+    );
+
+    const competition = await listArbitragePage(user.id, {
+      ...base,
+      page: 1,
+      pageSize: 25,
+      sortKey: "competition",
+    });
+    expect(competition.rows[0].ebayItemId).toBe("v1|1005|0");
+  });
+
   it("flags items the user already sells", async () => {
     await persistOpportunities([opportunity(7)]);
     const user = await db.user.create({

@@ -1,9 +1,10 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useMemo, useState, useTransition } from "react";
 import {
   cleanupEbayListings,
   endEbayListing,
+  exportEbayListings,
   matchEbayListing,
   matchEbayListingsBatch,
   repriceEbayListing,
@@ -16,6 +17,7 @@ import {
 } from "@/lib/listings/cleanup";
 import { formatCents, parseDollarsToCents } from "@/lib/money";
 import { Badge, Button, Card, cx } from "@/components/ui";
+import { downloadBase64File } from "@/lib/download";
 
 export type EbayRow = {
   ebayListingId: string;
@@ -41,6 +43,39 @@ export type EbayRow = {
     unavailable: boolean;
   } | null;
 };
+
+type ListingSortKey =
+  | "title"
+  | "price"
+  | "amazonPrice"
+  | "profit"
+  | "margin"
+  | "demand"
+  | "competition"
+  | "averagePrice"
+  | "suggestedPrice";
+
+function ListingSortHeader({
+  label,
+  value,
+  active,
+  descending,
+  onSort,
+}: {
+  label: string;
+  value: ListingSortKey;
+  active: boolean;
+  descending: boolean;
+  onSort: (value: ListingSortKey) => void;
+}) {
+  return (
+    <th className="px-4 py-3 text-right">
+      <button onClick={() => onSort(value)} className="whitespace-nowrap hover:text-slate-900">
+        {label} {active ? (descending ? "↓" : "↑") : ""}
+      </button>
+    </th>
+  );
+}
 
 function RepriceCell({
   row,
@@ -106,6 +141,48 @@ export function EbayListingsTable({
   const [busyId, setBusyId] = useState<string | null>(null);
   const [notice, setNotice] = useState<{ text: string; error: boolean } | null>(null);
   const [bulkProgress, setBulkProgress] = useState<string | null>(null);
+  const [sortKey, setSortKey] = useState<ListingSortKey>("margin");
+  const [sortDescending, setSortDescending] = useState(true);
+  const [pageSize, setPageSize] = useState(25);
+  const [page, setPage] = useState(1);
+
+  const sortedRows = useMemo(() => {
+    const value = (row: EbayRow): string | number | null => {
+      switch (sortKey) {
+        case "title": return row.title.toLowerCase();
+        case "price": return row.priceCents;
+        case "amazonPrice": return row.match?.amazonPriceCents ?? null;
+        case "profit": return row.match?.profitCents ?? null;
+        case "margin": return row.match?.marginPct ?? null;
+        case "demand": return row.market?.estimatedSales30d ?? null;
+        case "competition": return row.market?.competitorCount ?? null;
+        case "averagePrice": return row.market?.averageCompetitorPriceCents ?? null;
+        case "suggestedPrice": return row.suggestedPriceCents;
+      }
+    };
+    return [...rows].sort((left, right) => {
+      const a = value(left);
+      const b = value(right);
+      if (a === null) return b === null ? 0 : 1;
+      if (b === null) return -1;
+      const comparison =
+        typeof a === "string" && typeof b === "string"
+          ? a.localeCompare(b)
+          : Number(a) - Number(b);
+      return sortDescending ? -comparison : comparison;
+    });
+  }, [rows, sortKey, sortDescending]);
+  const pageCount = Math.max(1, Math.ceil(sortedRows.length / pageSize));
+  const visibleRows = sortedRows.slice((page - 1) * pageSize, page * pageSize);
+
+  function sortBy(next: ListingSortKey) {
+    if (next === sortKey) setSortDescending((current) => !current);
+    else {
+      setSortKey(next);
+      setSortDescending(true);
+    }
+    setPage(1);
+  }
 
   function applyTrackResults(results: Awaited<ReturnType<typeof matchEbayListingsBatch>>) {
     setRows((prev) =>
@@ -257,6 +334,42 @@ export function EbayListingsTable({
     });
   }
 
+  function exportExcel() {
+    setNotice(null);
+    startTransition(async () => {
+      const file = await exportEbayListings(
+        sortedRows.map((row) => ({
+          title: row.title,
+          ebayListingId: row.ebayListingId,
+          ebayUrl: row.url,
+          ebayPriceCents: row.priceCents,
+          amazonUrl: row.match?.amazonUrl ?? null,
+          amazonPriceCents: row.match?.amazonPriceCents ?? null,
+          profitCents: row.match?.profitCents ?? null,
+          marginPct: row.match?.marginPct ?? null,
+          estimatedSales30d: row.market?.estimatedSales30d ?? null,
+          competitorCount: row.market?.competitorCount ?? null,
+          averageCompetitorPriceCents:
+            row.market?.averageCompetitorPriceCents ?? null,
+          suggestedPriceCents: row.suggestedPriceCents,
+          status: !row.match
+            ? "Unmatched"
+            : row.match.unavailable
+              ? "Not on Amazon"
+              : row.match.profitCents <= 0
+                ? "Unprofitable"
+                : "OK",
+        })),
+      );
+      downloadBase64File(
+        file.filename,
+        file.base64,
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      );
+      setNotice({ text: `Exported ${sortedRows.length} listings to Excel.`, error: false });
+    });
+  }
+
   function run(id: string, fn: () => Promise<{ error?: string }>, onOk: () => void, okText: string) {
     setNotice(null);
     setBusyId(id);
@@ -287,6 +400,22 @@ export function EbayListingsTable({
         <Button size="sm" variant="secondary" disabled={pending} onClick={researchMarket}>
           {bulkProgress?.startsWith("Researching") ? bulkProgress : "Research market data"}
         </Button>
+        <Button size="sm" variant="secondary" disabled={pending} onClick={exportExcel}>
+          Export Excel
+        </Button>
+        <select
+          value={pageSize}
+          onChange={(event) => {
+            setPageSize(Number(event.target.value));
+            setPage(1);
+          }}
+          className="rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-sm"
+          aria-label="Items per page"
+        >
+          <option value={25}>25 per page</option>
+          <option value={50}>50 per page</option>
+          <option value={100}>100 per page</option>
+        </select>
         {unmatched > 0 && (
           <Button size="sm" disabled={pending} onClick={matchAll}>
             {bulkProgress ?? `Match all unmatched (${unmatched})`}
@@ -314,26 +443,24 @@ export function EbayListingsTable({
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-slate-200 text-left text-xs uppercase tracking-wide text-slate-500">
-              <th className="px-4 py-3">Listing</th>
-              <th className="px-4 py-3 text-right">My price</th>
-              <th className="px-4 py-3 text-right">Amazon price</th>
-              <th className="px-4 py-3 text-right">Profit / unit</th>
-              <th className="px-4 py-3 text-right" title="Average estimated sales per researched competitor over 30 days">
-                Est. demand
+              <th className="px-4 py-3">
+                <button onClick={() => sortBy("title")} className="hover:text-slate-900">
+                  Listing {sortKey === "title" ? (sortDescending ? "↓" : "↑") : ""}
+                </button>
               </th>
-              <th className="px-4 py-3 text-right" title="Comparable listings in Sellfinity's eBay research database">
-                Competition
-              </th>
-              <th className="px-4 py-3 text-right">Avg. comp price</th>
-              <th className="px-4 py-3 text-right" title="Profitable floor using product cost, shipping, eBay fees, and 3% ad rate">
-                Suggested price
-              </th>
+              <ListingSortHeader label="My price" value="price" active={sortKey === "price"} descending={sortDescending} onSort={sortBy} />
+              <ListingSortHeader label="Amazon price" value="amazonPrice" active={sortKey === "amazonPrice"} descending={sortDescending} onSort={sortBy} />
+              <ListingSortHeader label="Profit / Margin" value="margin" active={sortKey === "margin"} descending={sortDescending} onSort={sortBy} />
+              <ListingSortHeader label="Est. demand" value="demand" active={sortKey === "demand"} descending={sortDescending} onSort={sortBy} />
+              <ListingSortHeader label="Competition" value="competition" active={sortKey === "competition"} descending={sortDescending} onSort={sortBy} />
+              <ListingSortHeader label="Avg. comp price" value="averagePrice" active={sortKey === "averagePrice"} descending={sortDescending} onSort={sortBy} />
+              <ListingSortHeader label="Suggested price" value="suggestedPrice" active={sortKey === "suggestedPrice"} descending={sortDescending} onSort={sortBy} />
               <th className="px-4 py-3">Status</th>
               <th className="px-4 py-3" />
             </tr>
           </thead>
           <tbody>
-            {rows.map((r) => {
+            {visibleRows.map((r) => {
               const problem =
                 r.match && (r.match.unavailable || r.match.profitCents <= 0);
               return (
@@ -529,6 +656,15 @@ export function EbayListingsTable({
           </tbody>
         </table>
       </Card>
+      <div className="flex items-center justify-center gap-4 text-sm">
+        <Button variant="secondary" size="sm" disabled={page <= 1} onClick={() => setPage((current) => current - 1)}>
+          ← Previous
+        </Button>
+        <span className="text-slate-500">Page {page} of {pageCount}</span>
+        <Button variant="secondary" size="sm" disabled={page >= pageCount} onClick={() => setPage((current) => current + 1)}>
+          Next →
+        </Button>
+      </div>
     </div>
   );
 }

@@ -55,11 +55,20 @@ export async function persistOpportunities(
   return fresh.length;
 }
 
-export const PAGE_SIZE = 25;
+export const DEFAULT_PAGE_SIZE = 25;
 
 export type ArbitragePageParams = {
   page: number; // 1-based
-  sortKey: "profit" | "margin" | "ebayPrice" | "amazonPrice" | "sales" | "newest";
+  pageSize?: number;
+  sortKey:
+    | "profit"
+    | "margin"
+    | "ebayPrice"
+    | "amazonPrice"
+    | "sales"
+    | "competition"
+    | "avgCompPrice"
+    | "newest";
   sortDesc: boolean;
   category: string; // "all" or a category name
   minMarginPct: number;
@@ -74,19 +83,24 @@ export type ArbitragePage = {
   categories: string[];
 };
 
-const SORT_COLUMNS: Record<ArbitragePageParams["sortKey"], Prisma.ArbitrageItemOrderByWithRelationInput> = {
-  profit: { profitCents: "desc" },
-  margin: { marginPct: "desc" },
-  ebayPrice: { ebayPriceCents: "desc" },
-  amazonPrice: { amazonPriceCents: "desc" },
-  sales: { salesEst: "desc" },
-  newest: { createdAt: "desc" },
+const SORT_COLUMNS: Record<ArbitragePageParams["sortKey"], string> = {
+  profit: "profitCents",
+  margin: "marginPct",
+  ebayPrice: "ebayPriceCents",
+  amazonPrice: "amazonPriceCents",
+  sales: "salesEst",
+  competition: "competitorCount",
+  avgCompPrice: "avgCompPriceCents",
+  newest: "createdAt",
 };
 
 function orderBy(params: ArbitragePageParams) {
-  const base = SORT_COLUMNS[params.sortKey] ?? SORT_COLUMNS.profit;
-  const [[column]] = Object.entries(base);
-  return { [column]: params.sortDesc ? "desc" : "asc" } as Prisma.ArbitrageItemOrderByWithRelationInput;
+  const column = SORT_COLUMNS[params.sortKey] ?? SORT_COLUMNS.profit;
+  const direction = params.sortDesc ? "desc" : "asc";
+  const nullable = column === "competitorCount" || column === "avgCompPriceCents";
+  return {
+    [column]: nullable ? { sort: direction, nulls: "last" } : direction,
+  } as Prisma.ArbitrageItemOrderByWithRelationInput;
 }
 
 /** One page of the research database, with the user's ownership flags. */
@@ -101,14 +115,17 @@ export async function listArbitragePage(
       ebayTitle: { contains: params.query.trim(), mode: "insensitive" },
     }),
   };
+  const pageSize = [25, 50, 100].includes(params.pageSize ?? DEFAULT_PAGE_SIZE)
+    ? (params.pageSize ?? DEFAULT_PAGE_SIZE)
+    : DEFAULT_PAGE_SIZE;
 
   const [total, items, categoryRows] = await Promise.all([
     db.arbitrageItem.count({ where }),
     db.arbitrageItem.findMany({
       where,
       orderBy: orderBy(params),
-      skip: (Math.max(1, params.page) - 1) * PAGE_SIZE,
-      take: PAGE_SIZE,
+      skip: (Math.max(1, params.page) - 1) * pageSize,
+      take: pageSize,
     }),
     db.arbitrageItem.findMany({
       distinct: ["category"],
@@ -171,7 +188,7 @@ export async function listArbitragePage(
     })),
     total,
     page: Math.max(1, params.page),
-    pageCount: Math.max(1, Math.ceil(total / PAGE_SIZE)),
+    pageCount: Math.max(1, Math.ceil(total / pageSize)),
     categories: categoryRows.map((c) => c.category),
   };
 }
