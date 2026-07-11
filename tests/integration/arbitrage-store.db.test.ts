@@ -152,6 +152,24 @@ describe("listArbitragePage", () => {
     expect(competition.rows[0].ebayItemId).toBe("v1|1005|0");
   });
 
+  it("hides an opportunity for one user without removing it for others", async () => {
+    await persistOpportunities([opportunity(1), opportunity(2)]);
+    const [user, other] = await Promise.all([
+      db.user.create({ data: { email: "hide@t.dev", passwordHash: "x", name: "T" } }),
+      db.user.create({ data: { email: "other@t.dev", passwordHash: "x", name: "T" } }),
+    ]);
+    await db.hiddenArbitrageItem.create({
+      data: { userId: user.id, ebayItemId: "v1|1001|0" },
+    });
+
+    const hiddenPage = await listArbitragePage(user.id, { ...base, page: 1 });
+    expect(hiddenPage.total).toBe(1);
+    expect(hiddenPage.rows[0].ebayItemId).toBe("v1|1002|0");
+
+    const otherPage = await listArbitragePage(other.id, { ...base, page: 1 });
+    expect(otherPage.total).toBe(2);
+  });
+
   it("flags items the user already sells", async () => {
     await persistOpportunities([opportunity(7)]);
     const user = await db.user.create({

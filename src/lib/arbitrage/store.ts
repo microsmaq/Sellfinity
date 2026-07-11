@@ -109,6 +109,7 @@ export async function listArbitragePage(
   params: ArbitragePageParams,
 ): Promise<ArbitragePage> {
   const where: Prisma.ArbitrageItemWhereInput = {
+    hiddenBy: { none: { userId } },
     ...(params.category !== "all" && { category: params.category }),
     ...(params.minMarginPct > 0 && { marginPct: { gte: params.minMarginPct } }),
     ...(params.query.trim() && {

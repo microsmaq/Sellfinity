@@ -5,6 +5,7 @@ import { useRef, useState, useTransition } from "react";
 import {
   fetchArbitragePage,
   exportArbitrageExcel,
+  hideArbitrageItem,
   mirrorOpportunities,
   mirrorOpportunity,
   researchArbitrageMarket,
@@ -69,6 +70,7 @@ export function ArbitrageTable({ initial }: { initial: ArbitragePage }) {
   const [scanning, startScan] = useTransition();
   const [researching, startResearch] = useTransition();
   const [busyAsin, setBusyAsin] = useState<string | null>(null);
+  const [hidingId, setHidingId] = useState<string | null>(null);
   const [notice, setNotice] = useState<{ text: string; error: boolean } | null>(null);
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -214,6 +216,22 @@ export function ArbitrageTable({ initial }: { initial: ArbitragePage }) {
     });
   }
 
+  function hideOne(row: OpportunityRow) {
+    setHidingId(row.ebayItemId);
+    setNotice(null);
+    startTransition(async () => {
+      await hideArbitrageItem(row.ebayItemId);
+      setData(await fetchArbitragePage(params));
+      setSelected((current) => {
+        const updated = new Set(current);
+        updated.delete(row.asin);
+        return updated;
+      });
+      setHidingId(null);
+      setNotice({ text: `Hidden "${row.title}" from your Arbitrage Finder.`, error: false });
+    });
+  }
+
   function mirrorSelected() {
     const items = data.rows
       .filter((r) => selected.has(r.asin) && !isMirrored(r))
@@ -311,7 +329,7 @@ export function ArbitrageTable({ initial }: { initial: ArbitragePage }) {
           )}
         >
           {notice.text}{" "}
-          {!notice.error && (
+          {!notice.error && notice.text.startsWith("Mirrored") && (
             <Link href="/listings" className="font-medium text-emerald-800 underline">
               Open Listings →
             </Link>
@@ -427,6 +445,7 @@ export function ArbitrageTable({ initial }: { initial: ArbitragePage }) {
                   })}
                 </td>
                 <td className="whitespace-nowrap px-4 py-3 text-right">
+                  <span className="inline-flex items-center gap-2">
                   {isMirrored(r) ? (
                     r.storeEbayUrl ? (
                       <a
@@ -447,6 +466,10 @@ export function ArbitrageTable({ initial }: { initial: ArbitragePage }) {
                       {busyAsin === r.asin ? "Mirroring…" : "Mirror to my store"}
                     </Button>
                   )}
+                    <Button size="sm" variant="ghost" disabled={pending} onClick={() => hideOne(r)}>
+                      {hidingId === r.ebayItemId ? "Hiding…" : "Hide"}
+                    </Button>
+                  </span>
                 </td>
               </tr>
             ))}

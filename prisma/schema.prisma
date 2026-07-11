@@ -34,6 +34,7 @@ model User {
   syncIssues              SyncIssue[]
   ebayListingSuppressions EbayListingSuppression[]
   ebayMarketMetrics       EbayMarketMetric[]
+  hiddenArbitrageItems    HiddenArbitrageItem[]
   ebayConnection          EbayConnection?
 }
 
@@ -203,8 +204,8 @@ model SyncRun {
 // A researched arbitrage opportunity: a live eBay listing paired with a
 // cheaper Amazon source. Global (shared by all users); grows as scans run.
 model ArbitrageItem {
-  id                String   @id @default(cuid())
-  ebayItemId        String   @unique
+  id                String                @id @default(cuid())
+  ebayItemId        String                @unique
   ebayTitle         String
   ebayPriceCents    Int
   ebayUrl           String
@@ -220,13 +221,29 @@ model ArbitrageItem {
   salesEst          Int
   competitorCount   Int?
   avgCompPriceCents Int?
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
+  createdAt         DateTime              @default(now())
+  updatedAt         DateTime              @updatedAt
+  hiddenBy          HiddenArbitrageItem[]
 
   @@index([profitCents])
   @@index([category])
   @@index([createdAt])
   @@index([asin])
+}
+
+// Per-user dismissal of a shared arbitrage research row.
+model HiddenArbitrageItem {
+  id         String   @id @default(cuid())
+  userId     String
+  ebayItemId String
+  createdAt  DateTime @default(now())
+
+  user User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  item ArbitrageItem @relation(fields: [ebayItemId], references: [ebayItemId], onDelete: Cascade)
+
+  @@unique([userId, ebayItemId])
+  @@index([userId])
+  @@index([ebayItemId])
 }
 
 // Generic JSON cache for expensive external scans (e.g. the daily arbitrage

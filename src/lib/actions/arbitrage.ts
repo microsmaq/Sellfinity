@@ -24,6 +24,21 @@ export async function fetchArbitragePage(
   return listArbitragePage(user.id, params);
 }
 
+export async function hideArbitrageItem(ebayItemId: string): Promise<void> {
+  const user = await requireUser();
+  const item = await db.arbitrageItem.findUnique({
+    where: { ebayItemId },
+    select: { ebayItemId: true },
+  });
+  if (!item) return;
+  await db.hiddenArbitrageItem.upsert({
+    where: { userId_ebayItemId: { userId: user.id, ebayItemId } },
+    create: { userId: user.id, ebayItemId },
+    update: {},
+  });
+  revalidatePath("/arbitrage");
+}
+
 export async function exportArbitrageExcel(params: ArbitragePageParams) {
   const user = await requireUser();
   const rows = [];
