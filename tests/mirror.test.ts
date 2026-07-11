@@ -99,12 +99,32 @@ describe("generateMirrorDescription", () => {
   it("includes bullets and policy lines", () => {
     const d = generateMirrorDescription({
       title: "T",
+      brand: "Test Brand",
       bulletPoints: ["First bullet", "Second bullet"],
+      description: "Test description",
       category: "Toys & Games",
+      imageUrls: ["https://m.media-amazon.com/images/I/test.jpg"],
     });
-    expect(d).toContain("✔ First bullet");
-    expect(d).toContain("✔ Second bullet");
-    expect(d).toContain("returns");
+    expect(d).toContain("<li style=\"margin:0 0 9px;\">First bullet</li>");
+    expect(d).toContain("Second bullet");
+    expect(d).toContain("30-day returns");
+    expect(d).toContain("https://m.media-amazon.com/images/I/test.jpg");
+    expect(d).toContain("Why You&#39;ll Love It");
+  });
+
+  it("escapes supplier content and rejects unsafe image URLs", () => {
+    const d = generateMirrorDescription({
+      title: "Lamp <script>alert(1)</script>",
+      brand: "A&B",
+      bulletPoints: ["Bright <b>light</b>"],
+      description: "",
+      category: "Home & Kitchen",
+      imageUrls: ["javascript:alert(1)", "http://example.com/not-secure.jpg"],
+    });
+    expect(d).not.toContain("<script>");
+    expect(d).not.toContain("<b>");
+    expect(d).not.toContain("javascript:");
+    expect(d).toContain("A&amp;B");
   });
 });
 
