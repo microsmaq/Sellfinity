@@ -41,6 +41,7 @@ describe("isAlreadyEndedEbayError", () => {
     expect(isAlreadyEndedEbayError("This listing has ended.")).toBe(true);
     expect(isAlreadyEndedEbayError("The item has already been ended")).toBe(true);
     expect(isAlreadyEndedEbayError("The listing is not active")).toBe(true);
+    expect(isAlreadyEndedEbayError("The auction has already been closed.")).toBe(true);
     expect(isAlreadyEndedEbayError("Authentication token is invalid")).toBe(false);
   });
 });
