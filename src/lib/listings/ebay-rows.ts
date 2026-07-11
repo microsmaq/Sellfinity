@@ -4,6 +4,7 @@
 import { estimateMargin } from "@/lib/fees";
 import type { RemoteListing } from "@/lib/ebay/client";
 import type { EbayRow } from "@/app/(app)/listings/ebay-listings-table";
+import type { ListingMarketMetrics } from "./market-metrics";
 
 export type LocalListingFacts = {
   ebayListingId: string | null;
@@ -31,6 +32,7 @@ export function buildEbayRows(
   remote: RemoteListing[],
   local: LocalListingFacts[],
   suppressedEbayIds: ReadonlySet<string> = new Set(),
+  marketMetrics: ReadonlyMap<string, ListingMarketMetrics> = new Map(),
 ): EbayRow[] {
   const byEbayId = new Map(
     local.filter((l) => l.ebayListingId).map((l) => [l.ebayListingId!, l]),
@@ -82,6 +84,7 @@ export function buildEbayRows(
         profitCents: margin.estimatedProfitCents,
         marginPct: Math.round(margin.marginPct),
         unavailable: localListing.product.supplierStock === 0,
+        market: marketMetrics.get(localListing.product.sku) ?? null,
       },
     });
   }

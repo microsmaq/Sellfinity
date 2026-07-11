@@ -2,6 +2,7 @@ import { requireUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { getEbayClientForUser } from "@/lib/ebay";
 import { buildEbayRows } from "@/lib/listings/ebay-rows";
+import { getListingMarketMetrics } from "@/lib/listings/market-metrics";
 import { parseImageUrls } from "@/lib/types";
 import { PageHeader, Badge } from "@/components/ui";
 import { ListingsView, type ListingRow, type UnlistedRow } from "./listings-view";
@@ -44,6 +45,9 @@ export default async function ListingsPage() {
   ]);
 
   const ebayConnected = !!connection && connection.status !== "DISCONNECTED";
+  const marketMetrics = await getListingMarketMetrics(
+    listings.map((listing) => listing.product.sku),
+  );
 
   // The seller's live eBay listings, joined to tracked products for margin.
   let ebayRows: EbayRow[] = [];
@@ -69,6 +73,7 @@ export default async function ListingsPage() {
         remote,
         listings,
         new Set(suppressions.map((item) => item.ebayListingId)),
+        marketMetrics,
       );
     } catch (e) {
       ebayFetchError = e instanceof Error ? e.message.slice(0, 200) : "eBay lookup failed";

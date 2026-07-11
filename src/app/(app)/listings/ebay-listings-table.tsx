@@ -28,6 +28,11 @@ export type EbayRow = {
     profitCents: number;
     marginPct: number;
     unavailable: boolean;
+    market: {
+      estimatedSales30d: number;
+      competitorCount: number;
+      averageCompetitorPriceCents: number;
+    } | null;
   } | null;
 };
 
@@ -100,7 +105,7 @@ export function EbayListingsTable({
     setRows((prev) =>
       prev.map((row) => {
         const r = results.find((x) => x.ebayListingId === row.ebayListingId);
-        return r && r.ok ? { ...row, match: r.match } : row;
+        return r && r.ok ? { ...row, match: { ...r.match, market: null } } : row;
       }),
     );
   }
@@ -250,6 +255,13 @@ export function EbayListingsTable({
               <th className="px-4 py-3 text-right">My price</th>
               <th className="px-4 py-3 text-right">Amazon price</th>
               <th className="px-4 py-3 text-right">Profit / unit</th>
+              <th className="px-4 py-3 text-right" title="Average estimated sales per researched competitor over 30 days">
+                Est. demand
+              </th>
+              <th className="px-4 py-3 text-right" title="Comparable listings in Sellfinity's eBay research database">
+                Competition
+              </th>
+              <th className="px-4 py-3 text-right">Avg. comp price</th>
               <th className="px-4 py-3">Status</th>
               <th className="px-4 py-3" />
             </tr>
@@ -341,6 +353,17 @@ export function EbayListingsTable({
                       ? `${formatCents(r.match.profitCents)} (${r.match.marginPct}%)`
                       : "—"}
                   </td>
+                  <td className="px-4 py-3 text-right tabular-nums">
+                    {r.match?.market ? `~${r.match.market.estimatedSales30d}/mo` : "—"}
+                  </td>
+                  <td className="px-4 py-3 text-right tabular-nums">
+                    {r.match?.market?.competitorCount ?? "—"}
+                  </td>
+                  <td className="px-4 py-3 text-right tabular-nums">
+                    {r.match?.market
+                      ? formatCents(r.match.market.averageCompetitorPriceCents)
+                      : "—"}
+                  </td>
                   <td className="px-4 py-3">
                     {!r.match ? (
                       <Badge tone="slate">Unmatched</Badge>
@@ -427,7 +450,7 @@ export function EbayListingsTable({
             })}
             {rows.length === 0 && !fetchError && (
               <tr>
-                <td colSpan={6} className="px-4 py-12 text-center text-slate-500">
+                <td colSpan={9} className="px-4 py-12 text-center text-slate-500">
                   No active listings found on your eBay account.
                 </td>
               </tr>
