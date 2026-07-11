@@ -15,7 +15,7 @@ export const maxDuration = 60;
 export default async function ListingsPage() {
   const user = await requireUser();
 
-  const [products, listings, connection] = await Promise.all([
+  const [products, listings, connection, suppressions] = await Promise.all([
     db.product.findMany({
       where: { userId: user.id },
       include: { listings: { where: { status: { in: ["DRAFT", "ACTIVE"] } } } },
@@ -37,6 +37,10 @@ export default async function ListingsPage() {
       orderBy: { updatedAt: "desc" },
     }),
     db.ebayConnection.findUnique({ where: { userId: user.id } }),
+    db.ebayListingSuppression.findMany({
+      where: { userId: user.id },
+      select: { ebayListingId: true },
+    }),
   ]);
 
   const ebayConnected = !!connection && connection.status !== "DISCONNECTED";
@@ -61,7 +65,11 @@ export default async function ListingsPage() {
         },
         data: { status: "ENDED", endedAt: new Date() },
       });
-      ebayRows = buildEbayRows(remote, listings);
+      ebayRows = buildEbayRows(
+        remote,
+        listings,
+        new Set(suppressions.map((item) => item.ebayListingId)),
+      );
     } catch (e) {
       ebayFetchError = e instanceof Error ? e.message.slice(0, 200) : "eBay lookup failed";
     }

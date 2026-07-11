@@ -46,6 +46,23 @@ describe("buildEbayRows", () => {
     expect(rows[0].match).toBeNull();
   });
 
+  it("deduplicates listings repeated across eBay pagination boundaries", () => {
+    const rows = buildEbayRows(
+      [remote("1"), remote("2"), remote("1")],
+      [local("1"), local("2")],
+    );
+    expect(rows.map((row) => row.ebayListingId).sort()).toEqual(["1", "2"]);
+  });
+
+  it("hides listings the seller explicitly ended through Sellfinity", () => {
+    const rows = buildEbayRows(
+      [remote("1"), remote("2")],
+      [local("1"), local("2")],
+      new Set(["1"]),
+    );
+    expect(rows.map((row) => row.ebayListingId)).toEqual(["2"]);
+  });
+
   it("computes margin from the tracked product and flags problems first", () => {
     const rows = buildEbayRows(
       [

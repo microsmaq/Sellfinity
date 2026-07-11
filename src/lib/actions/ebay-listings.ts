@@ -5,6 +5,7 @@ import { requireUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { getEbayClientForUser } from "@/lib/ebay";
 import { EbayApiError } from "@/lib/ebay/client";
+import { isAlreadyEndedEbayError } from "@/lib/ebay/errors";
 import {
   matchAndTrackListing,
   untrackListing,
@@ -98,13 +99,23 @@ export async function endEbayListing(
   try {
     await client.endListing(ebayListingId);
   } catch (e) {
-    if (e instanceof EbayApiError) return { error: e.message };
-    throw e;
+    if (e instanceof EbayApiError) {
+      if (!isAlreadyEndedEbayError(e.message)) return { error: e.message };
+    } else {
+      throw e;
+    }
   }
-  await db.listing.updateMany({
-    where: { userId: user.id, ebayListingId },
-    data: { status: "ENDED", endedAt: new Date() },
-  });
+  await db.$transaction([
+    db.listing.updateMany({
+      where: { userId: user.id, ebayListingId },
+      data: { status: "ENDED", endedAt: new Date() },
+    }),
+    db.ebayListingSuppression.upsert({
+      where: { userId_ebayListingId: { userId: user.id, ebayListingId } },
+      create: { userId: user.id, ebayListingId },
+      update: {},
+    }),
+  ]);
   revalidate();
   return {};
 }

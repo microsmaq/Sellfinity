@@ -7,7 +7,8 @@ domain. ~1 hour of clicking, plus eBay's production-keyset review time.
 
 The schema runs on Neon (`neondb`), the initial migration is committed in
 `prisma/migrations/`, tests use the `sellfinity_test` database, and local dev
-points at Neon via `.env`. Vercel needs both `DATABASE_URL` (the **pooled**
+uses the isolated `sellfinity_dev` schema via `.env`. Vercel needs both
+`DATABASE_URL` (the **pooled**
 `-pooler` URL) and `DIRECT_DATABASE_URL` (the direct URL, used by
 `prisma migrate deploy`).
 

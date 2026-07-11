@@ -30,13 +30,22 @@ function firstImage(json: string): string | null {
 export function buildEbayRows(
   remote: RemoteListing[],
   local: LocalListingFacts[],
+  suppressedEbayIds: ReadonlySet<string> = new Set(),
 ): EbayRow[] {
   const byEbayId = new Map(
     local.filter((l) => l.ebayListingId).map((l) => [l.ebayListingId!, l]),
   );
 
   const rows: EbayRow[] = [];
+  const seenEbayIds = new Set<string>();
   for (const r of remote) {
+    if (suppressedEbayIds.has(r.ebayListingId)) continue;
+    // eBay pagination is not snapshot-stable: when listings change while we
+    // fetch successive pages, the boundary can repeat an item. Never render
+    // or act on the same live listing twice.
+    if (seenEbayIds.has(r.ebayListingId)) continue;
+    seenEbayIds.add(r.ebayListingId);
+
     const localListing = byEbayId.get(r.ebayListingId);
     // eBay's "active" list lags reality by minutes-to-hours; if we ended a
     // listing ourselves, trust our own record and hide it immediately.

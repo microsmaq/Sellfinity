@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { parseTradingItem } from "@/lib/ebay/real";
+import { isAlreadyEndedEbayError } from "@/lib/ebay/errors";
 import { findAmazonMatch } from "@/lib/mirror/match";
 
 describe("parseTradingItem", () => {
@@ -32,6 +33,15 @@ describe("parseTradingItem", () => {
     expect(parsed.quantity).toBeNull();
     expect(parsed.imageUrl).toBeNull();
     expect(parsed.url).toBe("https://www.ebay.com/itm/2");
+  });
+});
+
+describe("isAlreadyEndedEbayError", () => {
+  it("recognizes stale-list outcomes without swallowing unrelated failures", () => {
+    expect(isAlreadyEndedEbayError("This listing has ended.")).toBe(true);
+    expect(isAlreadyEndedEbayError("The item has already been ended")).toBe(true);
+    expect(isAlreadyEndedEbayError("The listing is not active")).toBe(true);
+    expect(isAlreadyEndedEbayError("Authentication token is invalid")).toBe(false);
   });
 });
 

@@ -9,7 +9,7 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
+  provider  = "postgresql"
   // Pooled connection for the app; direct connection for migrations
   // (connection poolers break Prisma Migrate).
   url       = env("DATABASE_URL")
@@ -17,22 +17,38 @@ datasource db {
 }
 
 model User {
-  id           String   @id @default(cuid())
-  email        String   @unique
+  id           String    @id @default(cuid())
+  email        String    @unique
   passwordHash String
   name         String
   // FREE | PRO | SCALE
-  plan         String   @default("FREE")
+  plan         String    @default("FREE")
   planRenewsAt DateTime?
-  createdAt    DateTime @default(now())
+  createdAt    DateTime  @default(now())
 
-  sessions       Session[]
-  products       Product[]
-  listings       Listing[]
-  orders         Order[]
-  syncRuns       SyncRun[]
-  syncIssues     SyncIssue[]
-  ebayConnection EbayConnection?
+  sessions                Session[]
+  products                Product[]
+  listings                Listing[]
+  orders                  Order[]
+  syncRuns                SyncRun[]
+  syncIssues              SyncIssue[]
+  ebayListingSuppressions EbayListingSuppression[]
+  ebayConnection          EbayConnection?
+}
+
+// A seller explicitly ended this item through Sellfinity. eBay's ActiveList
+// can continue returning ended items for a while, so keep a durable local
+// tombstone instead of letting the stale remote row reappear.
+model EbayListingSuppression {
+  id            String   @id @default(cuid())
+  userId        String
+  ebayListingId String
+  createdAt     DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, ebayListingId])
+  @@index([userId])
 }
 
 model Session {
@@ -49,17 +65,17 @@ model Session {
 // status SANDBOX means our mock client is in use; CONNECTED is reserved for
 // a real token exchange.
 model EbayConnection {
-  id           String    @id @default(cuid())
-  userId       String    @unique
+  id                   String    @id @default(cuid())
+  userId               String    @unique
   // DISCONNECTED | SANDBOX | CONNECTED
-  status       String    @default("DISCONNECTED")
-  ebayUsername String?
+  status               String    @default("DISCONNECTED")
+  ebayUsername         String?
   // OAuth tokens (encrypt at rest before production).
   accessToken          String?
   accessTokenExpiresAt DateTime?
   refreshToken         String?
   connectedAt          DateTime?
-  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user                 User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 // A product the user imported from the sourcing feed or mirrored from an
@@ -79,7 +95,9 @@ model Product {
   supplierUrl         String
   costCents           Int
   supplierStock       Int
-  /** Estimated cost for the seller to ship one unit to the buyer. */
+  /**
+   * Estimated cost for the seller to ship one unit to the buyer.
+   */
   shippingCostCents   Int      @default(0)
   suggestedPriceCents Int
   // 0-100 sourcing score at import time
@@ -201,18 +219,18 @@ model ScanCache {
 
 // A detected mismatch between supplier truth and the live listing.
 model SyncIssue {
-  id        String    @id @default(cuid())
-  syncRunId String
-  userId    String
-  listingId String
+  id          String    @id @default(cuid())
+  syncRunId   String
+  userId      String
+  listingId   String
   // OUT_OF_STOCK | STOCK_DRIFT | COST_RISE | SUPPLIER_GONE
-  type      String
+  type        String
   // JSON string: { field, expected, actual, ... } for display
   detailsJson String
   // OPEN | AUTO_FIXED | FIXED | IGNORED
-  resolution String    @default("OPEN")
-  resolvedAt DateTime?
-  createdAt  DateTime  @default(now())
+  resolution  String    @default("OPEN")
+  resolvedAt  DateTime?
+  createdAt   DateTime  @default(now())
 
   syncRun SyncRun @relation(fields: [syncRunId], references: [id], onDelete: Cascade)
   user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)

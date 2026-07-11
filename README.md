@@ -52,6 +52,13 @@ npm run db:seed     # demo account with a month of activity
 npm run dev
 ```
 
+Keep local development isolated from production by adding
+`schema=sellfinity_dev` to both local database URLs. Automated tests continue
+to use the separate `sellfinity_test` database through `TEST_DATABASE_URL`.
+Never point localhost or the test suite at the production `public` schema;
+OAuth connections and integration-test cleanup both write to their configured
+database.
+
 Log in as **demo@sellfinity.dev / demo1234** (seeded data), or
 register a fresh account and walk the flow: connect eBay in Settings (sandbox)
 → import from Sourcing → generate drafts → publish → run sync → import orders.
