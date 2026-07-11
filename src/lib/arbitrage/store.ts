@@ -2,6 +2,7 @@ import { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
 import { ebayEnvConfig } from "@/lib/ebay/oauth";
 import type { ArbitrageOpportunity, OpportunityRow } from "./scanner";
+import { suggestedListingPriceCents } from "@/lib/listings/cleanup";
 
 /** Upsert scanned opportunities into the shared research database.
  * Batched: one lookup + one createMany for new rows, individual updates
@@ -153,6 +154,11 @@ export async function listArbitragePage(
       ebaySales30d: i.salesEst,
       competitorCount: i.competitorCount,
       avgCompPriceCents: i.avgCompPriceCents,
+      suggestedListingPriceCents: suggestedListingPriceCents(
+        i.amazonPriceCents,
+        0,
+        i.avgCompPriceCents ?? i.ebayPriceCents,
+      ),
       ebayUrl: i.ebayUrl,
       amazonPriceCents: i.amazonPriceCents,
       amazonUrl: i.amazonUrl,

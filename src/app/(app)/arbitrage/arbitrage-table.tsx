@@ -12,6 +12,7 @@ import {
 import type { ArbitragePage, ArbitragePageParams } from "@/lib/arbitrage/store";
 import type { OpportunityRow } from "@/lib/arbitrage/scanner";
 import { formatCents } from "@/lib/money";
+import { suggestedListingPriceCents } from "@/lib/listings/cleanup";
 import { Badge, Button, Card, Input, cx } from "@/components/ui";
 
 type SortKey = ArbitragePageParams["sortKey"];
@@ -154,6 +155,11 @@ export function ArbitrageTable({ initial }: { initial: ArbitragePage }) {
                   ebaySales30d: result.market.estimatedSales30d,
                   competitorCount: result.market.competitorCount,
                   avgCompPriceCents: result.market.averageCompetitorPriceCents,
+                  suggestedListingPriceCents: suggestedListingPriceCents(
+                    row.amazonPriceCents,
+                    0,
+                    result.market.averageCompetitorPriceCents,
+                  ),
                 }
               : row;
           }),
@@ -306,6 +312,7 @@ export function ArbitrageTable({ initial }: { initial: ArbitragePage }) {
               <SortHeader label="Est. sales/30d" sortKey="sales" params={params} onSort={onSort} />
               <th className="px-4 py-3 text-right">Competition</th>
               <th className="px-4 py-3 text-right">Avg. comp price</th>
+              <th className="px-4 py-3 text-right">Suggested price</th>
               <SortHeader label="Amazon price" sortKey="amazonPrice" params={params} onSort={onSort} />
               <SortHeader label="Profit / unit" sortKey="profit" params={params} onSort={onSort} />
               <SortHeader label="Margin" sortKey="margin" params={params} onSort={onSort} />
@@ -375,6 +382,9 @@ export function ArbitrageTable({ initial }: { initial: ArbitragePage }) {
                     ? formatCents(r.avgCompPriceCents)
                     : "—"}
                 </td>
+                <td className="px-4 py-3 text-right font-medium tabular-nums text-indigo-700">
+                  {formatCents(r.suggestedListingPriceCents)}
+                </td>
                 <td className="px-4 py-3 text-right tabular-nums">
                   {formatCents(r.amazonPriceCents)}
                 </td>
@@ -414,7 +424,7 @@ export function ArbitrageTable({ initial }: { initial: ArbitragePage }) {
             ))}
             {data.rows.length === 0 && (
               <tr>
-                <td colSpan={11} className="px-4 py-12 text-center text-slate-500">
+                <td colSpan={12} className="px-4 py-12 text-center text-slate-500">
                   {data.total === 0
                     ? "The research database is empty — run a scan to start filling it."
                     : "No opportunities match these filters."}

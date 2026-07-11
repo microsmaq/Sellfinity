@@ -5,6 +5,7 @@ import { estimateMargin } from "@/lib/fees";
 import type { RemoteListing } from "@/lib/ebay/client";
 import type { EbayRow } from "@/app/(app)/listings/ebay-listings-table";
 import type { ListingMarketMetrics } from "./market-metrics";
+import { suggestedListingPriceCents } from "./cleanup";
 
 export type LocalListingFacts = {
   ebayListingId: string | null;
@@ -62,6 +63,7 @@ export function buildEbayRows(
         imageUrl: r.imageUrl,
         quantity: r.quantity,
         market: marketMetrics.get(r.ebayListingId) ?? null,
+        suggestedPriceCents: null,
         match: null,
       });
       continue;
@@ -71,6 +73,10 @@ export function buildEbayRows(
       localListing.product.costCents,
       localListing.product.shippingCostCents,
     );
+    const market =
+      marketMetrics.get(r.ebayListingId) ??
+      marketMetrics.get(localListing.product.sku) ??
+      null;
     rows.push({
       ebayListingId: r.ebayListingId,
       title: r.title,
@@ -78,13 +84,16 @@ export function buildEbayRows(
       url: r.url,
       imageUrl: r.imageUrl ?? firstImage(localListing.imageUrlsJson),
       quantity: r.quantity,
-      market:
-        marketMetrics.get(r.ebayListingId) ??
-        marketMetrics.get(localListing.product.sku) ??
-        null,
+      market,
+      suggestedPriceCents: suggestedListingPriceCents(
+        localListing.product.costCents,
+        localListing.product.shippingCostCents,
+        market?.averageCompetitorPriceCents,
+      ),
       match: {
         sku: localListing.product.sku,
         amazonPriceCents: localListing.product.costCents,
+        shippingCostCents: localListing.product.shippingCostCents,
         amazonUrl: localListing.product.supplierUrl,
         profitCents: margin.estimatedProfitCents,
         marginPct: Math.round(margin.marginPct),

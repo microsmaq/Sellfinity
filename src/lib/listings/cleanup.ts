@@ -48,6 +48,24 @@ export function targetPriceCents(
   return charmCeilCents(Math.ceil(Math.min(priceForProfit, priceForMargin)));
 }
 
+/** A profitable, market-aware listing recommendation. The profitability
+ * target is a hard floor; when competitor data exists, aim roughly 3% below
+ * the average comp without ever crossing below that floor. */
+export function suggestedListingPriceCents(
+  costCents: number,
+  shippingCostCents: number,
+  averageCompetitorPriceCents?: number | null,
+): number {
+  const profitableFloor = targetPriceCents(costCents, shippingCostCents);
+  if (!averageCompetitorPriceCents || averageCompetitorPriceCents <= 0) {
+    return profitableFloor;
+  }
+  const competitiveTarget = charmCeilCents(
+    Math.ceil(averageCompetitorPriceCents * 0.97),
+  );
+  return Math.max(profitableFloor, competitiveTarget);
+}
+
 export type CleanupDecision =
   | { action: "ok" }
   | { action: "reprice"; newPriceCents: number }

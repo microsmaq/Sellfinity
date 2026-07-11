@@ -7,6 +7,7 @@ import {
   charmCeilCents,
   classifyListing,
   targetPriceCents,
+  suggestedListingPriceCents,
   trueProfitCents,
 } from "@/lib/listings/cleanup";
 import { EBAY_FINAL_VALUE_RATE, EBAY_PER_ORDER_FEE_CENTS } from "@/lib/fees";
@@ -104,5 +105,20 @@ describe("classifyListing", () => {
     // margin ≈ -25%: price $10, cost ~ $11.1 → profit = 8.375-0.3-11.1 = -3.03 (-30.3%) too low; use cost $10.5 → -2.43 (-24.3%)
     const decision = classifyListing(1000, 1050, 0);
     expect(decision.action).toBe("reprice");
+  });
+});
+
+describe("suggestedListingPriceCents", () => {
+  it("never recommends below the profitability target", () => {
+    const target = targetPriceCents(2000, 500);
+    expect(suggestedListingPriceCents(2000, 500, 1000)).toBe(target);
+  });
+
+  it("uses a profitable price near 3% below the average competitor", () => {
+    const suggested = suggestedListingPriceCents(1000, 0, 5000);
+    expect(suggested).toBe(4899);
+    expect(trueProfitCents(suggested, 1000, 0)).toBeGreaterThanOrEqual(
+      TARGET_PROFIT_CENTS,
+    );
   });
 });

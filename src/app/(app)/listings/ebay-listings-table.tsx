@@ -10,7 +10,10 @@ import {
   researchEbayListingsMarket,
   unmatchEbayListing,
 } from "@/lib/actions/ebay-listings";
-import { classifyListing } from "@/lib/listings/cleanup";
+import {
+  classifyListing,
+  suggestedListingPriceCents,
+} from "@/lib/listings/cleanup";
 import { formatCents, parseDollarsToCents } from "@/lib/money";
 import { Badge, Button, Card, cx } from "@/components/ui";
 
@@ -26,10 +29,12 @@ export type EbayRow = {
     competitorCount: number;
     averageCompetitorPriceCents: number;
   } | null;
+  suggestedPriceCents: number | null;
   /** Amazon source data when this listing is matched/tracked. */
   match: {
     sku: string;
     amazonPriceCents: number;
+    shippingCostCents: number;
     amazonUrl: string;
     profitCents: number;
     marginPct: number;
@@ -106,7 +111,9 @@ export function EbayListingsTable({
     setRows((prev) =>
       prev.map((row) => {
         const r = results.find((x) => x.ebayListingId === row.ebayListingId);
-        return r && r.ok ? { ...row, match: r.match } : row;
+        return r && r.ok
+          ? { ...row, match: { ...r.match, shippingCostCents: 0 } }
+          : row;
       }),
     );
   }
@@ -221,7 +228,17 @@ export function EbayListingsTable({
               (item) => item.ebayListingId === row.ebayListingId,
             );
             return result?.market
-              ? { ...row, market: result.market }
+              ? {
+                  ...row,
+                  market: result.market,
+                  suggestedPriceCents: row.match
+                    ? suggestedListingPriceCents(
+                        row.match.amazonPriceCents,
+                        row.match.shippingCostCents,
+                        result.market.averageCompetitorPriceCents,
+                      )
+                    : null,
+                }
               : row;
           }),
         );
@@ -308,6 +325,9 @@ export function EbayListingsTable({
                 Competition
               </th>
               <th className="px-4 py-3 text-right">Avg. comp price</th>
+              <th className="px-4 py-3 text-right" title="Profitable floor using product cost, shipping, eBay fees, and 3% ad rate">
+                Suggested price
+              </th>
               <th className="px-4 py-3">Status</th>
               <th className="px-4 py-3" />
             </tr>
@@ -410,6 +430,11 @@ export function EbayListingsTable({
                       ? formatCents(r.market.averageCompetitorPriceCents)
                       : "—"}
                   </td>
+                  <td className="px-4 py-3 text-right font-medium tabular-nums text-indigo-700">
+                    {r.suggestedPriceCents !== null
+                      ? formatCents(r.suggestedPriceCents)
+                      : "—"}
+                  </td>
                   <td className="px-4 py-3">
                     {!r.match ? (
                       <Badge tone="slate">Unmatched</Badge>
@@ -496,7 +521,7 @@ export function EbayListingsTable({
             })}
             {rows.length === 0 && !fetchError && (
               <tr>
-                <td colSpan={9} className="px-4 py-12 text-center text-slate-500">
+                <td colSpan={10} className="px-4 py-12 text-center text-slate-500">
                   No active listings found on your eBay account.
                 </td>
               </tr>
