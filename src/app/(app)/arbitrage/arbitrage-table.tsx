@@ -11,6 +11,7 @@ import {
   researchArbitrageMarket,
   scanForNew,
   verifyArbitrageMatches,
+  verifyHistoricalArbitrageMatches,
 } from "@/lib/actions/arbitrage";
 import type { ArbitragePage, ArbitragePageParams } from "@/lib/arbitrage/store";
 import type { OpportunityRow } from "@/lib/arbitrage/scanner";
@@ -71,6 +72,7 @@ export function ArbitrageTable({ initial }: { initial: ArbitragePage }) {
   const [scanning, startScan] = useTransition();
   const [researching, startResearch] = useTransition();
   const [verifying, startVerify] = useTransition();
+  const [verifyingHistory, startVerifyHistory] = useTransition();
   const [busyAsin, setBusyAsin] = useState<string | null>(null);
   const [hidingId, setHidingId] = useState<string | null>(null);
   const [notice, setNotice] = useState<{ text: string; error: boolean } | null>(null);
@@ -219,6 +221,39 @@ export function ArbitrageTable({ initial }: { initial: ArbitragePage }) {
     });
   }
 
+  function verifyAllHistoricalMatches() {
+    setNotice(null);
+    startVerifyHistory(async () => {
+      let processed = 0;
+      let approved = 0;
+      let removed = 0;
+      let aiChecked = 0;
+      let remaining = 1;
+      for (let batch = 0; remaining > 0 && batch < 1000; batch++) {
+        const result = await verifyHistoricalArbitrageMatches(10);
+        processed += result.processed;
+        approved += result.approved;
+        removed += result.removed;
+        aiChecked += result.aiChecked;
+        remaining = result.remaining;
+        setNotice({
+          text: `Verifying historical matches… ${processed} processed, ${remaining} remaining (${approved} approved, ${removed} removed)`,
+          error: false,
+        });
+        if (result.processed === 0) break;
+      }
+      setData(await fetchArbitragePage(params));
+      setSelected(new Set());
+      setNotice({
+        text:
+          remaining === 0
+            ? `Historical verification complete: ${processed} checked, ${approved} approved, ${removed} unsafe or uncertain pairs removed, ${aiChecked} checked by AI.`
+            : `Historical verification paused: ${processed} checked and ${remaining} remain. Run it again to resume.`,
+        error: remaining > 0,
+      });
+    });
+  }
+
   function exportExcel() {
     startTransition(async () => {
       const file = await exportArbitrageExcel(params);
@@ -347,6 +382,13 @@ export function ArbitrageTable({ initial }: { initial: ArbitragePage }) {
           </Button>
           <Button variant="secondary" disabled={verifying} onClick={verifyPageMatches}>
             {verifying ? "Verifying matches…" : "Verify product matches"}
+          </Button>
+          <Button
+            variant="secondary"
+            disabled={verifyingHistory}
+            onClick={verifyAllHistoricalMatches}
+          >
+            {verifyingHistory ? "Verifying history…" : "Verify all historical"}
           </Button>
           <Button variant="secondary" disabled={pending} onClick={exportExcel}>
             Export Excel

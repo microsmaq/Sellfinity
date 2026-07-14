@@ -90,22 +90,17 @@ export type MatchVerificationResult = {
   method: string;
 };
 
-/** Re-check existing research rows. Rejected and review-required pairs are
- * retained for auditability but automatically disappear from finder results. */
-export async function verifyArbitrageMatches(
-  ebayItemIds: string[],
+type MatchVerificationRow = {
+  ebayItemId: string;
+  ebayTitle: string;
+  imageUrl: string;
+  amazonTitle: string;
+};
+
+async function assessAndPersistMatches(
+  rows: MatchVerificationRow[],
 ): Promise<MatchVerificationResult[]> {
-  await requireUser();
-  const ids = [...new Set(ebayItemIds)].slice(0, 10);
-  const rows = await db.arbitrageItem.findMany({
-    where: { ebayItemId: { in: ids } },
-    select: {
-      ebayItemId: true,
-      ebayTitle: true,
-      imageUrl: true,
-      amazonTitle: true,
-    },
-  });
+  if (rows.length === 0) return [];
   const assessed = await Promise.all(
     rows.map(async (row) => ({
       row,
@@ -129,12 +124,75 @@ export async function verifyArbitrageMatches(
       }),
     ),
   );
-  const results = assessed.map(({ row, assessment }) => ({
+  return assessed.map(({ row, assessment }) => ({
     ebayItemId: row.ebayItemId,
     ...assessment,
   }));
+}
+
+/** Re-check existing research rows. Rejected and review-required pairs are
+ * retained for auditability but automatically disappear from finder results. */
+export async function verifyArbitrageMatches(
+  ebayItemIds: string[],
+): Promise<MatchVerificationResult[]> {
+  await requireUser();
+  const ids = [...new Set(ebayItemIds)].slice(0, 10);
+  const rows = await db.arbitrageItem.findMany({
+    where: { ebayItemId: { in: ids } },
+    select: {
+      ebayItemId: true,
+      ebayTitle: true,
+      imageUrl: true,
+      amazonTitle: true,
+    },
+  });
+  const results = await assessAndPersistMatches(rows);
   revalidatePath("/arbitrage");
   return results;
+}
+
+export type HistoricalMatchBatchResult = {
+  processed: number;
+  approved: number;
+  removed: number;
+  aiChecked: number;
+  remaining: number;
+};
+
+/** Verify the next small batch of legacy rows. The browser calls this
+ * repeatedly, so progress survives timeouts, refreshes, and interrupted runs. */
+export async function verifyHistoricalArbitrageMatches(
+  requestedBatchSize = 10,
+): Promise<HistoricalMatchBatchResult> {
+  await requireUser();
+  const batchSize = Math.min(10, Math.max(1, requestedBatchSize));
+  const rows = await db.arbitrageItem.findMany({
+    where: { matchVerdict: "UNVERIFIED" },
+    orderBy: [{ createdAt: "asc" }, { ebayItemId: "asc" }],
+    take: batchSize,
+    select: {
+      ebayItemId: true,
+      ebayTitle: true,
+      imageUrl: true,
+      amazonTitle: true,
+    },
+  });
+  const results = await assessAndPersistMatches(rows);
+  const remaining = await db.arbitrageItem.count({
+    where: { matchVerdict: "UNVERIFIED" },
+  });
+  revalidatePath("/arbitrage");
+  return {
+    processed: results.length,
+    approved: results.filter(
+      (result) => result.verdict === "MATCH" || result.verdict === "LIKELY",
+    ).length,
+    removed: results.filter(
+      (result) => result.verdict === "REJECTED" || result.verdict === "REVIEW",
+    ).length,
+    aiChecked: results.filter((result) => result.method === "AI").length,
+    remaining,
+  };
 }
 
 export type ArbitrageMarketResult = {
