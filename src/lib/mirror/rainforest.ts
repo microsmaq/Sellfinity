@@ -63,7 +63,12 @@ export async function rainforestRequest<T>(
     amazon_domain: "amazon.com",
     ...params,
   });
-  const res = await fetch(`${API_BASE}?${query}`);
+  // Rainforest occasionally leaves a request open without returning a body.
+  // Bound the wait so background listing audits remain resumable instead of
+  // occupying every worker indefinitely.
+  const res = await fetch(`${API_BASE}?${query}`, {
+    signal: AbortSignal.timeout(20_000),
+  });
   if (!res.ok) {
     throw new Error(`Rainforest ${params.type} failed (${res.status}): ${(await res.text()).slice(0, 200)}`);
   }

@@ -298,7 +298,7 @@ export async function cleanupListingSourcesBatch(): Promise<SourceCleanupBatchRe
       userId: user.id,
       status: "ACTIVE",
       sourceMatchVerdict: "PROCESSING",
-      sourceMatchCheckedAt: { lt: new Date(Date.now() - 10 * 60 * 1000) },
+      sourceMatchCheckedAt: { lt: new Date(Date.now() - 3 * 60 * 1000) },
     },
     data: { sourceMatchVerdict: "UNVERIFIED", sourceMatchCheckedAt: null },
   });
