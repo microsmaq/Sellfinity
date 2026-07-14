@@ -19,6 +19,7 @@ import {
   freshAccessToken,
   type EbayEnvConfig,
 } from "./oauth";
+import { fitEbayDescription } from "./description";
 
 const MARKETPLACE = "EBAY_US";
 const LOCATION_KEY = "sellfinity-primary";
@@ -269,11 +270,12 @@ export class RealEbayClient implements EbayClient {
       this.suggestCategoryId(input.title),
     ]);
     const aspects = await this.requiredAspects(categoryId);
+    const description = fitEbayDescription(input.description);
 
     await this.request("PUT", `/sell/inventory/v1/inventory_item/${encodeURIComponent(input.sku)}`, {
       product: {
         title: input.title,
-        description: input.description,
+        description,
         imageUrls: input.imageUrls.slice(0, 12),
         aspects,
       },
@@ -287,7 +289,7 @@ export class RealEbayClient implements EbayClient {
       format: "FIXED_PRICE",
       availableQuantity: input.quantity,
       categoryId,
-      listingDescription: input.description,
+      listingDescription: description,
       listingPolicies: policies,
       pricingSummary: {
         price: { value: (input.priceCents / 100).toFixed(2), currency: "USD" },

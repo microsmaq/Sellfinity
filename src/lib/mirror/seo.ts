@@ -1,4 +1,5 @@
 import { EBAY_TITLE_MAX } from "@/lib/listings/generate";
+import { fitEbayDescription } from "@/lib/ebay/description";
 import type { ScrapedProduct } from "./scraper";
 
 const SEO_SUFFIXES = [" - Brand New", " NEW"];
@@ -96,7 +97,7 @@ export function generateMirrorDescription(
         .join("")}</div>`
     : "";
 
-  return `<div style="font-family:Arial,Helvetica,sans-serif;max-width:950px;margin:0 auto;background:#fff;color:#111;border:3px solid #ccc;border-radius:15px;overflow:hidden;">
+  return fitEbayDescription(`<div style="font-family:Arial,Helvetica,sans-serif;max-width:950px;margin:0 auto;background:#fff;color:#111;border:3px solid #ccc;border-radius:15px;overflow:hidden;">
 <div style="color:#058CD3;font-size:28px;font-weight:700;text-align:center;padding:18px 12px;border-bottom:1px solid #eee;">${title}</div>
 ${imageHtml}
 <div style="padding:18px 22px;background:#fff;">
@@ -116,5 +117,5 @@ ${imageHtml}
 </div>
 <div style="text-align:center;padding:12px 16px;font-size:18px;font-weight:700;color:#058CD3;">Visit our eBay store for more great deals!</div>
 <div style="text-align:center;padding:16px 12px;font-size:20px;font-weight:700;color:#058CD3;">Thank you!</div>
-</div>`;
+</div>`);
 }

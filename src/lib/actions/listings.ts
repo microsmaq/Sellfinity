@@ -5,6 +5,7 @@ import { requireUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { getEbayClientForUser } from "@/lib/ebay";
 import { EbayApiError, validateListingInput } from "@/lib/ebay/client";
+import { fitEbayDescription } from "@/lib/ebay/description";
 import { generateListing } from "@/lib/listings/generate";
 import { parseImageUrls } from "@/lib/types";
 
@@ -85,7 +86,7 @@ export async function publishListings(listingIds: string[]): Promise<BulkResult>
   for (const draft of drafts) {
     const input = {
       title: draft.title,
-      description: draft.description,
+      description: fitEbayDescription(draft.description),
       priceCents: draft.priceCents,
       quantity: draft.quantity,
       imageUrls: parseImageUrls(draft.imageUrlsJson),

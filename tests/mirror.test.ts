@@ -6,6 +6,7 @@ import {
   productForAsin,
 } from "@/lib/mirror/mock-amazon";
 import { generateMirrorDescription, generateSeoTitle } from "@/lib/mirror/seo";
+import { EBAY_DESCRIPTION_MAX, fitEbayDescription } from "@/lib/ebay/description";
 import { parseUrlLines } from "@/lib/mirror/pipeline";
 import { EBAY_TITLE_MAX } from "@/lib/listings/generate";
 
@@ -125,6 +126,42 @@ describe("generateMirrorDescription", () => {
     expect(d).not.toContain("<b>");
     expect(d).not.toContain("javascript:");
     expect(d).toContain("A&amp;B");
+  });
+
+  it("never exceeds eBay's description cap for large supplier content", () => {
+    const d = generateMirrorDescription({
+      title: "Extra Long Product Name ".repeat(12),
+      brand: "Test Brand",
+      bulletPoints: Array.from({ length: 8 }, (_, i) =>
+        `Feature ${i + 1}: ${"detailed supplier content ".repeat(40)}`,
+      ),
+      description: "Long fallback description ".repeat(100),
+      category: "Home & Kitchen",
+      imageUrls: Array.from(
+        { length: 6 },
+        (_, i) => `https://m.media-amazon.com/images/I/${"very-long-path-".repeat(10)}${i}.jpg`,
+      ),
+    });
+    expect(d.length).toBeLessThanOrEqual(EBAY_DESCRIPTION_MAX);
+    expect(d.startsWith("<div")).toBe(true);
+    expect(d.endsWith("</div>")).toBe(true);
+  });
+});
+
+describe("fitEbayDescription", () => {
+  it("removes redundant inline images before dropping formatted content", () => {
+    const html = `<div><img src="https://example.com/${"x".repeat(4100)}.jpg"><p>Important product details</p></div>`;
+    const fitted = fitEbayDescription(html);
+    expect(fitted).toBe("<div><p>Important product details</p></div>");
+    expect(fitted.length).toBeLessThanOrEqual(EBAY_DESCRIPTION_MAX);
+  });
+
+  it("returns valid bounded HTML when text alone is oversized", () => {
+    const fitted = fitEbayDescription(`<section>${"A&B product details ".repeat(500)}</section>`);
+    expect(fitted.length).toBeLessThanOrEqual(EBAY_DESCRIPTION_MAX);
+    expect(fitted.startsWith("<div")).toBe(true);
+    expect(fitted.endsWith("</div>")).toBe(true);
+    expect(fitted).toContain("A&amp;B");
   });
 });
 
