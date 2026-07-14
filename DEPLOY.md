@@ -29,9 +29,9 @@ uses the isolated `sellfinity_dev` schema via `.env`. Vercel needs both
 5. Deploy. Note: Vercel's Hobby tier disallows commercial use — use Pro.
 
 For AI-assisted Arbitrage Finder product-identity verification, also set
-`OPENAI_API_KEY`. `OPENAI_MATCH_MODEL` is optional and defaults to
-`gpt-5.6-luna`. Strict model, variant, quantity, and size checks remain active
-when no AI key is configured.
+`OPENROUTER_API_KEY`. `OPENROUTER_MATCH_MODEL` is optional and defaults to
+`google/gemini-2.5-flash-lite`. Strict model, variant, quantity, and size
+checks remain active when no AI key is configured.
 
 ## 3. Domain (~10 min + DNS propagation)
 

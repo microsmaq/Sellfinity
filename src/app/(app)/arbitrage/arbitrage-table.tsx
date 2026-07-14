@@ -213,7 +213,7 @@ export function ArbitrageTable({ initial }: { initial: ArbitragePage }) {
       setData(await fetchArbitragePage(params));
       setSelected(new Set());
       setNotice({
-        text: `Match verification complete: ${approved} approved, ${removed} unsafe or uncertain pair${removed === 1 ? "" : "s"} removed${aiChecked ? `, ${aiChecked} checked by AI` : " using strict identity rules (add OPENAI_API_KEY to enable AI review)"}.`,
+        text: `Match verification complete: ${approved} approved, ${removed} unsafe or uncertain pair${removed === 1 ? "" : "s"} removed${aiChecked ? `, ${aiChecked} checked by AI` : " using strict identity rules (add OPENROUTER_API_KEY to enable AI review)"}.`,
         error: false,
       });
     });

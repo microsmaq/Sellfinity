@@ -135,50 +135,105 @@ function responseText(payload: unknown): string | null {
   return null;
 }
 
+function chatCompletionText(payload: unknown): string | null {
+  if (!payload || typeof payload !== "object") return null;
+  const choices = (payload as { choices?: unknown[] }).choices;
+  if (!Array.isArray(choices)) return null;
+  const first = choices[0];
+  if (!first || typeof first !== "object") return null;
+  const message = (first as { message?: unknown }).message;
+  if (!message || typeof message !== "object") return null;
+  const content = (message as { content?: unknown }).content;
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return null;
+  return content
+    .map((part) =>
+      part && typeof part === "object" && typeof (part as { text?: unknown }).text === "string"
+        ? (part as { text: string }).text
+        : "",
+    )
+    .join("") || null;
+}
+
 async function assessWithAi(
   ebay: ProductIdentity,
   amazon: ProductIdentity,
 ): Promise<ProductMatchAssessment | null> {
-  const apiKey = process.env.OPENAI_API_KEY;
+  const openRouterKey = process.env.OPENROUTER_API_KEY;
+  const openAiKey = process.env.OPENAI_API_KEY;
+  const apiKey = openRouterKey || openAiKey;
   if (!apiKey) return null;
 
-  const content: ({ type: "input_text"; text: string } | { type: "input_image"; image_url: string })[] = [
+  const prompt = [
+    "Act as a strict ecommerce product identity verifier.",
+    "Decide whether the eBay item and Amazon source are the same sellable product or a genuinely interchangeable equivalent.",
+    "Reject different product types, incompatible variants, sizes, quantities, models, bundles, genders, ages, colors when material, or an accessory matched to a main product.",
+    "Do not approve merely because both items share broad keywords.",
+    `EBAY TITLE: ${ebay.title}`,
+    `AMAZON TITLE: ${amazon.title}`,
+    'Return only JSON: {"verdict":"MATCH"|"LIKELY"|"REVIEW"|"REJECTED","confidence":0-100,"reason":"one short sentence"}.',
+  ].join("\n");
+  const openAiContent: ({ type: "input_text"; text: string } | { type: "input_image"; image_url: string })[] = [
     {
       type: "input_text",
-      text: [
-        "Act as a strict ecommerce product identity verifier.",
-        "Decide whether the eBay item and Amazon source are the same sellable product or a genuinely interchangeable equivalent.",
-        "Reject different product types, incompatible variants, sizes, quantities, models, bundles, genders, ages, colors when material, or an accessory matched to a main product.",
-        "Do not approve merely because both items share broad keywords.",
-        `EBAY TITLE: ${ebay.title}`,
-        `AMAZON TITLE: ${amazon.title}`,
-        'Return only JSON: {"verdict":"MATCH"|"LIKELY"|"REVIEW"|"REJECTED","confidence":0-100,"reason":"one short sentence"}.',
-      ].join("\n"),
+      text: prompt,
     },
   ];
   if (ebay.imageUrl?.startsWith("https://")) {
-    content.push({ type: "input_image", image_url: ebay.imageUrl });
+    openAiContent.push({ type: "input_image", image_url: ebay.imageUrl });
   }
   if (amazon.imageUrl?.startsWith("https://")) {
-    content.push({ type: "input_image", image_url: amazon.imageUrl });
+    openAiContent.push({ type: "input_image", image_url: amazon.imageUrl });
   }
 
   try {
-    const response = await fetch("https://api.openai.com/v1/responses", {
+    const endpoint = openRouterKey
+      ? "https://openrouter.ai/api/v1/chat/completions"
+      : "https://api.openai.com/v1/responses";
+    const headers: Record<string, string> = {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    };
+    if (openRouterKey) {
+      headers["HTTP-Referer"] = "https://www.sellfinity.app";
+      headers["X-OpenRouter-Title"] = "Sellfinity";
+    }
+    const openRouterContent: (
+      | { type: "text"; text: string }
+      | { type: "image_url"; image_url: { url: string } }
+    )[] = [{ type: "text", text: prompt }];
+    if (ebay.imageUrl?.startsWith("https://")) {
+      openRouterContent.push({ type: "image_url", image_url: { url: ebay.imageUrl } });
+    }
+    if (amazon.imageUrl?.startsWith("https://")) {
+      openRouterContent.push({ type: "image_url", image_url: { url: amazon.imageUrl } });
+    }
+    const response = await fetch(endpoint, {
       method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: process.env.OPENAI_MATCH_MODEL || "gpt-5.6-luna",
-        input: [{ role: "user", content }],
-        max_output_tokens: 180,
-      }),
+      headers,
+      body: JSON.stringify(
+        openRouterKey
+          ? {
+              model:
+                process.env.OPENROUTER_MATCH_MODEL ||
+                "google/gemini-2.5-flash-lite",
+              messages: [{ role: "user", content: openRouterContent }],
+              max_tokens: 180,
+              temperature: 0,
+            }
+          : {
+              model: process.env.OPENAI_MATCH_MODEL || "gpt-5.6-luna",
+              input: [{ role: "user", content: openAiContent }],
+              max_output_tokens: 180,
+            },
+      ),
       signal: AbortSignal.timeout(12_000),
     });
     if (!response.ok) return null;
-    const text = responseText(await response.json());
+    const payload = await response.json();
+    const text = openRouterKey
+      ? chatCompletionText(payload)
+      : responseText(payload);
     if (!text) return null;
     const json = JSON.parse(text.match(/\{[\s\S]*\}/)?.[0] ?? "") as {
       verdict?: ProductMatchVerdict;
