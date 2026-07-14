@@ -58,8 +58,10 @@ describe("arbitrage product identity", () => {
   it("uses an OpenRouter chat completion when configured", async () => {
     const previous = process.env.OPENROUTER_API_KEY;
     process.env.OPENROUTER_API_KEY = "test-openrouter-key";
-    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
-      new Response(
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => {
+      void _input;
+      void _init;
+      return new Response(
         JSON.stringify({
           choices: [
             {
@@ -71,8 +73,8 @@ describe("arbitrage product identity", () => {
           ],
         }),
         { status: 200, headers: { "Content-Type": "application/json" } },
-      ),
-    );
+      );
+    });
     vi.stubGlobal("fetch", fetchMock);
 
     const result = await assessProductMatch(

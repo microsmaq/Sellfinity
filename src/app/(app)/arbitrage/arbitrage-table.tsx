@@ -494,6 +494,7 @@ export function ArbitrageTable({ initial }: { initial: ArbitragePage }) {
                   {new Date(r.foundAt).toLocaleDateString("en-US", {
                     month: "short",
                     day: "numeric",
+                    timeZone: "UTC",
                   })}
                 </td>
                 <td className="whitespace-nowrap px-4 py-3 text-right">
