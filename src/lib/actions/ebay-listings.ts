@@ -292,7 +292,17 @@ function firstImage(json: string): string | null {
  */
 export async function cleanupListingSourcesBatch(): Promise<SourceCleanupBatchResult> {
   const user = await requireUser();
-  const listings = await db.listing.findMany({
+  // Recover work abandoned by a timed-out browser/server request.
+  await db.listing.updateMany({
+    where: {
+      userId: user.id,
+      status: "ACTIVE",
+      sourceMatchVerdict: "PROCESSING",
+      sourceMatchCheckedAt: { lt: new Date(Date.now() - 10 * 60 * 1000) },
+    },
+    data: { sourceMatchVerdict: "UNVERIFIED", sourceMatchCheckedAt: null },
+  });
+  const candidates = await db.listing.findMany({
     where: {
       userId: user.id,
       status: "ACTIVE",
@@ -300,9 +310,29 @@ export async function cleanupListingSourcesBatch(): Promise<SourceCleanupBatchRe
       sourceMatchVerdict: "UNVERIFIED",
     },
     orderBy: [{ publishedAt: "asc" }, { id: "asc" }],
-    take: 1,
-    include: { product: true },
+    take: 8,
+    select: { id: true },
   });
+  let claimedId: string | null = null;
+  for (const candidate of candidates) {
+    const claimed = await db.listing.updateMany({
+      where: {
+        id: candidate.id,
+        userId: user.id,
+        status: "ACTIVE",
+        sourceMatchVerdict: "UNVERIFIED",
+      },
+      data: { sourceMatchVerdict: "PROCESSING", sourceMatchCheckedAt: new Date() },
+    });
+    if (claimed.count === 1) {
+      claimedId = candidate.id;
+      break;
+    }
+  }
+  const claimedListing = claimedId
+    ? await db.listing.findUnique({ where: { id: claimedId }, include: { product: true } })
+    : null;
+  const listings = claimedListing ? [claimedListing] : [];
   const client = await getEbayClientForUser(user.id);
   const counts = { kept: 0, replaced: 0, ended: 0, review: 0 };
   const endedIds: string[] = [];
@@ -466,7 +496,7 @@ export async function cleanupListingSourcesBatch(): Promise<SourceCleanupBatchRe
       userId: user.id,
       status: "ACTIVE",
       ebayListingId: { not: null },
-      sourceMatchVerdict: "UNVERIFIED",
+      sourceMatchVerdict: { in: ["UNVERIFIED", "PROCESSING"] },
     },
   });
   revalidate();
