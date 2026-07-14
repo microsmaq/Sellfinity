@@ -10,6 +10,7 @@ export type AmazonMatch = {
   title: string;
   priceCents: number;
   url: string;
+  imageUrl?: string;
 };
 
 const STOPWORDS = new Set([
@@ -64,6 +65,7 @@ function mockMatch(title: string): AmazonMatch | null {
     title: productForAsin(asin).title,
     priceCents: state.costCents,
     url: `https://www.amazon.com/dp/${asin}`,
+    imageUrl: productForAsin(asin).imageUrls[0],
   };
 }
 
@@ -72,6 +74,7 @@ type RainforestSearchResult = {
   title?: string;
   link?: string;
   price?: { value?: number };
+  image?: string;
 };
 
 /**
@@ -92,15 +95,20 @@ export async function findAmazonMatch(title: string): Promise<AmazonMatch | null
   } catch {
     return null;
   }
-  for (const result of results.slice(0, 5)) {
+  const ranked = results
+    .slice(0, 8)
+    .map((result) => ({ result, similarity: titleSimilarity(title, result.title ?? "") }))
+    .sort((a, b) => b.similarity - a.similarity);
+  for (const { result, similarity } of ranked) {
     if (!result.asin || typeof result.price?.value !== "number") continue;
     if (result.price.value <= 0) continue;
-    if (titleSimilarity(title, result.title ?? "") < MATCH_THRESHOLD) continue;
+    if (similarity < MATCH_THRESHOLD) continue;
     return {
       asin: result.asin,
       title: result.title ?? title,
       priceCents: Math.round(result.price.value * 100),
       url: result.link ?? `https://www.amazon.com/dp/${result.asin}`,
+      imageUrl: result.image,
     };
   }
   return null;

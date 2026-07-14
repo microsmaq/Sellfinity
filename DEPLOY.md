@@ -28,6 +28,11 @@ uses the isolated `sellfinity_dev` schema via `.env`. Vercel needs both
      eBay portal in step 4)
 5. Deploy. Note: Vercel's Hobby tier disallows commercial use — use Pro.
 
+For AI-assisted Arbitrage Finder product-identity verification, also set
+`OPENAI_API_KEY`. `OPENAI_MATCH_MODEL` is optional and defaults to
+`gpt-5.6-luna`. Strict model, variant, quantity, and size checks remain active
+when no AI key is configured.
+
 ## 3. Domain (~10 min + DNS propagation)
 
 1. Vercel project → Settings → Domains → add `sellfinity.app` (and

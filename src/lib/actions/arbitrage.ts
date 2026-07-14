@@ -15,6 +15,7 @@ import { researchEbayMarket } from "@/lib/ebay/market";
 import { db } from "@/lib/db";
 import type { ListingMarketMetrics } from "@/lib/listings/market-metrics";
 import { createArbitrageWorkbook } from "@/lib/export/excel";
+import { assessProductMatch } from "@/lib/arbitrage/product-match";
 
 /** One page of the research database (filters/sort/pagination server-side). */
 export async function fetchArbitragePage(
@@ -79,6 +80,61 @@ export async function scanForNew(target = 50): Promise<ScanReport> {
   const report = await scanMore({ target: Math.min(Math.max(1, target), 50) });
   revalidatePath("/arbitrage");
   return report;
+}
+
+export type MatchVerificationResult = {
+  ebayItemId: string;
+  verdict: string;
+  confidence: number;
+  reason: string;
+  method: string;
+};
+
+/** Re-check existing research rows. Rejected and review-required pairs are
+ * retained for auditability but automatically disappear from finder results. */
+export async function verifyArbitrageMatches(
+  ebayItemIds: string[],
+): Promise<MatchVerificationResult[]> {
+  await requireUser();
+  const ids = [...new Set(ebayItemIds)].slice(0, 10);
+  const rows = await db.arbitrageItem.findMany({
+    where: { ebayItemId: { in: ids } },
+    select: {
+      ebayItemId: true,
+      ebayTitle: true,
+      imageUrl: true,
+      amazonTitle: true,
+    },
+  });
+  const assessed = await Promise.all(
+    rows.map(async (row) => ({
+      row,
+      assessment: await assessProductMatch(
+        { title: row.ebayTitle, imageUrl: row.imageUrl },
+        { title: row.amazonTitle },
+      ),
+    })),
+  );
+  await db.$transaction(
+    assessed.map(({ row, assessment }) =>
+      db.arbitrageItem.update({
+        where: { ebayItemId: row.ebayItemId },
+        data: {
+          matchVerdict: assessment.verdict,
+          matchConfidence: assessment.confidence,
+          matchReason: assessment.reason,
+          matchMethod: assessment.method,
+          matchCheckedAt: new Date(),
+        },
+      }),
+    ),
+  );
+  const results = assessed.map(({ row, assessment }) => ({
+    ebayItemId: row.ebayItemId,
+    ...assessment,
+  }));
+  revalidatePath("/arbitrage");
+  return results;
 }
 
 export type ArbitrageMarketResult = {

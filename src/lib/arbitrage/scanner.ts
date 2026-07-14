@@ -5,6 +5,7 @@
 // by title/UPC, and is selected in src/lib/arbitrage/index.ts.
 
 import type { MarginEstimate } from "@/lib/fees";
+import type { ProductMatchAssessment } from "./product-match";
 
 export type ArbitrageOpportunity = {
   category: string;
@@ -26,6 +27,8 @@ export type ArbitrageOpportunity = {
   };
   /** Selling at the eBay price, buying at the Amazon price, net of eBay fees. */
   margin: MarginEstimate;
+  /** Product-identity evidence. Real scans only persist approved matches. */
+  match?: ProductMatchAssessment;
 };
 
 /** UI row for the arbitrage table — shared by server rows builder and client table. */
@@ -52,6 +55,11 @@ export type OpportunityRow = {
   storeEbayUrl: string | null;
   /** ISO date the scanner first found this opportunity. */
   foundAt: string;
+  amazonTitle: string;
+  matchVerdict: string;
+  matchConfidence: number;
+  matchReason: string | null;
+  matchMethod: string;
 };
 
 /** Ceiling on one scan — keeps "load more" from growing unbounded. */

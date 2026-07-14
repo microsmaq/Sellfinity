@@ -23,21 +23,36 @@ export async function persistOpportunities(
     ).map((r) => r.ebayItemId),
   );
 
-  const toData = (o: ArbitrageOpportunity) => ({
-    ebayTitle: o.ebay.title,
-    ebayPriceCents: o.ebay.priceCents,
-    ebayUrl: o.ebay.url,
-    imageUrl: o.ebay.imageUrl,
-    category: o.category,
-    asin: o.amazon.asin,
-    amazonTitle: o.amazon.title,
-    amazonPriceCents: o.amazon.priceCents,
-    amazonUrl: o.amazon.url,
-    profitCents: o.margin.estimatedProfitCents,
-    marginPct: Math.round(o.margin.marginPct),
-    feeCents: o.margin.estimatedFeeCents,
-    salesEst: o.ebay.salesLast30d,
-  });
+  const toData = (o: ArbitrageOpportunity) => {
+    // Real scans always supply the verifier result. Other scanner
+    // implementations own the identity of their synthetic/pre-matched rows.
+    const match = o.match ?? {
+      verdict: "MATCH" as const,
+      confidence: 100,
+      reason: "The scanner supplied an already paired catalog product.",
+      method: "RULES" as const,
+    };
+    return {
+      ebayTitle: o.ebay.title,
+      ebayPriceCents: o.ebay.priceCents,
+      ebayUrl: o.ebay.url,
+      imageUrl: o.ebay.imageUrl,
+      category: o.category,
+      asin: o.amazon.asin,
+      amazonTitle: o.amazon.title,
+      amazonPriceCents: o.amazon.priceCents,
+      amazonUrl: o.amazon.url,
+      profitCents: o.margin.estimatedProfitCents,
+      marginPct: Math.round(o.margin.marginPct),
+      feeCents: o.margin.estimatedFeeCents,
+      salesEst: o.ebay.salesLast30d,
+      matchVerdict: match.verdict,
+      matchConfidence: match.confidence,
+      matchReason: match.reason,
+      matchMethod: match.method,
+      matchCheckedAt: new Date(),
+    };
+  };
 
   const fresh = [...byId.values()].filter((o) => !existing.has(o.ebay.itemId));
   if (fresh.length > 0) {
@@ -110,6 +125,7 @@ export async function listArbitragePage(
 ): Promise<ArbitragePage> {
   const where: Prisma.ArbitrageItemWhereInput = {
     hiddenBy: { none: { userId } },
+    matchVerdict: { in: ["MATCH", "LIKELY", "UNVERIFIED"] },
     ...(params.category !== "all" && { category: params.category }),
     ...(params.minMarginPct > 0 && { marginPct: { gte: params.minMarginPct } }),
     ...(params.query.trim() && {
@@ -186,6 +202,11 @@ export async function listArbitragePage(
       mirrored: owned.has(i.asin),
       storeEbayUrl: owned.get(i.asin) ?? null,
       foundAt: i.createdAt.toISOString(),
+      amazonTitle: i.amazonTitle,
+      matchVerdict: i.matchVerdict,
+      matchConfidence: i.matchConfidence,
+      matchReason: i.matchReason,
+      matchMethod: i.matchMethod,
     })),
     total,
     page: Math.max(1, params.page),

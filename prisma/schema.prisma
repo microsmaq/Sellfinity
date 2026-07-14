@@ -221,6 +221,11 @@ model ArbitrageItem {
   salesEst          Int
   competitorCount   Int?
   avgCompPriceCents Int?
+  matchVerdict      String                @default("UNVERIFIED")
+  matchConfidence   Int                   @default(0)
+  matchReason       String?
+  matchMethod       String                @default("RULES")
+  matchCheckedAt    DateTime?
   createdAt         DateTime              @default(now())
   updatedAt         DateTime              @updatedAt
   hiddenBy          HiddenArbitrageItem[]
@@ -229,6 +234,7 @@ model ArbitrageItem {
   @@index([category])
   @@index([createdAt])
   @@index([asin])
+  @@index([matchVerdict, matchConfidence])
 }
 
 // Per-user dismissal of a shared arbitrage research row.

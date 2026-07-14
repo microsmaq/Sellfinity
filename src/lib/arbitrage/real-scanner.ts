@@ -13,6 +13,7 @@ import type { ArbitrageOpportunity } from "./scanner";
 import type { ScanReport } from "./scan-types";
 export { estimatedSales30d } from "./demand";
 import { estimatedSales30d } from "./demand";
+import { assessProductMatch, isApprovedProductMatch } from "./product-match";
 
 // Category keyword rotation. Each keyword yields one Browse page of
 // candidates; scans walk this list in a day-dependent order for variety.
@@ -169,6 +170,12 @@ async function amazonMatch(
   // more than the eBay comp — the seller adds their margin at publish time.
   if (match.priceCents > candidate.priceCents) return null;
 
+  const assessment = await assessProductMatch(
+    { title: candidate.title, imageUrl: candidate.imageUrl },
+    { title: match.title, imageUrl: match.imageUrl },
+  );
+  if (!isApprovedProductMatch(assessment)) return null;
+
   const margin = estimateMargin(candidate.priceCents, match.priceCents, 0);
 
   return {
@@ -188,6 +195,7 @@ async function amazonMatch(
       url: match.url,
     },
     margin,
+    match: assessment,
   };
 }
 

@@ -10,6 +10,7 @@ import {
   mirrorOpportunity,
   researchArbitrageMarket,
   scanForNew,
+  verifyArbitrageMatches,
 } from "@/lib/actions/arbitrage";
 import type { ArbitragePage, ArbitragePageParams } from "@/lib/arbitrage/store";
 import type { OpportunityRow } from "@/lib/arbitrage/scanner";
@@ -69,6 +70,7 @@ export function ArbitrageTable({ initial }: { initial: ArbitragePage }) {
   const [pending, startTransition] = useTransition();
   const [scanning, startScan] = useTransition();
   const [researching, startResearch] = useTransition();
+  const [verifying, startVerify] = useTransition();
   const [busyAsin, setBusyAsin] = useState<string | null>(null);
   const [hidingId, setHidingId] = useState<string | null>(null);
   const [notice, setNotice] = useState<{ text: string; error: boolean } | null>(null);
@@ -182,6 +184,37 @@ export function ArbitrageTable({ initial }: { initial: ArbitragePage }) {
       setNotice({
         text: `Market research complete: ${updated} updated${unavailable ? `, ${unavailable} without comparable results` : ""}${errors ? `, ${errors} failed` : ""}.`,
         error: errors > 0,
+      });
+    });
+  }
+
+  function verifyPageMatches() {
+    setNotice(null);
+    startVerify(async () => {
+      let approved = 0;
+      let removed = 0;
+      let aiChecked = 0;
+      for (let i = 0; i < data.rows.length; i += 10) {
+        const results = await verifyArbitrageMatches(
+          data.rows.slice(i, i + 10).map((row) => row.ebayItemId),
+        );
+        approved += results.filter(
+          (result) => result.verdict === "MATCH" || result.verdict === "LIKELY",
+        ).length;
+        removed += results.filter(
+          (result) => result.verdict === "REJECTED" || result.verdict === "REVIEW",
+        ).length;
+        aiChecked += results.filter((result) => result.method === "AI").length;
+        setNotice({
+          text: `Checking product identity… ${Math.min(i + 10, data.rows.length)}/${data.rows.length}`,
+          error: false,
+        });
+      }
+      setData(await fetchArbitragePage(params));
+      setSelected(new Set());
+      setNotice({
+        text: `Match verification complete: ${approved} approved, ${removed} unsafe or uncertain pair${removed === 1 ? "" : "s"} removed${aiChecked ? `, ${aiChecked} checked by AI` : " using strict identity rules (add OPENAI_API_KEY to enable AI review)"}.`,
+        error: false,
       });
     });
   }
@@ -312,6 +345,9 @@ export function ArbitrageTable({ initial }: { initial: ArbitragePage }) {
           <Button variant="secondary" disabled={researching} onClick={researchPage}>
             {researching ? "Researching market…" : "Research market data"}
           </Button>
+          <Button variant="secondary" disabled={verifying} onClick={verifyPageMatches}>
+            {verifying ? "Verifying matches…" : "Verify product matches"}
+          </Button>
           <Button variant="secondary" disabled={pending} onClick={exportExcel}>
             Export Excel
           </Button>
@@ -413,6 +449,22 @@ export function ArbitrageTable({ initial }: { initial: ArbitragePage }) {
                           Amazon source
                         </a>
                       </p>
+                      <p className="mt-1 truncate text-xs text-slate-500" title={r.amazonTitle}>
+                        Amazon: {r.amazonTitle}
+                      </p>
+                      <span title={r.matchReason ?? "This pair has not been checked yet."}>
+                        <Badge
+                          tone={
+                            r.matchVerdict === "MATCH" || r.matchVerdict === "LIKELY"
+                              ? "green"
+                              : "amber"
+                          }
+                        >
+                          {r.matchVerdict === "UNVERIFIED"
+                            ? "Match not checked"
+                            : `${r.matchMethod === "AI" ? "AI " : ""}match ${r.matchConfidence}%`}
+                        </Badge>
+                      </span>
                     </div>
                   </div>
                 </td>
