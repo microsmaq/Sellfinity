@@ -3,6 +3,7 @@
 import { useMemo, useState, useTransition } from "react";
 import {
   cleanupEbayListings,
+  cleanupListingSourcesBatch,
   endEbayListing,
   exportEbayListings,
   matchEbayListing,
@@ -225,6 +226,36 @@ export function EbayListingsTable({
     });
   }
 
+  function cleanUpSources() {
+    setNotice(null);
+    startTransition(async () => {
+      const totals = { processed: 0, kept: 0, replaced: 0, ended: 0, review: 0 };
+      let remaining = 1;
+      while (remaining > 0) {
+        const result = await cleanupListingSourcesBatch();
+        totals.processed += result.processed;
+        totals.kept += result.kept;
+        totals.replaced += result.replaced;
+        totals.ended += result.ended;
+        totals.review += result.review;
+        remaining = result.remaining;
+        if (result.endedIds.length > 0) {
+          const ended = new Set(result.endedIds);
+          setRows((current) => current.filter((row) => !ended.has(row.ebayListingId)));
+        }
+        setBulkProgress(
+          `Verifying sources… ${totals.processed} checked (${totals.kept} kept, ${totals.replaced} replaced, ${totals.ended} ended, ${remaining} remaining)`,
+        );
+        if (result.processed === 0) break;
+      }
+      setBulkProgress(null);
+      setNotice({
+        text: `Source cleanup complete: ${totals.kept} correct, ${totals.replaced} replaced, ${totals.ended} ended, ${totals.review} need review.`,
+        error: totals.review > 0,
+      });
+    });
+  }
+
   function cleanUp() {
     // Preview using the same classifier the server applies (shipping cost is
     // 0 for Amazon-sourced items, which all matched imports are).
@@ -396,6 +427,11 @@ export function EbayListingsTable({
         {problems > 0 && <Badge tone="red">{problems} need attention</Badge>}
         <Button size="sm" variant="secondary" disabled={pending} onClick={cleanUp}>
           {bulkProgress?.startsWith("Cleaning") ? bulkProgress : "Clean up prices"}
+        </Button>
+        <Button size="sm" variant="secondary" disabled={pending} onClick={cleanUpSources}>
+          {bulkProgress?.startsWith("Verifying sources")
+            ? bulkProgress
+            : "Verify Amazon sources"}
         </Button>
         <Button size="sm" variant="secondary" disabled={pending} onClick={researchMarket}>
           {bulkProgress?.startsWith("Researching") ? bulkProgress : "Research market data"}

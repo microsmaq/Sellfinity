@@ -146,6 +146,12 @@ model Listing {
   imageUrlsJson String    @default("[]")
   // DRAFT | ACTIVE | ENDED
   status        String    @default("DRAFT")
+  // UNVERIFIED | MATCH | LIKELY | REVIEW | REJECTED
+  sourceMatchVerdict    String    @default("UNVERIFIED")
+  sourceMatchConfidence Int?
+  sourceMatchReason     String?
+  sourceMatchMethod     String?
+  sourceMatchCheckedAt  DateTime?
   publishedAt   DateTime?
   endedAt       DateTime?
   createdAt     DateTime  @default(now())
@@ -157,6 +163,7 @@ model Listing {
   syncIssues SyncIssue[]
 
   @@index([userId, status])
+  @@index([userId, status, sourceMatchVerdict])
 }
 
 // A sale imported from eBay. Fee/cost fields are snapshotted at import so the

@@ -82,10 +82,23 @@ type RainforestSearchResult = {
  * clears the similarity threshold.
  */
 export async function findAmazonMatch(title: string): Promise<AmazonMatch | null> {
-  if (!process.env.RAINFOREST_API_KEY) return mockMatch(title);
+  return (await findAmazonMatches(title, 1))[0] ?? null;
+}
+
+/** Ranked Amazon candidates for source repair. The caller applies the stricter
+ * product-identity gate before accepting any candidate. */
+export async function findAmazonMatches(
+  title: string,
+  limit = 5,
+  options: { throwOnError?: boolean } = {},
+): Promise<AmazonMatch[]> {
+  if (!process.env.RAINFOREST_API_KEY) {
+    const match = mockMatch(title);
+    return match ? [match] : [];
+  }
 
   const searchTerm = titleTokens(title).slice(0, 7).join(" ");
-  if (!searchTerm) return null;
+  if (!searchTerm) return [];
   let results: RainforestSearchResult[];
   try {
     const data = await rainforestRequest<{
@@ -93,23 +106,26 @@ export async function findAmazonMatch(title: string): Promise<AmazonMatch | null
     }>({ type: "search", search_term: searchTerm });
     results = data.search_results ?? [];
   } catch {
-    return null;
+    if (options.throwOnError) throw new Error("Amazon source search failed.");
+    return [];
   }
   const ranked = results
     .slice(0, 8)
     .map((result) => ({ result, similarity: titleSimilarity(title, result.title ?? "") }))
     .sort((a, b) => b.similarity - a.similarity);
+  const matches: AmazonMatch[] = [];
   for (const { result, similarity } of ranked) {
     if (!result.asin || typeof result.price?.value !== "number") continue;
     if (result.price.value <= 0) continue;
     if (similarity < MATCH_THRESHOLD) continue;
-    return {
+    matches.push({
       asin: result.asin,
       title: result.title ?? title,
       priceCents: Math.round(result.price.value * 100),
       url: result.link ?? `https://www.amazon.com/dp/${result.asin}`,
       imageUrl: result.image,
-    };
+    });
+    if (matches.length >= Math.min(8, Math.max(1, limit))) break;
   }
-  return null;
+  return matches;
 }

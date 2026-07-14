@@ -20,6 +20,9 @@ import {
 } from "@/lib/mirror/track";
 import { classifyListing } from "@/lib/listings/cleanup";
 import { estimateMargin } from "@/lib/fees";
+import { assessProductMatch, isApprovedProductMatch } from "@/lib/arbitrage/product-match";
+import { findAmazonMatches } from "@/lib/mirror/match";
+import { serializeImageUrls } from "@/lib/types";
 
 export type EbayListingResult = { error?: string };
 
@@ -260,4 +263,212 @@ export async function cleanupEbayListings(
   }
   revalidate();
   return results;
+}
+
+export type SourceCleanupBatchResult = {
+  processed: number;
+  kept: number;
+  replaced: number;
+  ended: number;
+  review: number;
+  remaining: number;
+  endedIds: string[];
+};
+
+function firstImage(json: string): string | null {
+  try {
+    const images = JSON.parse(json) as unknown;
+    return Array.isArray(images) && typeof images[0] === "string" ? images[0] : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Verify a few tracked live listings at a time. Wrong sources are replaced
+ * only by AI/rules-approved Amazon candidates. If the current pair is
+ * definitively wrong and no safe replacement exists, the live eBay listing is
+ * ended so the seller cannot receive an order they cannot fulfill.
+ */
+export async function cleanupListingSourcesBatch(): Promise<SourceCleanupBatchResult> {
+  const user = await requireUser();
+  const listings = await db.listing.findMany({
+    where: {
+      userId: user.id,
+      status: "ACTIVE",
+      ebayListingId: { not: null },
+      sourceMatchVerdict: "UNVERIFIED",
+    },
+    orderBy: [{ publishedAt: "asc" }, { id: "asc" }],
+    take: 1,
+    include: { product: true },
+  });
+  const client = await getEbayClientForUser(user.id);
+  const counts = { kept: 0, replaced: 0, ended: 0, review: 0 };
+  const endedIds: string[] = [];
+
+  for (const listing of listings) {
+    const ebayListingId = listing.ebayListingId!;
+    try {
+      const current = await assessProductMatch(
+        { title: listing.title, imageUrl: firstImage(listing.imageUrlsJson) },
+        { title: listing.product.title, imageUrl: firstImage(listing.product.imageUrlsJson) },
+      );
+      if (isApprovedProductMatch(current)) {
+        await db.listing.update({
+          where: { id: listing.id },
+          data: {
+            sourceMatchVerdict: current.verdict,
+            sourceMatchConfidence: current.confidence,
+            sourceMatchReason: current.reason,
+            sourceMatchMethod: current.method,
+            sourceMatchCheckedAt: new Date(),
+          },
+        });
+        counts.kept++;
+        continue;
+      }
+
+      const candidates = await findAmazonMatches(listing.title, 5, { throwOnError: true });
+      const assessedCandidates = await Promise.all(
+        candidates
+          .filter((candidate) => candidate.asin !== listing.product.sku)
+          .map(async (candidate) => ({
+            candidate,
+            assessment: await assessProductMatch(
+              { title: listing.title, imageUrl: firstImage(listing.imageUrlsJson) },
+              { title: candidate.title, imageUrl: candidate.imageUrl },
+            ),
+          })),
+      );
+      const replacement = assessedCandidates.find(({ assessment }) =>
+        isApprovedProductMatch(assessment),
+      );
+
+      if (replacement) {
+        const { candidate, assessment } = replacement;
+        await db.$transaction(async (tx) => {
+          const product = await tx.product.upsert({
+            where: { userId_sku: { userId: user.id, sku: candidate.asin } },
+            create: {
+              userId: user.id,
+              sku: candidate.asin,
+              title: candidate.title,
+              description: candidate.title,
+              imageUrlsJson: serializeImageUrls(candidate.imageUrl ? [candidate.imageUrl] : []),
+              category: listing.product.category,
+              supplierName: "Amazon",
+              supplierProductId: candidate.asin,
+              supplierUrl: candidate.url,
+              costCents: candidate.priceCents,
+              supplierStock: 50,
+              shippingCostCents: 0,
+              suggestedPriceCents: listing.priceCents,
+              sourceScore: assessment.confidence,
+            },
+            update: {
+              title: candidate.title,
+              description: candidate.title,
+              imageUrlsJson: serializeImageUrls(candidate.imageUrl ? [candidate.imageUrl] : []),
+              supplierUrl: candidate.url,
+              costCents: candidate.priceCents,
+              supplierStock: 50,
+              sourceScore: assessment.confidence,
+            },
+          });
+          await tx.listing.update({
+            where: { id: listing.id },
+            data: {
+              productId: product.id,
+              sourceMatchVerdict: assessment.verdict,
+              sourceMatchConfidence: assessment.confidence,
+              sourceMatchReason: `Replacement source: ${assessment.reason}`,
+              sourceMatchMethod: assessment.method,
+              sourceMatchCheckedAt: new Date(),
+            },
+          });
+          if (product.id !== listing.productId) {
+            const oldProductUses = await tx.listing.count({
+              where: { productId: listing.productId },
+            });
+            if (oldProductUses === 0) {
+              await tx.product.delete({ where: { id: listing.productId } });
+            }
+          }
+        });
+        counts.replaced++;
+        continue;
+      }
+
+      // A rules-only REVIEW means the AI service was unavailable or the title
+      // evidence is genuinely ambiguous. Never end a live listing on that.
+      if (current.verdict === "REVIEW" && current.method === "RULES") {
+        await db.listing.update({
+          where: { id: listing.id },
+          data: {
+            sourceMatchVerdict: "REVIEW",
+            sourceMatchConfidence: current.confidence,
+            sourceMatchReason: current.reason,
+            sourceMatchMethod: current.method,
+            sourceMatchCheckedAt: new Date(),
+          },
+        });
+        counts.review++;
+        continue;
+      }
+
+      try {
+        await client.endListing(ebayListingId);
+      } catch (error) {
+        if (!(error instanceof EbayApiError) || !isAlreadyEndedEbayError(error.message)) {
+          throw error;
+        }
+      }
+      await db.$transaction([
+        db.listing.update({
+          where: { id: listing.id },
+          data: {
+            status: "ENDED",
+            endedAt: new Date(),
+            sourceMatchVerdict: current.verdict,
+            sourceMatchConfidence: current.confidence,
+            sourceMatchReason: `No equivalent Amazon source found. ${current.reason}`,
+            sourceMatchMethod: current.method,
+            sourceMatchCheckedAt: new Date(),
+          },
+        }),
+        db.ebayListingSuppression.upsert({
+          where: { userId_ebayListingId: { userId: user.id, ebayListingId } },
+          create: { userId: user.id, ebayListingId },
+          update: {},
+        }),
+      ]);
+      counts.ended++;
+      endedIds.push(ebayListingId);
+    } catch (error) {
+      await db.listing.update({
+        where: { id: listing.id },
+        data: {
+          sourceMatchVerdict: "REVIEW",
+          sourceMatchConfidence: null,
+          sourceMatchReason:
+            error instanceof Error ? error.message.slice(0, 240) : "Source verification failed.",
+          sourceMatchMethod: null,
+          sourceMatchCheckedAt: new Date(),
+        },
+      });
+      counts.review++;
+    }
+  }
+
+  const remaining = await db.listing.count({
+    where: {
+      userId: user.id,
+      status: "ACTIVE",
+      ebayListingId: { not: null },
+      sourceMatchVerdict: "UNVERIFIED",
+    },
+  });
+  revalidate();
+  return { processed: listings.length, ...counts, remaining, endedIds };
 }
