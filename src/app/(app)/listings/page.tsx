@@ -1,6 +1,7 @@
 import { requireUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { getEbayClientForUser } from "@/lib/ebay";
+import { ebayEnvConfig } from "@/lib/ebay/oauth";
 import { buildEbayRows } from "@/lib/listings/ebay-rows";
 import { getListingMarketMetrics } from "@/lib/listings/market-metrics";
 import { parseImageUrls } from "@/lib/types";
@@ -108,6 +109,10 @@ export default async function ListingsPage() {
       supplierStock: p.supplierStock,
     }));
 
+  const ebayItemHost =
+    ebayEnvConfig()?.env === "PRODUCTION"
+      ? "https://www.ebay.com"
+      : "https://sandbox.ebay.com";
   const rows: ListingRow[] = listings.map((l) => ({
     id: l.id,
     title: l.title,
@@ -118,6 +123,7 @@ export default async function ListingsPage() {
     costCents: l.product.costCents,
     status: l.status as "DRAFT" | "ACTIVE" | "ENDED",
     ebayListingId: l.ebayListingId,
+    ebayUrl: l.ebayListingId ? `${ebayItemHost}/itm/${l.ebayListingId}` : null,
     publishedAt: l.publishedAt?.toISOString() ?? null,
   }));
 

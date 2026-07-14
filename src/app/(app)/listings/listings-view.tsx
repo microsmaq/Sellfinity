@@ -34,6 +34,7 @@ export type ListingRow = {
   costCents: number;
   status: "DRAFT" | "ACTIVE" | "ENDED";
   ebayListingId: string | null;
+  ebayUrl: string | null;
   publishedAt: string | null;
 };
 
@@ -347,9 +348,21 @@ export function ListingsView({
                     <div className="flex items-center gap-3">
                       <Thumb url={l.imageUrl} />
                       <div className="min-w-0">
-                        <p className="truncate font-medium text-slate-900" title={l.title}>
-                          {l.title}
-                        </p>
+                        {l.status === "ACTIVE" && l.ebayUrl ? (
+                          <a
+                            href={l.ebayUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="block truncate font-medium text-slate-900 hover:text-indigo-600 hover:underline"
+                            title={`View ${l.title} on eBay`}
+                          >
+                            {l.title}
+                          </a>
+                        ) : (
+                          <p className="truncate font-medium text-slate-900" title={l.title}>
+                            {l.title}
+                          </p>
+                        )}
                         <p className="text-xs text-slate-500">SKU {l.sku}</p>
                       </div>
                     </div>
