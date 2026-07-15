@@ -35,7 +35,57 @@ model User {
   ebayListingSuppressions EbayListingSuppression[]
   ebayMarketMetrics       EbayMarketMetric[]
   hiddenArbitrageItems    HiddenArbitrageItem[]
+  mirrorBatches           MirrorBatch[]
   ebayConnection          EbayConnection?
+}
+
+// A durable direct-to-eBay publishing run. The browser advances one item at a
+// time so progress survives serverless request limits and every outcome is
+// retained for the seller's audit history.
+model MirrorBatch {
+  id             String    @id @default(cuid())
+  userId         String
+  // URL_BULK | ARBITRAGE
+  source         String
+  // PENDING | RUNNING | COMPLETED
+  status         String    @default("PENDING")
+  totalCount     Int
+  succeededCount Int       @default(0)
+  failedCount    Int       @default(0)
+  createdAt      DateTime  @default(now())
+  startedAt      DateTime?
+  completedAt    DateTime?
+
+  user  User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  items MirrorBatchItem[]
+
+  @@index([userId, createdAt])
+  @@index([userId, status])
+}
+
+model MirrorBatchItem {
+  id                String    @id @default(cuid())
+  batchId           String
+  position          Int
+  inputUrl          String
+  sourceReferenceId String?
+  // PENDING | PROCESSING | SUCCEEDED | FAILED
+  status            String    @default("PENDING")
+  title             String?
+  sourcePriceCents  Int?
+  listingPriceCents Int?
+  listingId         String?
+  ebayListingId     String?
+  error             String?
+  attempts          Int       @default(0)
+  createdAt         DateTime  @default(now())
+  startedAt         DateTime?
+  completedAt       DateTime?
+
+  batch MirrorBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+
+  @@unique([batchId, position])
+  @@index([batchId, status])
 }
 
 // A seller explicitly ended this item through Sellfinity. eBay's ActiveList

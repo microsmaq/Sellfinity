@@ -1,18 +1,18 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useRef, useState, useTransition } from "react";
 import {
   fetchArbitragePage,
   exportArbitrageExcel,
   hideArbitrageItem,
-  mirrorOpportunities,
-  mirrorOpportunity,
   researchArbitrageMarket,
   scanForNew,
   verifyArbitrageMatches,
   verifyHistoricalArbitrageMatches,
 } from "@/lib/actions/arbitrage";
+import { createArbitrageMirrorBatch } from "@/lib/actions/mirror-batches";
 import type { ArbitragePage, ArbitragePageParams } from "@/lib/arbitrage/store";
 import type { OpportunityRow } from "@/lib/arbitrage/scanner";
 import { formatCents } from "@/lib/money";
@@ -63,11 +63,11 @@ function SortHeader({
 }
 
 export function ArbitrageTable({ initial }: { initial: ArbitragePage }) {
+  const router = useRouter();
   const [data, setData] = useState(initial);
   const [params, setParams] = useState(DEFAULT_PARAMS);
   const [queryInput, setQueryInput] = useState("");
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [mirroredNow, setMirroredNow] = useState<Set<string>>(new Set());
   const [pending, startTransition] = useTransition();
   const [scanning, startScan] = useTransition();
   const [researching, startResearch] = useTransition();
@@ -105,7 +105,7 @@ export function ArbitrageTable({ initial }: { initial: ArbitragePage }) {
   }
 
   function isMirrored(r: OpportunityRow) {
-    return r.mirrored || mirroredNow.has(r.asin);
+    return r.mirrored;
   }
 
   function isVerifiedMatch(r: OpportunityRow) {
@@ -343,17 +343,13 @@ export function ArbitrageTable({ initial }: { initial: ArbitragePage }) {
     setNotice(null);
     setBusyAsin(row.asin);
     startTransition(async () => {
-      const outcome = await mirrorOpportunity(row.asin, row.ebayPriceCents);
+      const result = await createArbitrageMirrorBatch([row.ebayItemId]);
       setBusyAsin(null);
-      if (outcome.ok) {
-        setMirroredNow((prev) => new Set(prev).add(row.asin));
-        setNotice({
-          text: `Mirrored "${outcome.title}" as a draft priced at ${formatCents(outcome.priceCents!)}.`,
-          error: false,
-        });
-      } else {
-        setNotice({ text: outcome.error ?? "Mirroring failed", error: true });
+      if (result.error || !result.batchId) {
+        setNotice({ text: result.error ?? "Could not create the publishing batch.", error: true });
+        return;
       }
+      router.push(`/mirror/batches/${result.batchId}`);
     });
   }
 
@@ -374,26 +370,18 @@ export function ArbitrageTable({ initial }: { initial: ArbitragePage }) {
   }
 
   function mirrorSelected() {
-    const items = data.rows
+    const ebayItemIds = data.rows
       .filter((r) => selected.has(r.asin) && isVerifiedMatch(r) && !isMirrored(r))
-      .map((r) => ({ asin: r.asin, ebayPriceCents: r.ebayPriceCents }));
+      .map((r) => r.ebayItemId);
     setNotice(null);
     startTransition(async () => {
-      const result = await mirrorOpportunities(items);
-      setMirroredNow((prev) => {
-        const next = new Set(prev);
-        for (const asin of result.mirroredAsins) next.add(asin);
-        return next;
-      });
+      const result = await createArbitrageMirrorBatch(ebayItemIds);
+      if (result.error || !result.batchId) {
+        setNotice({ text: result.error ?? "Could not create the publishing batch.", error: true });
+        return;
+      }
       setSelected(new Set());
-      const done = result.mirroredAsins.length;
-      setNotice({
-        text:
-          `Mirrored ${done} product${done === 1 ? "" : "s"} as drafts` +
-          (result.failed ? ` (${result.failed} failed${result.error ? `: ${result.error}` : ""})` : "") +
-          ".",
-        error: done === 0,
-      });
+      router.push(`/mirror/batches/${result.batchId}`);
     });
   }
 
@@ -473,7 +461,7 @@ export function ArbitrageTable({ initial }: { initial: ArbitragePage }) {
             Export Excel
           </Button>
           <Button disabled={pending || selected.size === 0} onClick={mirrorSelected}>
-            {`Mirror selected (${selected.size})`}
+            {`Publish selected (${selected.size})`}
           </Button>
         </div>
       </div>
@@ -486,11 +474,6 @@ export function ArbitrageTable({ initial }: { initial: ArbitragePage }) {
           )}
         >
           {notice.text}{" "}
-          {!notice.error && notice.text.startsWith("Mirrored") && (
-            <Link href="/listings" className="font-medium text-emerald-800 underline">
-              Open Listings →
-            </Link>
-          )}
         </p>
       )}
 
@@ -649,7 +632,7 @@ export function ArbitrageTable({ initial }: { initial: ArbitragePage }) {
                     )
                   ) : (
                     <Button size="sm" disabled={pending} onClick={() => mirrorOne(r)}>
-                      {busyAsin === r.asin ? "Mirroring…" : "Mirror to my store"}
+                      {busyAsin === r.asin ? "Creating batch…" : "Publish to eBay"}
                     </Button>
                   )}
                     <Button size="sm" variant="ghost" disabled={pending} onClick={() => hideOne(r)}>

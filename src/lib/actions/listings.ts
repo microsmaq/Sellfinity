@@ -4,10 +4,10 @@ import { revalidatePath } from "next/cache";
 import { requireUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { getEbayClientForUser } from "@/lib/ebay";
-import { EbayApiError, validateListingInput } from "@/lib/ebay/client";
-import { fitEbayDescription } from "@/lib/ebay/description";
+import { EbayApiError } from "@/lib/ebay/client";
 import { generateListing } from "@/lib/listings/generate";
 import { parseImageUrls } from "@/lib/types";
+import { publishListingForUser } from "@/lib/listings/publish";
 
 export type BulkResult = { done: number; failed: number; error?: string };
 
@@ -74,42 +74,16 @@ export async function publishListings(listingIds: string[]): Promise<BulkResult>
     };
   }
 
-  const drafts = await db.listing.findMany({
-    where: { id: { in: listingIds }, userId: user.id, status: "DRAFT" },
-    include: { product: true },
-  });
-  const client = await getEbayClientForUser(user.id);
   let done = 0;
   let failed = 0;
   let firstError: string | undefined;
 
-  for (const draft of drafts) {
-    const input = {
-      title: draft.title,
-      description: fitEbayDescription(draft.description),
-      priceCents: draft.priceCents,
-      quantity: draft.quantity,
-      imageUrls: parseImageUrls(draft.imageUrlsJson),
-      sku: draft.product.sku,
-      category: draft.product.category,
-    };
-    const validationError = validateListingInput(input);
-    if (validationError) {
+  for (const listingId of listingIds) {
+    const result = await publishListingForUser(user.id, listingId);
+    if (result.ok) done++;
+    else {
       failed++;
-      firstError ??= `${draft.title.slice(0, 40)}…: ${validationError}`;
-      continue;
-    }
-    try {
-      const { ebayListingId } = await client.createListing(input);
-      await db.listing.update({
-        where: { id: draft.id },
-        data: { status: "ACTIVE", ebayListingId, publishedAt: new Date() },
-      });
-      done++;
-    } catch (e) {
-      failed++;
-      if (e instanceof EbayApiError) firstError ??= e.message;
-      else throw e;
+      firstError ??= result.error;
     }
   }
 

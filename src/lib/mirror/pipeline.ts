@@ -20,6 +20,13 @@ const MARKET_MARKUP = 1.35;
  * "in stock" — the first inventory sync replaces it with live data. */
 const NOMINAL_IN_STOCK = 50;
 
+export function sourceMarkupPriceCents(
+  sourcePriceCents: number,
+  markupPct = 30,
+): number {
+  return Math.max(99, Math.round(sourcePriceCents * (1 + markupPct / 100)));
+}
+
 export type MirrorOutcome = {
   url: string;
   ok: boolean;
@@ -27,6 +34,7 @@ export type MirrorOutcome = {
   listingId?: string;
   title?: string;
   priceCents?: number;
+  sourcePriceCents?: number;
 };
 
 export async function mirrorUrl(
@@ -37,6 +45,9 @@ export async function mirrorUrl(
     /** A known eBay comp price to undercut (e.g. from the arbitrage
      * scanner); without it the market is estimated from the buy price. */
     marketPriceCents?: number;
+    /** List at this percentage above the exact scraped Amazon source price.
+     * Used by direct-publish batches; takes precedence over market pricing. */
+    sourceMarkupPct?: number;
   } = {},
 ): Promise<MirrorOutcome> {
   const scraped = await scraper.scrape(url);
@@ -55,13 +66,15 @@ export async function mirrorUrl(
     return { url, ok: false, error: `Already imported (SKU ${scraped.sourceId}).` };
   }
 
-  const pricing = {
-    marketPriceCents:
-      opts.marketPriceCents ?? Math.round(scraped.priceCents * MARKET_MARKUP),
-    costCents: scraped.priceCents,
-    shippingCostCents: 0, // fulfilled via Amazon free shipping
-  };
-  const priceCents = suggestPriceCents(pricing);
+  const priceCents =
+    opts.sourceMarkupPct !== undefined
+      ? sourceMarkupPriceCents(scraped.priceCents, opts.sourceMarkupPct)
+      : suggestPriceCents({
+          marketPriceCents:
+            opts.marketPriceCents ?? Math.round(scraped.priceCents * MARKET_MARKUP),
+          costCents: scraped.priceCents,
+          shippingCostCents: 0, // fulfilled via Amazon free shipping
+        });
   const supplierStock = scraped.inStock ? NOMINAL_IN_STOCK : 0;
 
   const title = generateSeoTitle(scraped);
@@ -100,7 +113,14 @@ export async function mirrorUrl(
     });
   });
 
-  return { url, ok: true, listingId: listing.id, title, priceCents };
+  return {
+    url,
+    ok: true,
+    listingId: listing.id,
+    title,
+    priceCents,
+    sourcePriceCents: scraped.priceCents,
+  };
 }
 
 /** Split pasted bulk input into candidate URLs (one per line, blanks dropped). */
