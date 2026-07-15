@@ -193,6 +193,18 @@ export async function createQualifiedArbitrageMirrorBatch(): Promise<{
         .filter((id): id is string => !!id),
     ),
   ];
+  const queuedArbitrageRows = queuedEbayIds.length
+    ? await db.arbitrageItem.findMany({
+        where: { ebayItemId: { in: queuedEbayIds } },
+        select: { asin: true },
+      })
+    : [];
+  const unavailableAsins = [
+    ...new Set([
+      ...ownedAsins,
+      ...queuedArbitrageRows.map((row) => row.asin),
+    ]),
+  ];
   const rows = await db.arbitrageItem.findMany({
     where: {
       hiddenBy: { none: { userId: user.id } },
@@ -200,25 +212,30 @@ export async function createQualifiedArbitrageMirrorBatch(): Promise<{
       matchConfidence: { gte: AUTO_PUBLISH_MIN_MATCH_CONFIDENCE },
       marginPct: { gte: AUTO_PUBLISH_MIN_MARGIN_PCT },
       profitCents: { gt: 0 },
-      ...(ownedAsins.length > 0 && { asin: { notIn: ownedAsins } }),
+      ...(unavailableAsins.length > 0 && { asin: { notIn: unavailableAsins } }),
       ...(queuedEbayIds.length > 0 && { ebayItemId: { notIn: queuedEbayIds } }),
     },
     orderBy: [{ profitCents: "desc" }, { matchConfidence: "desc" }],
-    take: MAX_BATCH_ITEMS,
-    select: { ebayItemId: true, amazonUrl: true },
+    select: { ebayItemId: true, asin: true, amazonUrl: true },
   });
-  if (rows.length === 0) return { eligibleCount: 0 };
+  const seenAsins = new Set<string>();
+  const uniqueRows = rows.filter((row) => {
+    if (seenAsins.has(row.asin)) return false;
+    seenAsins.add(row.asin);
+    return true;
+  });
+  if (uniqueRows.length === 0) return { eligibleCount: 0 };
 
   const result = await createBatch(
     user.id,
     "ARBITRAGE",
-    rows.map((row) => ({
+    uniqueRows.map((row) => ({
       inputUrl: row.amazonUrl,
       sourceReferenceId: row.ebayItemId,
     })),
     "AUTOMATIC",
   );
-  return { ...result, eligibleCount: rows.length };
+  return { ...result, eligibleCount: uniqueRows.length };
 }
 
 export async function getMirrorBatch(batchId: string): Promise<MirrorBatchView | null> {
