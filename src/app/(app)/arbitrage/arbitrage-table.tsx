@@ -108,6 +108,7 @@ export function ArbitrageTable({ initial }: { initial: ArbitragePage }) {
   }
 
   const SCAN_TARGET = 50;
+  const MAX_SCAN_ADVANCES = 6;
 
   function scanNow() {
     setNotice(null);
@@ -115,26 +116,49 @@ export function ArbitrageTable({ initial }: { initial: ArbitragePage }) {
       let added = 0;
       let examined = 0;
       let exhausted = false;
+      let errors = 0;
+      let paused = false;
+      let advances = 0;
       // Each call is time-boxed server-side; loop until the full target of
       // new items has been researched (or today's sources run dry).
-      while (added < SCAN_TARGET && !exhausted) {
-        const report = await scanForNew(SCAN_TARGET - added);
+      while (added < SCAN_TARGET && !exhausted && advances < MAX_SCAN_ADVANCES) {
+        let report: Awaited<ReturnType<typeof scanForNew>>;
+        try {
+          report = await scanForNew(SCAN_TARGET - added);
+        } catch {
+          paused = true;
+          break;
+        }
+        advances++;
         added += report.added;
         examined += report.examined;
         exhausted = report.exhausted;
+        errors += report.errors ?? 0;
+        paused = report.paused ?? false;
         setNotice({
-          text: `Researching… ${added}/${SCAN_TARGET} new items added (${examined} candidates examined)`,
-          error: false,
+          text: `Researching exact Amazon variants… ${added}/${SCAN_TARGET} new items added (${examined} candidates examined${errors ? `, ${errors} temporarily failed` : ""})`,
+          error: errors > 0,
         });
-        if (report.added === 0 && report.examined === 0 && !exhausted) break; // safety
+        if (paused) break;
+        if (report.added === 0 && report.examined === 0 && !exhausted) {
+          paused = true;
+          break;
+        }
       }
+      try {
+        setData(await fetchArbitragePage(params));
+      } catch {
+        paused = true;
+      }
+      const reachedAdvanceLimit = advances >= MAX_SCAN_ADVANCES && added < SCAN_TARGET;
       setNotice({
-        text:
-          `Scan complete: ${added} new item${added === 1 ? "" : "s"} added (${examined} candidates examined)` +
-          (exhausted ? " — today's sources are fully scanned; more tomorrow." : "."),
-        error: false,
+        text: exhausted
+          ? `Scan complete: ${added} exact-variant item${added === 1 ? "" : "s"} added (${examined} candidates examined) — today's sources are fully scanned.`
+          : paused || reachedAdvanceLimit
+            ? `Scan paused safely: ${added} exact-variant item${added === 1 ? "" : "s"} added and ${examined} candidates examined. Click again to resume the persisted queue${errors ? `; ${errors} provider lookup${errors === 1 ? "" : "s"} temporarily failed` : ""}.`
+            : `Scan complete: ${added} exact-variant item${added === 1 ? "" : "s"} added (${examined} candidates examined).`,
+        error: paused || reachedAdvanceLimit || errors > 0,
       });
-      setData(await fetchArbitragePage(params));
     });
   }
 
@@ -232,7 +256,7 @@ export function ArbitrageTable({ initial }: { initial: ArbitragePage }) {
       let remaining = 1;
       let interrupted = false;
       for (let batch = 0; remaining > 0 && batch < 1000; batch++) {
-        let result;
+        let result: Awaited<ReturnType<typeof verifyHistoricalArbitrageMatches>>;
         try {
           result = await verifyHistoricalArbitrageMatches(4);
         } catch {

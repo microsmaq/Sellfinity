@@ -56,7 +56,7 @@ const BROWSE_PAGE_SIZE = 40;
 const MAX_PAGES_PER_KEYWORD = 5;
 const MIN_EBAY_PRICE_CENTS = 800;
 const MAX_EBAY_PRICE_CENTS = 15000;
-const LOOKUP_BATCH = 5;
+const LOOKUP_BATCH = 3;
 
 type EbayCandidate = {
   itemId: string;
@@ -226,6 +226,8 @@ export async function realScanMore(opts: {
 
   let added = 0;
   let examinedNow = 0;
+  let errors = 0;
+  let paused = false;
 
   const save = async () => {
     await saveJson(cursorKey, cursor);
@@ -242,7 +244,14 @@ export async function realScanMore(opts: {
       const idx =
         (cursor.keywordIdx + currentDayNumber()) % CATEGORY_KEYWORDS.length;
       const { keyword, category } = CATEGORY_KEYWORDS[idx];
-      const candidates = await browseSearch(keyword, category, cursor.pageOffset);
+      let candidates: EbayCandidate[];
+      try {
+        candidates = await browseSearch(keyword, category, cursor.pageOffset);
+      } catch {
+        paused = true;
+        errors++;
+        break;
+      }
       // Advance: next page of this keyword, or the next keyword when the
       // pages run dry.
       if (
@@ -259,15 +268,35 @@ export async function realScanMore(opts: {
     }
 
     const batch = cursor.pending.splice(0, LOOKUP_BATCH);
-    const matches = await Promise.all(batch.map(amazonMatch));
-    for (const c of batch) examined.add(c.itemId);
-    examinedNow += batch.length;
+    const outcomes = await Promise.all(
+      batch.map(async (candidate) => {
+        try {
+          return { candidate, match: await amazonMatch(candidate), failed: false };
+        } catch {
+          return { candidate, match: null, failed: true };
+        }
+      }),
+    );
+    const failed = outcomes.filter((outcome) => outcome.failed);
+    const completed = outcomes.filter((outcome) => !outcome.failed);
+    // Keep transient failures at the front of the persisted queue. Stop this
+    // advance so the client can pause instead of hammering the provider.
+    if (failed.length > 0) {
+      cursor.pending.unshift(...failed.map((outcome) => outcome.candidate));
+      errors += failed.length;
+      paused = true;
+    }
+    for (const outcome of completed) examined.add(outcome.candidate.itemId);
+    examinedNow += completed.length;
     added += await persistOpportunities(
-      matches.filter((m): m is ArbitrageOpportunity => m !== null),
+      completed
+        .map((outcome) => outcome.match)
+        .filter((match): match is ArbitrageOpportunity => match !== null),
     );
     await save();
+    if (paused) break;
   }
 
   await save();
-  return { added, examined: examinedNow, exhausted: cursor.exhausted };
+  return { added, examined: examinedNow, exhausted: cursor.exhausted, errors, paused };
 }

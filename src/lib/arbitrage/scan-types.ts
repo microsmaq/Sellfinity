@@ -6,4 +6,8 @@ export type ScanReport = {
   examined: number;
   /** True when today's keyword pool is fully scanned. */
   exhausted: boolean;
+  /** Provider lookups that failed transiently and were left queued to retry. */
+  errors?: number;
+  /** True when this advance stopped safely for a transient provider failure. */
+  paused?: boolean;
 };
