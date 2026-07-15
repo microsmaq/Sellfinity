@@ -77,6 +77,7 @@ export function ArbitrageTable({ initial }: { initial: ArbitragePage }) {
   const [hidingId, setHidingId] = useState<string | null>(null);
   const [notice, setNotice] = useState<{ text: string; error: boolean } | null>(null);
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const stopScanRequested = useRef(false);
 
   function load(next: ArbitragePageParams) {
     setParams(next);
@@ -108,56 +109,91 @@ export function ArbitrageTable({ initial }: { initial: ArbitragePage }) {
   }
 
   const SCAN_TARGET = 50;
-  const MAX_SCAN_ADVANCES = 6;
+
+  async function waitForScanRetry(delayMs: number): Promise<boolean> {
+    const retryAt = Date.now() + delayMs;
+    while (!stopScanRequested.current && Date.now() < retryAt) {
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+    return !stopScanRequested.current;
+  }
+
+  function stopScan() {
+    stopScanRequested.current = true;
+    setNotice({
+      text: "Stopping after the current provider lookup finishes…",
+      error: false,
+    });
+  }
 
   function scanNow() {
+    stopScanRequested.current = false;
     setNotice(null);
     startScan(async () => {
       let added = 0;
       let examined = 0;
       let exhausted = false;
       let errors = 0;
-      let paused = false;
-      let advances = 0;
+      let consecutiveFailures = 0;
       // Each call is time-boxed server-side; loop until the full target of
-      // new items has been researched (or today's sources run dry).
-      while (added < SCAN_TARGET && !exhausted && advances < MAX_SCAN_ADVANCES) {
+      // new items has been researched, today's sources run dry, or the user
+      // explicitly stops the scan. The server persists the queue after every
+      // small batch, so stopping never discards completed research.
+      while (
+        added < SCAN_TARGET &&
+        !exhausted &&
+        !stopScanRequested.current
+      ) {
         let report: Awaited<ReturnType<typeof scanForNew>>;
         try {
           report = await scanForNew(SCAN_TARGET - added);
         } catch {
-          paused = true;
-          break;
+          errors++;
+          consecutiveFailures++;
+          const retrySeconds = Math.min(15, 2 ** consecutiveFailures);
+          setNotice({
+            text: `Provider request temporarily failed. Retrying in ${retrySeconds} seconds… ${added}/${SCAN_TARGET} new items added.`,
+            error: true,
+          });
+          if (!(await waitForScanRetry(retrySeconds * 1000))) break;
+          continue;
         }
-        advances++;
         added += report.added;
         examined += report.examined;
         exhausted = report.exhausted;
         errors += report.errors ?? 0;
-        paused = report.paused ?? false;
+        const temporarilyPaused = report.paused ?? false;
+        consecutiveFailures = temporarilyPaused
+          ? consecutiveFailures + 1
+          : report.added > 0 || report.examined > 0
+            ? 0
+            : consecutiveFailures + 1;
         setNotice({
           text: `Researching exact Amazon variants… ${added}/${SCAN_TARGET} new items added (${examined} candidates examined${errors ? `, ${errors} temporarily failed` : ""})`,
-          error: errors > 0,
+          error: false,
         });
-        if (paused) break;
-        if (report.added === 0 && report.examined === 0 && !exhausted) {
-          paused = true;
-          break;
+        if (temporarilyPaused || (report.added === 0 && report.examined === 0 && !exhausted)) {
+          const retrySeconds = Math.min(15, 2 ** consecutiveFailures);
+          setNotice({
+            text: `Provider lookup temporarily paused. Retrying in ${retrySeconds} seconds… ${added}/${SCAN_TARGET} new items added (${examined} examined).`,
+            error: false,
+          });
+          if (!(await waitForScanRetry(retrySeconds * 1000))) break;
         }
       }
       try {
         setData(await fetchArbitragePage(params));
       } catch {
-        paused = true;
+        errors++;
       }
-      const reachedAdvanceLimit = advances >= MAX_SCAN_ADVANCES && added < SCAN_TARGET;
+      const stopped = stopScanRequested.current;
       setNotice({
-        text: exhausted
+        text: stopped
+          ? `Scan stopped: ${added} exact-variant item${added === 1 ? "" : "s"} added and ${examined} candidates examined. The queue was saved and will resume next time.`
+          : exhausted
           ? `Scan complete: ${added} exact-variant item${added === 1 ? "" : "s"} added (${examined} candidates examined) — today's sources are fully scanned.`
-          : paused || reachedAdvanceLimit
-            ? `Scan paused safely: ${added} exact-variant item${added === 1 ? "" : "s"} added and ${examined} candidates examined. Click again to resume the persisted queue${errors ? `; ${errors} provider lookup${errors === 1 ? "" : "s"} temporarily failed` : ""}.`
-            : `Scan complete: ${added} exact-variant item${added === 1 ? "" : "s"} added (${examined} candidates examined).`,
-        error: paused || reachedAdvanceLimit || errors > 0,
+          : `Scan complete: ${added} exact-variant item${added === 1 ? "" : "s"} added (${examined} candidates examined)${errors ? ` after recovering from ${errors} temporary provider failure${errors === 1 ? "" : "s"}` : ""}.`,
+        error: errors > 0 && !stopped && added < SCAN_TARGET,
       });
     });
   }
@@ -407,9 +443,15 @@ export function ArbitrageTable({ initial }: { initial: ArbitragePage }) {
           {data.total.toLocaleString()} researched
         </p>
         <div className="ml-auto flex items-center gap-2">
-          <Button variant="secondary" disabled={scanning} onClick={scanNow}>
-            {scanning ? "Researching…" : "Scan for 50 new items"}
-          </Button>
+          {scanning ? (
+            <Button variant="secondary" onClick={stopScan}>
+              Stop scan
+            </Button>
+          ) : (
+            <Button variant="secondary" onClick={scanNow}>
+              Scan for 50 new items
+            </Button>
+          )}
           <Button variant="secondary" disabled={researching} onClick={researchPage}>
             {researching ? "Researching market…" : "Research market data"}
           </Button>
