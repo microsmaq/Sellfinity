@@ -90,6 +90,7 @@ export type MatchVerificationResult = {
   confidence: number;
   reason: string;
   method: string;
+  error?: boolean;
 };
 
 type MatchVerificationRow = {
@@ -109,28 +110,44 @@ async function assessAndPersistMatches(
   if (rows.length === 0) return [];
   const assessed = await Promise.all(
     rows.map(async (row) => {
-      const exact = await resolveExactAmazonVariant(
-        { title: row.ebayTitle, imageUrl: row.imageUrl },
-        {
-          asin: row.asin,
-          title: row.amazonTitle,
-          priceCents: row.amazonPriceCents,
-          url: row.amazonUrl,
-        },
-      );
-      const assessment = exact
-        ? exact.variantAssessment ??
-          (await assessProductMatch(
-            { title: row.ebayTitle, imageUrl: row.imageUrl },
-            { title: exact.title, imageUrl: exact.imageUrl },
-          ))
-        : {
-            verdict: "REJECTED" as const,
-            confidence: 99,
-            reason: "The exact Amazon child variant and its live price could not be proven.",
+      try {
+        const exact = await resolveExactAmazonVariant(
+          { title: row.ebayTitle, imageUrl: row.imageUrl },
+          {
+            asin: row.asin,
+            title: row.amazonTitle,
+            priceCents: row.amazonPriceCents,
+            url: row.amazonUrl,
+          },
+        );
+        const assessment = exact
+          ? exact.variantAssessment ??
+            (await assessProductMatch(
+              { title: row.ebayTitle, imageUrl: row.imageUrl },
+              { title: exact.title, imageUrl: exact.imageUrl },
+            ))
+          : {
+              verdict: "REJECTED" as const,
+              confidence: 99,
+              reason: "The exact Amazon child variant and its live price could not be proven.",
+              method: "RULES" as const,
+            };
+        return { row, exact, assessment, error: false };
+      } catch (error) {
+        return {
+          row,
+          exact: null,
+          assessment: {
+            verdict: "ERROR" as const,
+            confidence: 0,
+            reason: `Variant verification temporarily failed: ${
+              error instanceof Error ? error.message.slice(0, 170) : "service unavailable"
+            }`,
             method: "RULES" as const,
-          };
-      return { row, exact, assessment };
+          },
+          error: true,
+        };
+      }
     }),
   );
   await db.$transaction(
@@ -161,9 +178,10 @@ async function assessAndPersistMatches(
       });
     }),
   );
-  return assessed.map(({ row, assessment }) => ({
+  return assessed.map(({ row, assessment, error }) => ({
     ebayItemId: row.ebayItemId,
     ...assessment,
+    error,
   }));
 }
 
@@ -197,16 +215,26 @@ export type HistoricalMatchBatchResult = {
   approved: number;
   removed: number;
   aiChecked: number;
+  errors: number;
   remaining: number;
 };
 
 /** Verify the next small batch of legacy rows. The browser calls this
  * repeatedly, so progress survives timeouts, refreshes, and interrupted runs. */
 export async function verifyHistoricalArbitrageMatches(
-  requestedBatchSize = 10,
+  requestedBatchSize = 4,
 ): Promise<HistoricalMatchBatchResult> {
   await requireUser();
-  const batchSize = Math.min(10, Math.max(1, requestedBatchSize));
+  // Retry rows abandoned by a transient provider failure, but not repeatedly
+  // within the same long-running browser job.
+  await db.arbitrageItem.updateMany({
+    where: {
+      matchVerdict: "ERROR",
+      matchCheckedAt: { lt: new Date(Date.now() - 5 * 60 * 1000) },
+    },
+    data: { matchVerdict: "UNVERIFIED", matchCheckedAt: null },
+  });
+  const batchSize = Math.min(4, Math.max(1, requestedBatchSize));
   const rows = await db.arbitrageItem.findMany({
     where: { matchVerdict: "UNVERIFIED" },
     orderBy: [{ createdAt: "asc" }, { ebayItemId: "asc" }],
@@ -233,9 +261,11 @@ export async function verifyHistoricalArbitrageMatches(
       (result) => result.verdict === "MATCH" || result.verdict === "LIKELY",
     ).length,
     removed: results.filter(
-      (result) => result.verdict === "REJECTED" || result.verdict === "REVIEW",
+      (result) =>
+        !result.error && (result.verdict === "REJECTED" || result.verdict === "REVIEW"),
     ).length,
     aiChecked: results.filter((result) => result.method === "AI").length,
+    errors: results.filter((result) => result.error).length,
     remaining,
   };
 }

@@ -228,17 +228,26 @@ export function ArbitrageTable({ initial }: { initial: ArbitragePage }) {
       let approved = 0;
       let removed = 0;
       let aiChecked = 0;
+      let errors = 0;
       let remaining = 1;
+      let interrupted = false;
       for (let batch = 0; remaining > 0 && batch < 1000; batch++) {
-        const result = await verifyHistoricalArbitrageMatches(10);
+        let result;
+        try {
+          result = await verifyHistoricalArbitrageMatches(4);
+        } catch {
+          interrupted = true;
+          break;
+        }
         processed += result.processed;
         approved += result.approved;
         removed += result.removed;
         aiChecked += result.aiChecked;
+        errors += result.errors;
         remaining = result.remaining;
         setNotice({
-          text: `Verifying historical matches… ${processed} processed, ${remaining} remaining (${approved} approved, ${removed} removed)`,
-          error: false,
+          text: `Verifying historical matches… ${processed} processed, ${remaining} remaining (${approved} approved, ${removed} removed${errors ? `, ${errors} temporarily failed` : ""})`,
+          error: errors > 0,
         });
         if (result.processed === 0) break;
       }
@@ -246,10 +255,10 @@ export function ArbitrageTable({ initial }: { initial: ArbitragePage }) {
       setSelected(new Set());
       setNotice({
         text:
-          remaining === 0
-            ? `Historical verification complete: ${processed} checked, ${approved} approved, ${removed} unsafe or uncertain pairs removed, ${aiChecked} checked by AI.`
-            : `Historical verification paused: ${processed} checked and ${remaining} remain. Run it again to resume.`,
-        error: remaining > 0,
+          !interrupted && remaining === 0
+            ? `Historical verification complete: ${processed} checked, ${approved} approved, ${removed} unsafe or uncertain pairs removed, ${aiChecked} checked by AI${errors ? `, ${errors} provider failures can be retried in five minutes` : ""}.`
+            : `Historical verification paused safely: ${processed} checked and ${remaining} remain. Run it again to resume.`,
+        error: interrupted || remaining > 0 || errors > 0,
       });
     });
   }
@@ -445,6 +454,16 @@ export function ArbitrageTable({ initial }: { initial: ArbitragePage }) {
             </tr>
           </thead>
           <tbody>
+            {data.rows.length === 0 && (
+              <tr>
+                <td colSpan={12} className="px-6 py-12 text-center text-sm text-slate-500">
+                  No exact-variant opportunities are currently verified. Historical rows that
+                  fail identity or variant checks are intentionally hidden; use “Verify all
+                  historical” again to resume temporarily interrupted checks, or scan for new
+                  items.
+                </td>
+              </tr>
+            )}
             {data.rows.map((r) => (
               <tr
                 key={r.ebayItemId}
