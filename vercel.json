@@ -1,8 +1,12 @@
 {
   "crons": [
     {
-      "path": "/api/cron/arbitrage",
-      "schedule": "0 6 * * *"
+      "path": "/api/cron/arbitrage?utc=10",
+      "schedule": "0 10 * * *"
+    },
+    {
+      "path": "/api/cron/arbitrage?utc=11",
+      "schedule": "0 11 * * *"
     }
   ]
 }

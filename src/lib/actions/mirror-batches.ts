@@ -162,24 +162,31 @@ export async function createArbitrageMirrorBatch(
 /** Build an automatic batch from every currently available opportunity that
  * clears the documented safety gate. Existing products, hidden rows, and
  * rows already waiting in another batch are excluded. */
-export async function createQualifiedArbitrageMirrorBatch(): Promise<{
+export type QualifiedArbitrageBatchResult = {
   batchId?: string;
   eligibleCount: number;
   error?: string;
-}> {
-  const user = await requireUser();
-  if (!user.autoPublishArbitrage) {
+};
+
+async function createQualifiedArbitrageMirrorBatchForUser(
+  userId: string,
+): Promise<QualifiedArbitrageBatchResult> {
+  const user = await db.user.findUnique({
+    where: { id: userId },
+    select: { autoPublishArbitrage: true },
+  });
+  if (!user?.autoPublishArbitrage) {
     return { eligibleCount: 0, error: "Automatic publishing is turned off." };
   }
 
   const [ownedProducts, queuedItems] = await Promise.all([
     db.product.findMany({
-      where: { userId: user.id },
+      where: { userId },
       select: { sku: true },
     }),
     db.mirrorBatchItem.findMany({
       where: {
-        batch: { userId: user.id, status: { in: ["PENDING", "RUNNING"] } },
+        batch: { userId, status: { in: ["PENDING", "RUNNING"] } },
         sourceReferenceId: { not: null },
       },
       select: { sourceReferenceId: true },
@@ -207,7 +214,7 @@ export async function createQualifiedArbitrageMirrorBatch(): Promise<{
   ];
   const rows = await db.arbitrageItem.findMany({
     where: {
-      hiddenBy: { none: { userId: user.id } },
+      hiddenBy: { none: { userId } },
       matchVerdict: { in: ["MATCH", "LIKELY"] },
       matchConfidence: { gte: AUTO_PUBLISH_MIN_MATCH_CONFIDENCE },
       marginPct: { gte: AUTO_PUBLISH_MIN_MARGIN_PCT },
@@ -227,7 +234,7 @@ export async function createQualifiedArbitrageMirrorBatch(): Promise<{
   if (uniqueRows.length === 0) return { eligibleCount: 0 };
 
   const result = await createBatch(
-    user.id,
+    userId,
     "ARBITRAGE",
     uniqueRows.map((row) => ({
       inputUrl: row.amazonUrl,
@@ -236,6 +243,11 @@ export async function createQualifiedArbitrageMirrorBatch(): Promise<{
     "AUTOMATIC",
   );
   return { ...result, eligibleCount: uniqueRows.length };
+}
+
+export async function createQualifiedArbitrageMirrorBatch(): Promise<QualifiedArbitrageBatchResult> {
+  const user = await requireUser();
+  return createQualifiedArbitrageMirrorBatchForUser(user.id);
 }
 
 export async function getMirrorBatch(batchId: string): Promise<MirrorBatchView | null> {
@@ -347,18 +359,18 @@ async function completeItem(
 
 /** Advance exactly one item. The live status page calls this repeatedly, so
  * each eBay publish has its own short request and durable result. */
-export async function processNextMirrorBatchItem(
+async function processNextMirrorBatchItemForUser(
+  userId: string,
   batchId: string,
 ): Promise<MirrorBatchView | null> {
-  const user = await requireUser();
   const batch = await db.mirrorBatch.findFirst({
-    where: { id: batchId, userId: user.id },
+    where: { id: batchId, userId },
     select: { id: true, status: true },
   });
   if (!batch) return null;
   if (batch.status === "COMPLETED") {
     await sendCompletionNotification(batchId);
-    return loadBatch(user.id, batchId);
+    return loadBatch(userId, batchId);
   }
 
   const staleBefore = new Date(Date.now() - STALE_PROCESSING_MS);
@@ -369,7 +381,7 @@ export async function processNextMirrorBatchItem(
   for (const stale of staleItems) {
     const listing = stale.listingId
       ? await db.listing.findFirst({
-          where: { id: stale.listingId, userId: user.id },
+          where: { id: stale.listingId, userId },
           select: { status: true, ebayListingId: true },
         })
       : null;
@@ -389,12 +401,12 @@ export async function processNextMirrorBatchItem(
     where: { batchId, status: "PENDING" },
     orderBy: { position: "asc" },
   });
-  if (!next) return loadBatch(user.id, batchId);
+  if (!next) return loadBatch(userId, batchId);
   const claimed = await db.mirrorBatchItem.updateMany({
     where: { id: next.id, status: "PENDING" },
     data: { status: "PROCESSING", startedAt: new Date(), attempts: { increment: 1 } },
   });
-  if (claimed.count === 0) return loadBatch(user.id, batchId);
+  if (claimed.count === 0) return loadBatch(userId, batchId);
   await db.mirrorBatch.update({
     where: { id: batchId },
     data: { status: "RUNNING", startedAt: batch.status === "PENDING" ? new Date() : undefined },
@@ -403,14 +415,14 @@ export async function processNextMirrorBatchItem(
   let listingId = next.listingId;
   try {
     if (!listingId) {
-      const outcome = await mirrorUrl(user.id, next.inputUrl, undefined, {
+      const outcome = await mirrorUrl(userId, next.inputUrl, undefined, {
         sourceMarkupPct: 30,
       });
       if (!outcome.ok || !outcome.listingId) {
         await completeItem(batchId, next.id, "FAILED", {
           error: outcome.error ?? "Amazon mirroring failed.",
         });
-        return loadBatch(user.id, batchId);
+        return loadBatch(userId, batchId);
       }
       listingId = outcome.listingId;
       await db.mirrorBatchItem.update({
@@ -424,17 +436,17 @@ export async function processNextMirrorBatchItem(
       });
     }
 
-    const published = await publishListingForUser(user.id, listingId);
+    const published = await publishListingForUser(userId, listingId);
     if (published.ok) {
       await completeItem(batchId, next.id, "SUCCEEDED", {
         ebayListingId: published.ebayListingId,
       });
     } else {
-      await discardFailedMirrorDraft(user.id, listingId);
+      await discardFailedMirrorDraft(userId, listingId);
       await completeItem(batchId, next.id, "FAILED", { error: published.error });
     }
   } catch (error) {
-    if (listingId) await discardFailedMirrorDraft(user.id, listingId);
+    if (listingId) await discardFailedMirrorDraft(userId, listingId);
     await completeItem(batchId, next.id, "FAILED", {
       error: error instanceof Error ? error.message : "Direct publication failed.",
     });
@@ -443,5 +455,102 @@ export async function processNextMirrorBatchItem(
   revalidatePath("/mirror");
   revalidatePath("/listings");
   revalidatePath("/arbitrage");
-  return loadBatch(user.id, batchId);
+  return loadBatch(userId, batchId);
+}
+
+export async function processNextMirrorBatchItem(
+  batchId: string,
+): Promise<MirrorBatchView | null> {
+  const user = await requireUser();
+  return processNextMirrorBatchItemForUser(user.id, batchId);
+}
+
+export type AutomaticBatchProcessingReport = {
+  optedInUsers: number;
+  batchesCreated: number;
+  itemsProcessed: number;
+  batchesCompleted: number;
+  pendingBatches: number;
+};
+
+/** Create/resume one automatic Arbitrage batch per opted-in seller and work
+ * it fairly until the cron request approaches its deadline. */
+export async function processAutomaticArbitrageBatchesUntil(
+  deadlineMs: number,
+  cronSecret: string,
+): Promise<AutomaticBatchProcessingReport> {
+  if (!process.env.CRON_SECRET || cronSecret !== process.env.CRON_SECRET) {
+    throw new Error("Unauthorized automatic batch processor request.");
+  }
+  const users = await db.user.findMany({
+    where: {
+      autoPublishArbitrage: true,
+      ebayConnection: { is: { status: { not: "DISCONNECTED" } } },
+    },
+    select: { id: true },
+  });
+  const batchIds: Array<{ userId: string; batchId: string }> = [];
+  let batchesCreated = 0;
+
+  for (const user of users) {
+    const existing = await db.mirrorBatch.findFirst({
+      where: {
+        userId: user.id,
+        source: "ARBITRAGE",
+        trigger: "AUTOMATIC",
+        status: { in: ["PENDING", "RUNNING"] },
+      },
+      orderBy: { createdAt: "asc" },
+      select: { id: true },
+    });
+    if (existing) {
+      batchIds.push({ userId: user.id, batchId: existing.id });
+      continue;
+    }
+    const created = await createQualifiedArbitrageMirrorBatchForUser(user.id);
+    if (created.batchId) {
+      batchesCreated++;
+      batchIds.push({ userId: user.id, batchId: created.batchId });
+    }
+  }
+
+  let itemsProcessed = 0;
+  const completed = new Set<string>();
+  while (Date.now() < deadlineMs && completed.size < batchIds.length) {
+    let advanced = false;
+    for (const batch of batchIds) {
+      if (Date.now() >= deadlineMs) break;
+      if (completed.has(batch.batchId)) continue;
+      const before = await db.mirrorBatch.findUnique({
+        where: { id: batch.batchId },
+        select: { succeededCount: true, failedCount: true, status: true },
+      });
+      if (!before || before.status === "COMPLETED") {
+        completed.add(batch.batchId);
+        continue;
+      }
+      const next = await processNextMirrorBatchItemForUser(
+        batch.userId,
+        batch.batchId,
+      );
+      if (!next || next.status === "COMPLETED") completed.add(batch.batchId);
+      const processedBefore = before.succeededCount + before.failedCount;
+      const processedAfter = next
+        ? next.succeededCount + next.failedCount
+        : processedBefore;
+      if (processedAfter > processedBefore) {
+        itemsProcessed += processedAfter - processedBefore;
+        advanced = true;
+      }
+    }
+    if (!advanced) break;
+  }
+
+  return {
+    optedInUsers: users.length,
+    batchesCreated,
+    itemsProcessed,
+    batchesCompleted: completed.size,
+    pendingBatches: batchIds.length - completed.size,
+  };
 }
