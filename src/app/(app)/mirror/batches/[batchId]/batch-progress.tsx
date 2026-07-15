@@ -69,6 +69,7 @@ export function BatchProgress({ initial }: { initial: MirrorBatchView }) {
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
             <p className="text-sm font-medium text-slate-600">
+              {batch.trigger === "AUTOMATIC" ? "Automatic " : "Manual "}
               {batch.source === "ARBITRAGE" ? "Arbitrage Finder batch" : "Amazon URL batch"}
             </p>
             <h2 className="mt-1 text-xl font-semibold text-slate-900">

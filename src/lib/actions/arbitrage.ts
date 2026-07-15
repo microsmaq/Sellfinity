@@ -93,6 +93,15 @@ export async function scanForNew(target = 50): Promise<ScanReport> {
   return report;
 }
 
+export async function setArbitrageAutoPublish(enabled: boolean): Promise<void> {
+  const user = await requireUser();
+  await db.user.update({
+    where: { id: user.id },
+    data: { autoPublishArbitrage: enabled },
+  });
+  revalidatePath("/arbitrage");
+}
+
 export type MatchVerificationResult = {
   ebayItemId: string;
   verdict: string;

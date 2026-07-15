@@ -35,7 +35,12 @@ export function BatchHistory({ batches }: { batches: MirrorBatchHistoryRow[] }) 
                   {new Date(batch.createdAt).toLocaleString()}
                 </td>
                 <td className="px-4 py-3">
-                  {batch.source === "ARBITRAGE" ? "Arbitrage Finder" : "Amazon URLs"}
+                  <div>{batch.source === "ARBITRAGE" ? "Arbitrage Finder" : "Amazon URLs"}</div>
+                  <div className="mt-1">
+                    <Badge tone={batch.trigger === "AUTOMATIC" ? "indigo" : "slate"}>
+                      {batch.trigger === "AUTOMATIC" ? "automatic" : "manual"}
+                    </Badge>
+                  </div>
                 </td>
                 <td className="px-4 py-3 text-right tabular-nums">{batch.totalCount}</td>
                 <td className="px-4 py-3 text-right tabular-nums">

@@ -2,6 +2,7 @@ export type BatchCompletionEmailInput = {
   name: string;
   batchId: string;
   source: string;
+  trigger: string;
   succeededCount: number;
   failedCount: number;
   totalCount: number;
@@ -29,6 +30,7 @@ export function buildBatchCompletionEmail(input: BatchCompletionEmailInput): {
 } {
   const firstName = input.name.trim().split(/\s+/)[0] || "there";
   const source = input.source === "ARBITRAGE" ? "Arbitrage Finder" : "Amazon URL";
+  const runLabel = input.trigger === "AUTOMATIC" ? "automatic" : "manual";
   const successPct = input.totalCount
     ? Math.round((input.succeededCount / input.totalCount) * 100)
     : 0;
@@ -43,7 +45,7 @@ export function buildBatchCompletionEmail(input: BatchCompletionEmailInput): {
   const text = [
     `Hi ${firstName},`,
     "",
-    `Your ${source} publishing batch is complete.`,
+    `Your ${runLabel} ${source} publishing batch is complete.`,
     "",
     `New items published: ${input.succeededCount}`,
     `Items that need attention: ${input.failedCount}`,
@@ -66,7 +68,7 @@ export function buildBatchCompletionEmail(input: BatchCompletionEmailInput): {
       </div>
       <div style="padding:28px">
         <p style="margin:0 0 16px;font-size:16px">Hi ${escapeHtml(firstName)},</p>
-        <p style="margin:0 0 22px;line-height:1.6">Your ${source} publishing batch has finished. Here is the update:</p>
+        <p style="margin:0 0 22px;line-height:1.6">Your ${runLabel} ${source} publishing batch has finished. Here is the update:</p>
         <table role="presentation" style="width:100%;border-collapse:collapse;background:#f8fafc;border-radius:10px">
           <tr><td style="padding:13px 16px;border-bottom:1px solid #e2e8f0">New items published</td><td style="padding:13px 16px;border-bottom:1px solid #e2e8f0;text-align:right;font-weight:700;color:#047857">${input.succeededCount}</td></tr>
           <tr><td style="padding:13px 16px;border-bottom:1px solid #e2e8f0">Items needing attention</td><td style="padding:13px 16px;border-bottom:1px solid #e2e8f0;text-align:right;font-weight:700">${input.failedCount}</td></tr>

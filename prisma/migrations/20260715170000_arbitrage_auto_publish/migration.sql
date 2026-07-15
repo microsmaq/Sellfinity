@@ -1,0 +1,5 @@
+ALTER TABLE "User"
+ADD COLUMN "autoPublishArbitrage" BOOLEAN NOT NULL DEFAULT false;
+
+ALTER TABLE "MirrorBatch"
+ADD COLUMN "trigger" TEXT NOT NULL DEFAULT 'MANUAL';

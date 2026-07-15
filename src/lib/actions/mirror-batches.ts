@@ -9,6 +9,10 @@ import {
   publishListingForUser,
 } from "@/lib/listings/publish";
 import { sendBatchCompletionEmail } from "@/lib/email/batch-completion";
+import {
+  AUTO_PUBLISH_MIN_MARGIN_PCT,
+  AUTO_PUBLISH_MIN_MATCH_CONFIDENCE,
+} from "@/lib/arbitrage/auto-publish";
 
 const MAX_BATCH_ITEMS = 50;
 const STALE_PROCESSING_MS = 3 * 60 * 1000;
@@ -28,6 +32,7 @@ export type MirrorBatchItemView = {
 export type MirrorBatchView = {
   id: string;
   source: string;
+  trigger: string;
   status: string;
   totalCount: number;
   succeededCount: number;
@@ -46,6 +51,7 @@ export type MirrorBatchHistoryRow = Omit<MirrorBatchView, "items">;
 function toView(batch: {
   id: string;
   source: string;
+  trigger: string;
   status: string;
   totalCount: number;
   succeededCount: number;
@@ -90,6 +96,7 @@ async function createBatch(
   userId: string,
   source: "URL_BULK" | "ARBITRAGE",
   items: Array<{ inputUrl: string; sourceReferenceId?: string }>,
+  trigger: "MANUAL" | "AUTOMATIC" = "MANUAL",
 ): Promise<{ batchId?: string; error?: string }> {
   const connection = await db.ebayConnection.findUnique({ where: { userId } });
   if (!connection || connection.status === "DISCONNECTED") {
@@ -101,6 +108,7 @@ async function createBatch(
     data: {
       userId,
       source,
+      trigger,
       totalCount: items.length,
       items: {
         create: items.map((item, position) => ({
@@ -151,6 +159,68 @@ export async function createArbitrageMirrorBatch(
   return createBatch(user.id, "ARBITRAGE", items);
 }
 
+/** Build an automatic batch from every currently available opportunity that
+ * clears the documented safety gate. Existing products, hidden rows, and
+ * rows already waiting in another batch are excluded. */
+export async function createQualifiedArbitrageMirrorBatch(): Promise<{
+  batchId?: string;
+  eligibleCount: number;
+  error?: string;
+}> {
+  const user = await requireUser();
+  if (!user.autoPublishArbitrage) {
+    return { eligibleCount: 0, error: "Automatic publishing is turned off." };
+  }
+
+  const [ownedProducts, queuedItems] = await Promise.all([
+    db.product.findMany({
+      where: { userId: user.id },
+      select: { sku: true },
+    }),
+    db.mirrorBatchItem.findMany({
+      where: {
+        batch: { userId: user.id, status: { in: ["PENDING", "RUNNING"] } },
+        sourceReferenceId: { not: null },
+      },
+      select: { sourceReferenceId: true },
+    }),
+  ]);
+  const ownedAsins = [...new Set(ownedProducts.map((product) => product.sku))];
+  const queuedEbayIds = [
+    ...new Set(
+      queuedItems
+        .map((item) => item.sourceReferenceId)
+        .filter((id): id is string => !!id),
+    ),
+  ];
+  const rows = await db.arbitrageItem.findMany({
+    where: {
+      hiddenBy: { none: { userId: user.id } },
+      matchVerdict: { in: ["MATCH", "LIKELY"] },
+      matchConfidence: { gte: AUTO_PUBLISH_MIN_MATCH_CONFIDENCE },
+      marginPct: { gte: AUTO_PUBLISH_MIN_MARGIN_PCT },
+      profitCents: { gt: 0 },
+      ...(ownedAsins.length > 0 && { asin: { notIn: ownedAsins } }),
+      ...(queuedEbayIds.length > 0 && { ebayItemId: { notIn: queuedEbayIds } }),
+    },
+    orderBy: [{ profitCents: "desc" }, { matchConfidence: "desc" }],
+    take: MAX_BATCH_ITEMS,
+    select: { ebayItemId: true, amazonUrl: true },
+  });
+  if (rows.length === 0) return { eligibleCount: 0 };
+
+  const result = await createBatch(
+    user.id,
+    "ARBITRAGE",
+    rows.map((row) => ({
+      inputUrl: row.amazonUrl,
+      sourceReferenceId: row.ebayItemId,
+    })),
+    "AUTOMATIC",
+  );
+  return { ...result, eligibleCount: rows.length };
+}
+
 export async function getMirrorBatch(batchId: string): Promise<MirrorBatchView | null> {
   const user = await requireUser();
   return loadBatch(user.id, batchId);
@@ -168,6 +238,7 @@ export async function listMirrorBatchHistory(
   return batches.map((batch) => ({
     id: batch.id,
     source: batch.source,
+    trigger: batch.trigger,
     status: batch.status,
     totalCount: batch.totalCount,
     succeededCount: batch.succeededCount,
@@ -201,6 +272,7 @@ async function sendCompletionNotification(batchId: string): Promise<void> {
     name: batch.user.name,
     batchId: batch.id,
     source: batch.source,
+    trigger: batch.trigger,
     succeededCount: batch.succeededCount,
     failedCount: batch.failedCount,
     totalCount: batch.totalCount,

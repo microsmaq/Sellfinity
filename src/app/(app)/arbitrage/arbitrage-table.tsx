@@ -9,10 +9,18 @@ import {
   hideArbitrageItem,
   researchArbitrageMarket,
   scanForNew,
+  setArbitrageAutoPublish,
   verifyArbitrageMatches,
   verifyHistoricalArbitrageMatches,
 } from "@/lib/actions/arbitrage";
-import { createArbitrageMirrorBatch } from "@/lib/actions/mirror-batches";
+import {
+  createArbitrageMirrorBatch,
+  createQualifiedArbitrageMirrorBatch,
+} from "@/lib/actions/mirror-batches";
+import {
+  AUTO_PUBLISH_MIN_MARGIN_PCT,
+  AUTO_PUBLISH_MIN_MATCH_CONFIDENCE,
+} from "@/lib/arbitrage/auto-publish";
 import type { ArbitragePage, ArbitragePageParams } from "@/lib/arbitrage/store";
 import type { OpportunityRow } from "@/lib/arbitrage/scanner";
 import { formatCents } from "@/lib/money";
@@ -62,7 +70,13 @@ function SortHeader({
   );
 }
 
-export function ArbitrageTable({ initial }: { initial: ArbitragePage }) {
+export function ArbitrageTable({
+  initial,
+  initialAutoPublish,
+}: {
+  initial: ArbitragePage;
+  initialAutoPublish: boolean;
+}) {
   const router = useRouter();
   const [data, setData] = useState(initial);
   const [params, setParams] = useState(DEFAULT_PARAMS);
@@ -73,6 +87,8 @@ export function ArbitrageTable({ initial }: { initial: ArbitragePage }) {
   const [researching, startResearch] = useTransition();
   const [verifying, startVerify] = useTransition();
   const [verifyingHistory, startVerifyHistory] = useTransition();
+  const [savingAutoPublish, startAutoPublishSave] = useTransition();
+  const [autoPublishEnabled, setAutoPublishEnabled] = useState(initialAutoPublish);
   const [busyAsin, setBusyAsin] = useState<string | null>(null);
   const [hidingId, setHidingId] = useState<string | null>(null);
   const [notice, setNotice] = useState<{ text: string; error: boolean } | null>(null);
@@ -127,6 +143,29 @@ export function ArbitrageTable({ initial }: { initial: ArbitragePage }) {
     setNotice({
       text: "Stopping after the current provider lookup finishes…",
       error: false,
+    });
+  }
+
+  function toggleAutoPublish(enabled: boolean) {
+    const previous = autoPublishEnabled;
+    setAutoPublishEnabled(enabled);
+    setNotice(null);
+    startAutoPublishSave(async () => {
+      try {
+        await setArbitrageAutoPublish(enabled);
+        setNotice({
+          text: enabled
+            ? `Automatic publishing enabled. Completed scans will publish unlisted matches with at least ${AUTO_PUBLISH_MIN_MATCH_CONFIDENCE}% confidence and ${AUTO_PUBLISH_MIN_MARGIN_PCT}% estimated net margin.`
+            : "Automatic publishing disabled.",
+          error: false,
+        });
+      } catch {
+        setAutoPublishEnabled(previous);
+        setNotice({
+          text: "Could not save the automatic publishing setting. Please try again.",
+          error: true,
+        });
+      }
     });
   }
 
@@ -191,12 +230,45 @@ export function ArbitrageTable({ initial }: { initial: ArbitragePage }) {
         errors++;
       }
       const stopped = stopScanRequested.current;
-      setNotice({
-        text: stopped
-          ? `Scan stopped: ${added} product candidate${added === 1 ? "" : "s"} added and ${examined} candidates examined. The queue was saved and will resume next time.`
-          : exhausted
+      const scanSummary = stopped
+        ? `Scan stopped: ${added} product candidate${added === 1 ? "" : "s"} added and ${examined} candidates examined. The queue was saved and will resume next time.`
+        : exhausted
           ? `Scan complete: ${added} product candidate${added === 1 ? "" : "s"} added (${examined} candidates examined) — today's sources are fully scanned.`
-          : `Scan complete: ${added} product candidate${added === 1 ? "" : "s"} added (${examined} candidates examined)${errors ? ` after recovering from ${errors} temporary provider failure${errors === 1 ? "" : "s"}` : ""}.`,
+          : `Scan complete: ${added} product candidate${added === 1 ? "" : "s"} added (${examined} candidates examined)${errors ? ` after recovering from ${errors} temporary provider failure${errors === 1 ? "" : "s"}` : ""}.`;
+
+      if (!stopped && autoPublishEnabled) {
+        setNotice({
+          text: `${scanSummary} Checking all available products against the automatic publishing rules…`,
+          error: false,
+        });
+        try {
+          const automaticBatch = await createQualifiedArbitrageMirrorBatch();
+          if (automaticBatch.error) {
+            setNotice({
+              text: `${scanSummary} Automatic publishing could not start: ${automaticBatch.error}`,
+              error: true,
+            });
+            return;
+          }
+          if (automaticBatch.batchId) {
+            router.push(`/mirror/batches/${automaticBatch.batchId}`);
+            return;
+          }
+          setNotice({
+            text: `${scanSummary} No unlisted products currently meet the ${AUTO_PUBLISH_MIN_MATCH_CONFIDENCE}% match and ${AUTO_PUBLISH_MIN_MARGIN_PCT}% net-margin rules.`,
+            error: false,
+          });
+          return;
+        } catch {
+          setNotice({
+            text: `${scanSummary} The automatic eligibility check temporarily failed; no products were published.`,
+            error: true,
+          });
+          return;
+        }
+      }
+      setNotice({
+        text: scanSummary,
         error: errors > 0 && !stopped && added < SCAN_TARGET,
       });
     });
@@ -391,6 +463,23 @@ export function ArbitrageTable({ initial }: { initial: ArbitragePage }) {
 
   return (
     <div className="space-y-4">
+      <label className="flex max-w-3xl items-start gap-3 rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-3">
+        <input
+          type="checkbox"
+          checked={autoPublishEnabled}
+          disabled={scanning || savingAutoPublish}
+          onChange={(event) => toggleAutoPublish(event.target.checked)}
+          className="mt-1 h-4 w-4 rounded border-slate-300 text-indigo-600"
+        />
+        <span>
+          <span className="block text-sm font-semibold text-indigo-950">
+            Auto-publish qualified matches
+          </span>
+          <span className="mt-0.5 block text-xs leading-5 text-indigo-800">
+            After a completed scan, publish available products with at least {AUTO_PUBLISH_MIN_MATCH_CONFIDENCE}% Amazon-variant match confidence, {AUTO_PUBLISH_MIN_MARGIN_PCT}% estimated net margin, and positive profit. Hidden, previously listed, and already queued products are skipped.
+          </span>
+        </span>
+      </label>
       <div className="flex flex-wrap items-center gap-3">
         <Input
           value={queryInput}

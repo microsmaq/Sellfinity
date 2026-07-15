@@ -24,6 +24,9 @@ model User {
   // FREE | PRO | SCALE
   plan         String    @default("FREE")
   planRenewsAt DateTime?
+  // Automatically publish high-confidence profitable Arbitrage Finder matches
+  // after a user-initiated scan finishes.
+  autoPublishArbitrage Boolean @default(false)
   createdAt    DateTime  @default(now())
 
   sessions                Session[]
@@ -47,6 +50,8 @@ model MirrorBatch {
   userId         String
   // URL_BULK | ARBITRAGE
   source         String
+  // MANUAL | AUTOMATIC
+  trigger        String    @default("MANUAL")
   // PENDING | RUNNING | COMPLETED
   status         String    @default("PENDING")
   totalCount     Int

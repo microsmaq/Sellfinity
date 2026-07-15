@@ -7,6 +7,7 @@ describe("batch completion email", () => {
       name: "Ada Lovelace",
       batchId: "batch-123",
       source: "ARBITRAGE",
+      trigger: "AUTOMATIC",
       succeededCount: 8,
       failedCount: 2,
       totalCount: 10,
@@ -17,6 +18,7 @@ describe("batch completion email", () => {
 
     expect(message.subject).toContain("8 new listings published");
     expect(message.text).toContain("Hi Ada,");
+    expect(message.text).toContain("automatic Arbitrage Finder publishing batch");
     expect(message.text).toContain("New items published: 8");
     expect(message.text).toContain("Items that need attention: 2");
     expect(message.text).toContain("Success rate: 80%");
@@ -29,6 +31,7 @@ describe("batch completion email", () => {
       name: "<Admin>",
       batchId: "safe-id",
       source: "URL_BULK",
+      trigger: "MANUAL",
       succeededCount: 1,
       failedCount: 0,
       totalCount: 1,
