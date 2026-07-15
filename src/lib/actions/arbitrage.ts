@@ -63,12 +63,21 @@ export async function exportArbitrageExcel(params: ArbitragePageParams) {
       category: row.category,
       ebayPriceCents: row.ebayPriceCents,
       amazonPriceCents: row.amazonPriceCents,
-      profitCents: row.profitCents,
-      marginPct: row.marginPct,
+      profitCents: ["MATCH", "LIKELY"].includes(row.matchVerdict)
+        ? row.profitCents
+        : null,
+      marginPct: ["MATCH", "LIKELY"].includes(row.matchVerdict)
+        ? row.marginPct
+        : null,
       estimatedSales30d: row.ebaySales30d,
       competitorCount: row.competitorCount,
       averageCompetitorPriceCents: row.avgCompPriceCents,
-      suggestedPriceCents: row.suggestedListingPriceCents,
+      suggestedPriceCents: ["MATCH", "LIKELY"].includes(row.matchVerdict)
+        ? row.suggestedListingPriceCents
+        : null,
+      matchVerdict: row.matchVerdict,
+      matchConfidence: row.matchConfidence,
+      matchReason: row.matchReason,
       ebayUrl: row.ebayUrl,
       amazonUrl: row.amazonUrl,
     })),
@@ -120,18 +129,23 @@ async function assessAndPersistMatches(
             url: row.amazonUrl,
           },
         );
+        const identity = await assessProductMatch(
+          { title: row.ebayTitle, imageUrl: row.imageUrl },
+          {
+            title: exact?.title ?? row.amazonTitle,
+            imageUrl: exact?.imageUrl,
+          },
+        );
         const assessment = exact
-          ? exact.variantAssessment ??
-            (await assessProductMatch(
-              { title: row.ebayTitle, imageUrl: row.imageUrl },
-              { title: exact.title, imageUrl: exact.imageUrl },
-            ))
-          : {
-              verdict: "REJECTED" as const,
-              confidence: 99,
-              reason: "The exact Amazon child variant and its live price could not be proven.",
-              method: "RULES" as const,
-            };
+          ? exact.variantAssessment ?? identity
+          : identity.verdict === "REJECTED"
+            ? identity
+            : {
+                verdict: "REVIEW" as const,
+                confidence: identity.confidence,
+                reason: `Likely product candidate, but the exact Amazon child variant and live price are not proven. ${identity.reason}`,
+                method: identity.method,
+              };
         return { row, exact, assessment, error: false };
       } catch (error) {
         return {

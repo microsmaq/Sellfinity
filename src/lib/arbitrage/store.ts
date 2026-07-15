@@ -83,6 +83,7 @@ export type ArbitragePageParams = {
     | "sales"
     | "competition"
     | "avgCompPrice"
+    | "matchConfidence"
     | "newest";
   sortDesc: boolean;
   category: string; // "all" or a category name
@@ -106,6 +107,7 @@ const SORT_COLUMNS: Record<ArbitragePageParams["sortKey"], string> = {
   sales: "salesEst",
   competition: "competitorCount",
   avgCompPrice: "avgCompPriceCents",
+  matchConfidence: "matchConfidence",
   newest: "createdAt",
 };
 
@@ -125,9 +127,9 @@ export async function listArbitragePage(
 ): Promise<ArbitragePage> {
   const where: Prisma.ArbitrageItemWhereInput = {
     hiddenBy: { none: { userId } },
-    // Never expose profitability based on a source whose exact child variant
-    // and live price have not yet been verified.
-    matchVerdict: { in: ["MATCH", "LIKELY"] },
+    // Similar candidates stay visible for human review. Definite identity
+    // conflicts remain excluded; the UI withholds unverified profitability.
+    matchVerdict: { in: ["MATCH", "LIKELY", "REVIEW"] },
     ...(params.category !== "all" && { category: params.category }),
     ...(params.minMarginPct > 0 && { marginPct: { gte: params.minMarginPct } }),
     ...(params.query.trim() && {

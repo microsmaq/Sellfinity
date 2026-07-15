@@ -355,9 +355,8 @@ function firstImage(json: string): string | null {
 
 /**
  * Verify a few tracked live listings at a time. Wrong sources are replaced
- * only by AI/rules-approved Amazon candidates. If the current pair is
- * definitively wrong and no safe replacement exists, the live eBay listing is
- * ended so the seller cannot receive an order they cannot fulfill.
+ * only by AI/rules-approved Amazon candidates. If no safe replacement exists,
+ * the live listing remains active with confidence and reason for seller review.
  */
 export async function cleanupListingSourcesBatch(): Promise<SourceCleanupBatchResult> {
   const user = await requireUser();
@@ -402,12 +401,10 @@ export async function cleanupListingSourcesBatch(): Promise<SourceCleanupBatchRe
     ? await db.listing.findUnique({ where: { id: claimedId }, include: { product: true } })
     : null;
   const listings = claimedListing ? [claimedListing] : [];
-  const client = await getEbayClientForUser(user.id);
   const counts = { kept: 0, replaced: 0, ended: 0, review: 0 };
   const endedIds: string[] = [];
 
   for (const listing of listings) {
-    const ebayListingId = listing.ebayListingId!;
     try {
       const ebayIdentity = {
         title: listing.title,
@@ -547,51 +544,21 @@ export async function cleanupListingSourcesBatch(): Promise<SourceCleanupBatchRe
         continue;
       }
 
-      // A rules-only REVIEW means the AI service was unavailable or the title
-      // evidence is genuinely ambiguous. Never end a live listing on that.
-      if (current.verdict === "REVIEW" && current.method === "RULES") {
-        await db.listing.update({
-          where: { id: listing.id },
-          data: {
-            sourceMatchVerdict: "REVIEW",
-            sourceMatchConfidence: current.confidence,
-            sourceMatchReason: current.reason,
-            sourceMatchMethod: current.method,
-            sourceMatchCheckedAt: new Date(),
-          },
-        });
-        counts.review++;
-        continue;
-      }
-
-      try {
-        await client.endListing(ebayListingId);
-      } catch (error) {
-        if (!(error instanceof EbayApiError) || !isAlreadyEndedEbayError(error.message)) {
-          throw error;
-        }
-      }
-      await db.$transaction([
-        db.listing.update({
-          where: { id: listing.id },
-          data: {
-            status: "ENDED",
-            endedAt: new Date(),
-            sourceMatchVerdict: current.verdict,
-            sourceMatchConfidence: current.confidence,
-            sourceMatchReason: `No equivalent Amazon source found. ${current.reason}`,
-            sourceMatchMethod: current.method,
-            sourceMatchCheckedAt: new Date(),
-          },
-        }),
-        db.ebayListingSuppression.upsert({
-          where: { userId_ebayListingId: { userId: user.id, ebayListingId } },
-          create: { userId: user.id, ebayListingId },
-          update: {},
-        }),
-      ]);
-      counts.ended++;
-      endedIds.push(ebayListingId);
+      // No safe replacement was proven. Keep the live listing in place and
+      // surface the evidence to the seller instead of ending it automatically.
+      // Profit and repricing remain disabled until a verified source exists.
+      await db.listing.update({
+        where: { id: listing.id },
+        data: {
+          sourceMatchVerdict:
+            current.verdict === "REJECTED" ? "REJECTED" : "REVIEW",
+          sourceMatchConfidence: current.confidence,
+          sourceMatchReason: `No exact Amazon source proven. ${current.reason}`,
+          sourceMatchMethod: current.method,
+          sourceMatchCheckedAt: new Date(),
+        },
+      });
+      counts.review++;
     } catch (error) {
       await db.listing.update({
         where: { id: listing.id },

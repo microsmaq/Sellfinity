@@ -42,6 +42,13 @@ export type EbayRow = {
     marginPct: number;
     unavailable: boolean;
   } | null;
+  sourceAssessment: {
+    verdict: string;
+    confidence: number | null;
+    reason: string | null;
+    method: string | null;
+    amazonUrl: string | null;
+  } | null;
 };
 
 type ListingSortKey =
@@ -53,7 +60,8 @@ type ListingSortKey =
   | "demand"
   | "competition"
   | "averagePrice"
-  | "suggestedPrice";
+  | "suggestedPrice"
+  | "matchConfidence";
 
 const PRICE_CLEANUP_BATCH_SIZE = 4;
 
@@ -160,6 +168,7 @@ export function EbayListingsTable({
         case "competition": return row.market?.competitorCount ?? null;
         case "averagePrice": return row.market?.averageCompetitorPriceCents ?? null;
         case "suggestedPrice": return row.suggestedPriceCents;
+        case "matchConfidence": return row.sourceAssessment?.confidence ?? null;
       }
     };
     return [...rows].sort((left, right) => {
@@ -191,14 +200,18 @@ export function EbayListingsTable({
       prev.map((row) => {
         const r = results.find((x) => x.ebayListingId === row.ebayListingId);
         return r && r.ok
-          ? { ...row, match: { ...r.match, shippingCostCents: 0 } }
+          ? {
+              ...row,
+              match: { ...r.match, shippingCostCents: 0 },
+              sourceAssessment: { ...r.assessment, amazonUrl: r.match.amazonUrl },
+            }
           : row;
       }),
     );
   }
 
   function matchAll() {
-    const unmatchedRows = rows.filter((r) => !r.match);
+    const unmatchedRows = rows.filter((r) => !r.match && !r.sourceAssessment);
     setNotice(null);
     startTransition(async () => {
       let matched = 0;
@@ -247,14 +260,14 @@ export function EbayListingsTable({
             setRows((current) => current.filter((row) => !ended.has(row.ebayListingId)));
           }
           setBulkProgress(
-            `Verifying sources… ${totals.processed} checked (${totals.kept} kept, ${totals.replaced} replaced, ${totals.ended} ended, ${remaining} remaining)`,
+            `Verifying sources… ${totals.processed} checked (${totals.kept} verified, ${totals.replaced} replaced, ${totals.review} need review, ${remaining} remaining)`,
           );
         }
       }
       await Promise.all(Array.from({ length: 4 }, () => worker()));
       setBulkProgress(null);
       setNotice({
-        text: `Source cleanup complete: ${totals.kept} correct, ${totals.replaced} replaced, ${totals.ended} ended, ${totals.review} need review.`,
+        text: `Source verification complete: ${totals.kept} verified, ${totals.replaced} replaced, ${totals.review} left active for your review. No listings were ended automatically.`,
         error: totals.review > 0,
       });
       window.location.reload();
@@ -391,6 +404,9 @@ export function EbayListingsTable({
           averageCompetitorPriceCents:
             row.market?.averageCompetitorPriceCents ?? null,
           suggestedPriceCents: row.suggestedPriceCents,
+          matchVerdict: row.sourceAssessment?.verdict ?? null,
+          matchConfidence: row.sourceAssessment?.confidence ?? null,
+          matchReason: row.sourceAssessment?.reason ?? null,
           status: !row.match
             ? "Unmatched"
             : row.match.unavailable
@@ -424,9 +440,12 @@ export function EbayListingsTable({
   }
 
   const problems = rows.filter(
-    (r) => r.match && (r.match.unavailable || r.match.profitCents <= 0),
+    (r) =>
+      (r.match && (r.match.unavailable || r.match.profitCents <= 0)) ||
+      (r.sourceAssessment &&
+        !["MATCH", "LIKELY"].includes(r.sourceAssessment.verdict)),
   ).length;
-  const unmatched = rows.filter((r) => !r.match).length;
+  const unmatched = rows.filter((r) => !r.match && !r.sourceAssessment).length;
 
   return (
     <div className="space-y-4">
@@ -499,6 +518,7 @@ export function EbayListingsTable({
               <ListingSortHeader label="Competition" value="competition" active={sortKey === "competition"} descending={sortDescending} onSort={sortBy} />
               <ListingSortHeader label="Avg. comp price" value="averagePrice" active={sortKey === "averagePrice"} descending={sortDescending} onSort={sortBy} />
               <ListingSortHeader label="Suggested price" value="suggestedPrice" active={sortKey === "suggestedPrice"} descending={sortDescending} onSort={sortBy} />
+              <ListingSortHeader label="Match confidence" value="matchConfidence" active={sortKey === "matchConfidence"} descending={sortDescending} onSort={sortBy} />
               <th className="px-4 py-3">Status</th>
               <th className="px-4 py-3" />
             </tr>
@@ -606,8 +626,42 @@ export function EbayListingsTable({
                       ? formatCents(r.suggestedPriceCents)
                       : "—"}
                   </td>
+                  <td className="px-4 py-3 text-right">
+                    {r.sourceAssessment ? (
+                      <div title={r.sourceAssessment.reason ?? "No verification reason recorded."}>
+                        <Badge
+                          tone={
+                            r.sourceAssessment.verdict === "MATCH" ||
+                            r.sourceAssessment.verdict === "LIKELY"
+                              ? "green"
+                              : r.sourceAssessment.verdict === "REJECTED"
+                                ? "red"
+                                : "amber"
+                          }
+                        >
+                          {r.sourceAssessment.verdict === "UNVERIFIED"
+                            ? "Not checked"
+                            : `${r.sourceAssessment.verdict.toLowerCase()} ${r.sourceAssessment.confidence ?? "—"}%`}
+                        </Badge>
+                        {r.sourceAssessment.amazonUrl && (
+                          <a
+                            href={r.sourceAssessment.amazonUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="mt-1 block text-xs text-indigo-600 hover:underline"
+                          >
+                            Amazon candidate ↗
+                          </a>
+                        )}
+                      </div>
+                    ) : (
+                      <Badge tone="slate">Untracked</Badge>
+                    )}
+                  </td>
                   <td className="px-4 py-3">
-                    {!r.match ? (
+                    {!r.match && r.sourceAssessment ? (
+                      <Badge tone="amber">Review source</Badge>
+                    ) : !r.match ? (
                       <Badge tone="slate">Unmatched</Badge>
                     ) : r.match.unavailable ? (
                       <Badge tone="red">Not on Amazon</Badge>
@@ -618,7 +672,7 @@ export function EbayListingsTable({
                     )}
                   </td>
                   <td className="whitespace-nowrap px-4 py-3 text-right">
-                    {!r.match ? (
+                    {!r.match && !r.sourceAssessment ? (
                       <Button
                         size="sm"
                         variant="secondary"
@@ -642,7 +696,7 @@ export function EbayListingsTable({
                       >
                         {busyId === r.ebayListingId ? "Matching…" : "Find Amazon match"}
                       </Button>
-                    ) : (
+                    ) : r.match ? (
                       <Button
                         size="sm"
                         variant="ghost"
@@ -656,7 +710,7 @@ export function EbayListingsTable({
                               setRows((prev) =>
                                 prev.map((x) =>
                                   x.ebayListingId === r.ebayListingId
-                                    ? { ...x, match: null }
+                                    ? { ...x, match: null, sourceAssessment: null }
                                     : x,
                                 ),
                               ),
@@ -666,6 +720,8 @@ export function EbayListingsTable({
                       >
                         Unmatch
                       </Button>
+                    ) : (
+                      <Badge tone="amber">Review source</Badge>
                     )}{" "}
                     <Button
                       size="sm"
@@ -692,7 +748,7 @@ export function EbayListingsTable({
             })}
             {rows.length === 0 && !fetchError && (
               <tr>
-                <td colSpan={10} className="px-4 py-12 text-center text-slate-500">
+                <td colSpan={11} className="px-4 py-12 text-center text-slate-500">
                   No active listings found on your eBay account.
                 </td>
               </tr>

@@ -11,6 +11,9 @@ export type LocalListingFacts = {
   ebayListingId: string | null;
   status: string;
   sourceMatchVerdict: string;
+  sourceMatchConfidence: number | null;
+  sourceMatchReason: string | null;
+  sourceMatchMethod: string | null;
   imageUrlsJson: string;
   product: {
     sku: string;
@@ -66,6 +69,7 @@ export function buildEbayRows(
         market: marketMetrics.get(r.ebayListingId) ?? null,
         suggestedPriceCents: null,
         match: null,
+        sourceAssessment: null,
       });
       continue;
     }
@@ -80,6 +84,13 @@ export function buildEbayRows(
         market: marketMetrics.get(r.ebayListingId) ?? null,
         suggestedPriceCents: null,
         match: null,
+        sourceAssessment: {
+          verdict: localListing.sourceMatchVerdict,
+          confidence: localListing.sourceMatchConfidence,
+          reason: localListing.sourceMatchReason,
+          method: localListing.sourceMatchMethod,
+          amazonUrl: localListing.product.supplierUrl,
+        },
       });
       continue;
     }
@@ -113,6 +124,13 @@ export function buildEbayRows(
         profitCents: margin.estimatedProfitCents,
         marginPct: Math.round(margin.marginPct),
         unavailable: localListing.product.supplierStock === 0,
+      },
+      sourceAssessment: {
+        verdict: localListing.sourceMatchVerdict,
+        confidence: localListing.sourceMatchConfidence,
+        reason: localListing.sourceMatchReason,
+        method: localListing.sourceMatchMethod,
+        amazonUrl: localListing.product.supplierUrl,
       },
     });
   }

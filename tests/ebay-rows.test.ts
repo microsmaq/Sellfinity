@@ -21,6 +21,9 @@ function local(
     ebayListingId: id,
     status: overrides.status ?? "ACTIVE",
     sourceMatchVerdict: "MATCH",
+    sourceMatchConfidence: 92,
+    sourceMatchReason: "Strong product identity evidence.",
+    sourceMatchMethod: "RULES",
     imageUrlsJson: "[]",
     product: {
       sku: `SKU-${id}`,
@@ -53,6 +56,20 @@ describe("buildEbayRows", () => {
     const row = buildEbayRows([remote("9")], [tracked])[0];
     expect(row.match).toBeNull();
     expect(row.suggestedPriceCents).toBeNull();
+  });
+
+  it("keeps uncertain sources visible with confidence for seller review", () => {
+    const tracked = local("9");
+    tracked.sourceMatchVerdict = "REVIEW";
+    tracked.sourceMatchConfidence = 74;
+    tracked.sourceMatchReason = "Exact child variant is not proven.";
+    const row = buildEbayRows([remote("9")], [tracked])[0];
+    expect(row.match).toBeNull();
+    expect(row.sourceAssessment).toMatchObject({
+      verdict: "REVIEW",
+      confidence: 74,
+      amazonUrl: "https://www.amazon.com/dp/X",
+    });
   });
 
   it("deduplicates listings repeated across eBay pagination boundaries", () => {

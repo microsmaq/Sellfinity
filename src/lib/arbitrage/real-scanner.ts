@@ -14,7 +14,7 @@ import type { ArbitrageOpportunity } from "./scanner";
 import type { ScanReport } from "./scan-types";
 export { estimatedSales30d } from "./demand";
 import { estimatedSales30d } from "./demand";
-import { assessProductMatch, isApprovedProductMatch } from "./product-match";
+import { assessProductMatchRules } from "./product-match";
 
 // Category keyword rotation. Each keyword yields one Browse page of
 // candidates; scans walk this list in a day-dependent order for variety.
@@ -167,24 +167,31 @@ async function amazonMatch(
 ): Promise<ArbitrageOpportunity | null> {
   const seed = await findAmazonMatch(candidate.title);
   if (!seed) return null;
+  const seedAssessment = assessProductMatchRules(candidate.title, seed.title);
+  if (seedAssessment.verdict === "REJECTED") return null;
   const match = await resolveExactAmazonVariant(
     { title: candidate.title, imageUrl: candidate.imageUrl },
     seed,
   );
-  if (!match) return null;
+  // Preserve plausible candidates for human review when Amazon cannot prove
+  // one exact, live-priced child variant. The UI keeps their estimated
+  // profitability non-actionable until verification succeeds.
+  const source = match ?? seed;
+  const assessment = match
+    ? match.variantAssessment ?? seedAssessment
+    : {
+        verdict: "REVIEW" as const,
+        confidence: seedAssessment.confidence,
+        reason: `Likely product candidate, but the exact Amazon child variant and live price are not proven. ${seedAssessment.reason}`,
+        method: seedAssessment.method,
+      };
   // Break-even and better both qualify: the Amazon source just can't cost
   // more than the eBay comp — the seller adds their margin at publish time.
-  if (match.priceCents > candidate.priceCents) return null;
+  if (source.priceCents > candidate.priceCents) return null;
 
-  const assessment =
-    match.variantAssessment ??
-    (await assessProductMatch(
-      { title: candidate.title, imageUrl: candidate.imageUrl },
-      { title: match.title, imageUrl: match.imageUrl },
-    ));
-  if (!isApprovedProductMatch(assessment)) return null;
+  if (assessment.verdict === "REJECTED") return null;
 
-  const margin = estimateMargin(candidate.priceCents, match.priceCents, 0);
+  const margin = estimateMargin(candidate.priceCents, source.priceCents, 0);
 
   return {
     category: candidate.category,
@@ -197,10 +204,10 @@ async function amazonMatch(
       imageUrl: candidate.imageUrl,
     },
     amazon: {
-      asin: match.asin,
-      title: match.title,
-      priceCents: match.priceCents,
-      url: match.url,
+      asin: source.asin,
+      title: source.title,
+      priceCents: source.priceCents,
+      url: source.url,
     },
     margin,
     match: assessment,

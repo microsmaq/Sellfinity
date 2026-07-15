@@ -28,6 +28,12 @@ export type TrackResult =
         marginPct: number;
         unavailable: boolean;
       };
+      assessment: {
+        verdict: string;
+        confidence: number;
+        reason: string;
+        method: string;
+      };
     }
   | { ok: false; ebayListingId: string; error: string };
 
@@ -53,6 +59,12 @@ export async function matchAndTrackListing(
     seed,
   );
   if (!match) return fail("No exact, live-priced Amazon variant could be verified.");
+  const assessment = match.variantAssessment ?? {
+    verdict: "MATCH" as const,
+    confidence: 95,
+    reason: "The exact Amazon child variant and live price were verified.",
+    method: "RULES" as const,
+  };
 
   const images = input.imageUrl ? [input.imageUrl] : [];
   await db.$transaction(async (tx) => {
@@ -94,6 +106,11 @@ export async function matchAndTrackListing(
         status: "ACTIVE",
         ebayListingId: input.ebayListingId,
         publishedAt: new Date(),
+        sourceMatchVerdict: assessment.verdict,
+        sourceMatchConfidence: assessment.confidence,
+        sourceMatchReason: assessment.reason,
+        sourceMatchMethod: assessment.method,
+        sourceMatchCheckedAt: new Date(),
       },
     });
   });
@@ -110,6 +127,7 @@ export async function matchAndTrackListing(
       marginPct: Math.round(margin.marginPct),
       unavailable: false,
     },
+    assessment,
   };
 }
 

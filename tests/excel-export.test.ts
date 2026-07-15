@@ -30,6 +30,9 @@ describe("Excel exports", () => {
         competitorCount: 45,
         averageCompetitorPriceCents: 2599,
         suggestedPriceCents: 2499,
+        matchVerdict: "MATCH",
+        matchConfidence: 92,
+        matchReason: "Strong product identity evidence.",
         status: "OK",
       },
     ]);
@@ -37,7 +40,7 @@ describe("Excel exports", () => {
     const sheet = workbook.getWorksheet("Listings")!;
     expect(sheet.getCell("C2").value).toBe(24.99);
     expect(sheet.getCell("F2").value).toBe(0.27);
-    expect(sheet.getCell("L2").value).toEqual({
+    expect(sheet.getCell("O2").value).toEqual({
       text: "Open on eBay",
       hyperlink: "https://www.ebay.com/itm/123456789",
     });
@@ -57,14 +60,17 @@ describe("Excel exports", () => {
         competitorCount: 45,
         averageCompetitorPriceCents: 2599,
         suggestedPriceCents: 2499,
+        matchVerdict: "MATCH",
+        matchConfidence: 92,
+        matchReason: "Strong product identity evidence.",
         ebayUrl: "https://www.ebay.com/itm/123",
         amazonUrl: "https://www.amazon.com/dp/B0TEST",
       },
     ]);
     const workbook = await load(file.base64);
     const sheet = workbook.getWorksheet("Arbitrage Finder")!;
-    expect(sheet.getCell("J2").value).toBe(24.99);
-    expect(sheet.getCell("L2").value).toEqual({
+    expect(sheet.getCell("M2").value).toBe(24.99);
+    expect(sheet.getCell("O2").value).toEqual({
       text: "Open on Amazon",
       hyperlink: "https://www.amazon.com/dp/B0TEST",
     });

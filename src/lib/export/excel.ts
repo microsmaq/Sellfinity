@@ -43,6 +43,9 @@ export type ListingsExcelRow = {
   competitorCount: number | null;
   averageCompetitorPriceCents: number | null;
   suggestedPriceCents: number | null;
+  matchVerdict: string | null;
+  matchConfidence: number | null;
+  matchReason: string | null;
   status: string;
 };
 
@@ -55,7 +58,8 @@ export async function createListingsWorkbook(
   sheet.addRow([
     "Product", "eBay item ID", "eBay price", "Amazon cost", "Profit / unit",
     "Margin", "Est. sales / 30d", "Competition", "Avg. comp price",
-    "Suggested price", "Status", "eBay link", "Amazon link",
+    "Suggested price", "Match", "Match confidence", "Match reason",
+    "Status", "eBay link", "Amazon link",
   ]);
   for (const item of rows) {
     const row = sheet.addRow([
@@ -71,17 +75,21 @@ export async function createListingsWorkbook(
         ? null
         : item.averageCompetitorPriceCents / 100,
       item.suggestedPriceCents === null ? null : item.suggestedPriceCents / 100,
+      item.matchVerdict,
+      item.matchConfidence === null ? null : item.matchConfidence / 100,
+      item.matchReason,
       item.status,
       "",
       "",
     ]);
-    setLink(row.getCell(12), "Open on eBay", item.ebayUrl);
-    setLink(row.getCell(13), "Open on Amazon", item.amazonUrl);
+    setLink(row.getCell(15), "Open on eBay", item.ebayUrl);
+    setLink(row.getCell(16), "Open on Amazon", item.amazonUrl);
   }
   [3, 4, 5, 9, 10].forEach((column) => (sheet.getColumn(column).numFmt = '"$"#,##0.00'));
   sheet.getColumn(6).numFmt = "0%";
+  sheet.getColumn(12).numFmt = "0%";
   sheet.getColumn(2).numFmt = "@";
-  styleSheet(sheet, [46, 18, 14, 14, 14, 11, 16, 13, 16, 16, 15, 18, 18]);
+  styleSheet(sheet, [46, 18, 14, 14, 14, 11, 16, 13, 16, 16, 14, 18, 48, 15, 18, 18]);
   const buffer = await workbook.xlsx.writeBuffer();
   return {
     filename: `sellfinity-listings-${new Date().toISOString().slice(0, 10)}.xlsx`,
@@ -94,12 +102,15 @@ export type ArbitrageExcelRow = {
   category: string;
   ebayPriceCents: number;
   amazonPriceCents: number;
-  profitCents: number;
-  marginPct: number;
+  profitCents: number | null;
+  marginPct: number | null;
   estimatedSales30d: number;
   competitorCount: number | null;
   averageCompetitorPriceCents: number | null;
-  suggestedPriceCents: number;
+  suggestedPriceCents: number | null;
+  matchVerdict: string;
+  matchConfidence: number;
+  matchReason: string | null;
   ebayUrl: string;
   amazonUrl: string;
 };
@@ -111,33 +122,38 @@ export async function createArbitrageWorkbook(
   workbook.creator = "Sellfinity";
   const sheet = workbook.addWorksheet("Arbitrage Finder");
   sheet.addRow([
-    "Product", "Category", "eBay price", "Amazon cost", "Profit / unit",
-    "Margin", "Est. sales / 30d", "Competition", "Avg. comp price",
+    "Product", "Category", "Match", "Match confidence", "Match reason",
+    "eBay price", "Amazon candidate cost", "Profit / unit", "Margin",
+    "Est. sales / 30d", "Competition", "Avg. comp price",
     "Suggested price", "eBay link", "Amazon link",
   ]);
   for (const item of rows) {
     const row = sheet.addRow([
       item.title,
       item.category,
+      item.matchVerdict,
+      item.matchConfidence / 100,
+      item.matchReason,
       item.ebayPriceCents / 100,
       item.amazonPriceCents / 100,
-      item.profitCents / 100,
-      item.marginPct / 100,
+      item.profitCents === null ? null : item.profitCents / 100,
+      item.marginPct === null ? null : item.marginPct / 100,
       item.estimatedSales30d,
       item.competitorCount,
       item.averageCompetitorPriceCents === null
         ? null
         : item.averageCompetitorPriceCents / 100,
-      item.suggestedPriceCents / 100,
+      item.suggestedPriceCents === null ? null : item.suggestedPriceCents / 100,
       "",
       "",
     ]);
-    setLink(row.getCell(11), "Open on eBay", item.ebayUrl);
-    setLink(row.getCell(12), "Open on Amazon", item.amazonUrl);
+    setLink(row.getCell(14), "Open on eBay", item.ebayUrl);
+    setLink(row.getCell(15), "Open on Amazon", item.amazonUrl);
   }
-  [3, 4, 5, 9, 10].forEach((column) => (sheet.getColumn(column).numFmt = '"$"#,##0.00'));
-  sheet.getColumn(6).numFmt = "0%";
-  styleSheet(sheet, [46, 20, 14, 14, 14, 11, 16, 13, 16, 16, 18, 18]);
+  [6, 7, 8, 12, 13].forEach((column) => (sheet.getColumn(column).numFmt = '"$"#,##0.00'));
+  sheet.getColumn(4).numFmt = "0%";
+  sheet.getColumn(9).numFmt = "0%";
+  styleSheet(sheet, [46, 20, 13, 18, 48, 14, 18, 14, 11, 16, 13, 16, 16, 18, 18]);
   const buffer = await workbook.xlsx.writeBuffer();
   return {
     filename: `sellfinity-arbitrage-${new Date().toISOString().slice(0, 10)}.xlsx`,

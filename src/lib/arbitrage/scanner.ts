@@ -27,7 +27,7 @@ export type ArbitrageOpportunity = {
   };
   /** Selling at the eBay price, buying at the Amazon price, net of eBay fees. */
   margin: MarginEstimate;
-  /** Product-identity evidence. Real scans only persist approved matches. */
+  /** Product-identity evidence. Plausible but unresolved pairs use REVIEW. */
   match?: ProductMatchAssessment;
 };
 

@@ -108,6 +108,10 @@ export function ArbitrageTable({ initial }: { initial: ArbitragePage }) {
     return r.mirrored || mirroredNow.has(r.asin);
   }
 
+  function isVerifiedMatch(r: OpportunityRow) {
+    return r.matchVerdict === "MATCH" || r.matchVerdict === "LIKELY";
+  }
+
   const SCAN_TARGET = 50;
 
   async function waitForScanRetry(delayMs: number): Promise<boolean> {
@@ -189,10 +193,10 @@ export function ArbitrageTable({ initial }: { initial: ArbitragePage }) {
       const stopped = stopScanRequested.current;
       setNotice({
         text: stopped
-          ? `Scan stopped: ${added} exact-variant item${added === 1 ? "" : "s"} added and ${examined} candidates examined. The queue was saved and will resume next time.`
+          ? `Scan stopped: ${added} product candidate${added === 1 ? "" : "s"} added and ${examined} candidates examined. The queue was saved and will resume next time.`
           : exhausted
-          ? `Scan complete: ${added} exact-variant item${added === 1 ? "" : "s"} added (${examined} candidates examined) — today's sources are fully scanned.`
-          : `Scan complete: ${added} exact-variant item${added === 1 ? "" : "s"} added (${examined} candidates examined)${errors ? ` after recovering from ${errors} temporary provider failure${errors === 1 ? "" : "s"}` : ""}.`,
+          ? `Scan complete: ${added} product candidate${added === 1 ? "" : "s"} added (${examined} candidates examined) — today's sources are fully scanned.`
+          : `Scan complete: ${added} product candidate${added === 1 ? "" : "s"} added (${examined} candidates examined)${errors ? ` after recovering from ${errors} temporary provider failure${errors === 1 ? "" : "s"}` : ""}.`,
         error: errors > 0 && !stopped && added < SCAN_TARGET,
       });
     });
@@ -275,7 +279,7 @@ export function ArbitrageTable({ initial }: { initial: ArbitragePage }) {
       setData(await fetchArbitragePage(params));
       setSelected(new Set());
       setNotice({
-        text: `Match verification complete: ${approved} approved, ${removed} unsafe or uncertain pair${removed === 1 ? "" : "s"} removed${aiChecked ? `, ${aiChecked} checked by AI` : " using strict identity rules (add OPENROUTER_API_KEY to enable AI review)"}.`,
+        text: `Match verification complete: ${approved} approved, ${removed} pair${removed === 1 ? "" : "s"} flagged for review or excluded${aiChecked ? `, ${aiChecked} checked by AI` : " using identity rules"}.`,
         error: false,
       });
     });
@@ -306,7 +310,7 @@ export function ArbitrageTable({ initial }: { initial: ArbitragePage }) {
         errors += result.errors;
         remaining = result.remaining;
         setNotice({
-          text: `Verifying historical matches… ${processed} processed, ${remaining} remaining (${approved} approved, ${removed} removed${errors ? `, ${errors} temporarily failed` : ""})`,
+          text: `Verifying historical matches… ${processed} processed, ${remaining} remaining (${approved} approved, ${removed} flagged${errors ? `, ${errors} temporarily failed` : ""})`,
           error: errors > 0,
         });
         if (result.processed === 0) break;
@@ -316,7 +320,7 @@ export function ArbitrageTable({ initial }: { initial: ArbitragePage }) {
       setNotice({
         text:
           !interrupted && remaining === 0
-            ? `Historical verification complete: ${processed} checked, ${approved} approved, ${removed} unsafe or uncertain pairs removed, ${aiChecked} checked by AI${errors ? `, ${errors} provider failures can be retried in five minutes` : ""}.`
+            ? `Historical verification complete: ${processed} checked, ${approved} approved, ${removed} flagged for review or excluded, ${aiChecked} checked by AI${errors ? `, ${errors} provider failures can be retried in five minutes` : ""}.`
             : `Historical verification paused safely: ${processed} checked and ${remaining} remain. Run it again to resume.`,
         error: interrupted || remaining > 0 || errors > 0,
       });
@@ -371,7 +375,7 @@ export function ArbitrageTable({ initial }: { initial: ArbitragePage }) {
 
   function mirrorSelected() {
     const items = data.rows
-      .filter((r) => selected.has(r.asin) && !isMirrored(r))
+      .filter((r) => selected.has(r.asin) && isVerifiedMatch(r) && !isMirrored(r))
       .map((r) => ({ asin: r.asin, ebayPriceCents: r.ebayPriceCents }));
     setNotice(null);
     startTransition(async () => {
@@ -393,7 +397,7 @@ export function ArbitrageTable({ initial }: { initial: ArbitragePage }) {
     });
   }
 
-  const selectable = data.rows.filter((r) => !isMirrored(r));
+  const selectable = data.rows.filter((r) => isVerifiedMatch(r) && !isMirrored(r));
   const allSelected =
     selectable.length > 0 && selectable.every((r) => selected.has(r.asin));
 
@@ -507,6 +511,7 @@ export function ArbitrageTable({ initial }: { initial: ArbitragePage }) {
                 />
               </th>
               <th className="px-4 py-3">Product</th>
+              <SortHeader label="Match confidence" sortKey="matchConfidence" params={params} onSort={onSort} />
               <SortHeader label="eBay price" sortKey="ebayPrice" params={params} onSort={onSort} />
               <SortHeader label="Est. sales/30d" sortKey="sales" params={params} onSort={onSort} />
               <SortHeader label="Competition" sortKey="competition" params={params} onSort={onSort} />
@@ -522,11 +527,9 @@ export function ArbitrageTable({ initial }: { initial: ArbitragePage }) {
           <tbody>
             {data.rows.length === 0 && (
               <tr>
-                <td colSpan={12} className="px-6 py-12 text-center text-sm text-slate-500">
-                  No exact-variant opportunities are currently verified. Historical rows that
-                  fail identity or variant checks are intentionally hidden; use “Verify all
-                  historical” again to resume temporarily interrupted checks, or scan for new
-                  items.
+                <td colSpan={13} className="px-6 py-12 text-center text-sm text-slate-500">
+                  No matching or reviewable opportunities are currently available. Run a scan
+                  to research more candidates.
                 </td>
               </tr>
             )}
@@ -550,7 +553,7 @@ export function ArbitrageTable({ initial }: { initial: ArbitragePage }) {
                         return next;
                       })
                     }
-                    disabled={isMirrored(r)}
+                    disabled={isMirrored(r) || !isVerifiedMatch(r)}
                     aria-label={`Select ${r.title}`}
                   />
                 </td>
@@ -579,21 +582,18 @@ export function ArbitrageTable({ initial }: { initial: ArbitragePage }) {
                       <p className="mt-1 truncate text-xs text-slate-500" title={r.amazonTitle}>
                         Amazon: {r.amazonTitle}
                       </p>
-                      <span title={r.matchReason ?? "This pair has not been checked yet."}>
-                        <Badge
-                          tone={
-                            r.matchVerdict === "MATCH" || r.matchVerdict === "LIKELY"
-                              ? "green"
-                              : "amber"
-                          }
-                        >
-                          {r.matchVerdict === "UNVERIFIED"
-                            ? "Match not checked"
-                            : `${r.matchMethod === "AI" ? "AI " : ""}match ${r.matchConfidence}%`}
-                        </Badge>
-                      </span>
                     </div>
                   </div>
+                </td>
+                <td className="px-4 py-3 text-right">
+                  <span title={r.matchReason ?? "This pair has not been checked yet."}>
+                    <Badge tone={isVerifiedMatch(r) ? "green" : "amber"}>
+                      {r.matchVerdict === "REVIEW" ? "Review" : "Match"} {r.matchConfidence}%
+                    </Badge>
+                  </span>
+                  {r.matchVerdict === "REVIEW" && (
+                    <p className="mt-1 text-xs text-amber-700">Exact variant unverified</p>
+                  )}
                 </td>
                 <td className="px-4 py-3 text-right font-medium tabular-nums">
                   {formatCents(r.ebayPriceCents)}
@@ -608,15 +608,19 @@ export function ArbitrageTable({ initial }: { initial: ArbitragePage }) {
                     : "—"}
                 </td>
                 <td className="px-4 py-3 text-right font-medium tabular-nums text-indigo-700">
-                  {formatCents(r.suggestedListingPriceCents)}
+                  {isVerifiedMatch(r) ? formatCents(r.suggestedListingPriceCents) : "—"}
                 </td>
                 <td className="px-4 py-3 text-right tabular-nums">
-                  {formatCents(r.amazonPriceCents)}
+                  <span title={isVerifiedMatch(r) ? undefined : "Candidate price only; exact child variant is not verified."}>
+                    {isVerifiedMatch(r) ? formatCents(r.amazonPriceCents) : `~${formatCents(r.amazonPriceCents)}`}
+                  </span>
                 </td>
                 <td className="px-4 py-3 text-right font-medium tabular-nums text-emerald-600">
-                  {formatCents(r.profitCents)}
+                  {isVerifiedMatch(r) ? formatCents(r.profitCents) : "—"}
                 </td>
-                <td className="px-4 py-3 text-right tabular-nums">{r.marginPct}%</td>
+                <td className="px-4 py-3 text-right tabular-nums">
+                  {isVerifiedMatch(r) ? `${r.marginPct}%` : "—"}
+                </td>
                 <td className="whitespace-nowrap px-4 py-3 text-right text-xs text-slate-500">
                   {new Date(r.foundAt).toLocaleDateString("en-US", {
                     month: "short",
@@ -626,7 +630,9 @@ export function ArbitrageTable({ initial }: { initial: ArbitragePage }) {
                 </td>
                 <td className="whitespace-nowrap px-4 py-3 text-right">
                   <span className="inline-flex items-center gap-2">
-                  {isMirrored(r) ? (
+                  {!isVerifiedMatch(r) ? (
+                    <Badge tone="amber">Review candidate</Badge>
+                  ) : isMirrored(r) ? (
                     r.storeEbayUrl ? (
                       <a
                         href={r.storeEbayUrl}
@@ -655,7 +661,7 @@ export function ArbitrageTable({ initial }: { initial: ArbitragePage }) {
             ))}
             {data.rows.length === 0 && (
               <tr>
-                <td colSpan={12} className="px-4 py-12 text-center text-slate-500">
+                <td colSpan={13} className="px-4 py-12 text-center text-slate-500">
                   {data.total === 0
                     ? "The research database is empty — run a scan to start filling it."
                     : "No opportunities match these filters."}
