@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseTradingItem } from "@/lib/ebay/real";
+import { inventoryOfferForListing, parseTradingItem } from "@/lib/ebay/real";
 import { isAlreadyEndedEbayError } from "@/lib/ebay/errors";
 import { findAmazonMatch } from "@/lib/mirror/match";
 
@@ -43,6 +43,24 @@ describe("isAlreadyEndedEbayError", () => {
     expect(isAlreadyEndedEbayError("The listing is not active")).toBe(true);
     expect(isAlreadyEndedEbayError("The auction has already been closed.")).toBe(true);
     expect(isAlreadyEndedEbayError("Authentication token is invalid")).toBe(false);
+  });
+});
+
+describe("inventoryOfferForListing", () => {
+  const offers = [
+    { offerId: "wrong-offer", listing: { listingId: "318531475699" } },
+    { offerId: "right-offer", listing: { listingId: "198132359011" } },
+    { offerId: "draft-offer" },
+  ];
+
+  it("selects the offer published as the requested eBay listing", () => {
+    expect(inventoryOfferForListing(offers, "198132359011")?.offerId).toBe(
+      "right-offer",
+    );
+  });
+
+  it("does not adopt another listing's offer for the same SKU", () => {
+    expect(inventoryOfferForListing(offers, "999999999999")).toBeNull();
   });
 });
 

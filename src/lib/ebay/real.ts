@@ -54,6 +54,21 @@ export function parseTradingItem(block: string): RemoteListing | null {
   };
 }
 
+type InventoryOfferSummary = {
+  offerId?: string;
+  listing?: { listingId?: string };
+};
+
+/** Select only the Inventory offer actually published as this eBay listing.
+ * A listing's locally assigned Amazon product/SKU can change after source
+ * repair, so taking the first offer for that SKU can target another listing. */
+export function inventoryOfferForListing(
+  offers: InventoryOfferSummary[] | undefined,
+  ebayListingId: string,
+): InventoryOfferSummary | null {
+  return offers?.find((offer) => offer.listing?.listingId === ebayListingId) ?? null;
+}
+
 export class RealEbayClient implements EbayClient {
   private policiesPromise?: Promise<{
     fulfillmentPolicyId: string;
@@ -336,9 +351,9 @@ export class RealEbayClient implements EbayClient {
       include: { product: { select: { sku: true } } },
     });
     if (!listing) return null;
-    let res: { offers?: { offerId: string }[] };
+    let res: { offers?: InventoryOfferSummary[] };
     try {
-      res = await this.request<{ offers?: { offerId: string }[] }>(
+      res = await this.request<{ offers?: InventoryOfferSummary[] }>(
         "GET",
         `/sell/inventory/v1/offer?sku=${encodeURIComponent(listing.product.sku)}&marketplace_id=${MARKETPLACE}`,
       );
@@ -349,7 +364,7 @@ export class RealEbayClient implements EbayClient {
       if (e instanceof EbayApiError && /\(404\)|25713/.test(e.message)) return null;
       throw e;
     }
-    const offerId = res.offers?.[0]?.offerId;
+    const offerId = inventoryOfferForListing(res.offers, ebayListingId)?.offerId;
     if (!offerId) return null;
     return { offerId, sku: listing.product.sku };
   }
