@@ -125,7 +125,9 @@ export async function listArbitragePage(
 ): Promise<ArbitragePage> {
   const where: Prisma.ArbitrageItemWhereInput = {
     hiddenBy: { none: { userId } },
-    matchVerdict: { in: ["MATCH", "LIKELY", "UNVERIFIED"] },
+    // Never expose profitability based on a source whose exact child variant
+    // and live price have not yet been verified.
+    matchVerdict: { in: ["MATCH", "LIKELY"] },
     ...(params.category !== "all" && { category: params.category }),
     ...(params.minMarginPct > 0 && { marginPct: { gte: params.minMarginPct } }),
     ...(params.query.trim() && {

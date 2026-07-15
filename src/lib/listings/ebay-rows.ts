@@ -10,6 +10,7 @@ import { suggestedListingPriceCents } from "./cleanup";
 export type LocalListingFacts = {
   ebayListingId: string | null;
   status: string;
+  sourceMatchVerdict: string;
   imageUrlsJson: string;
   product: {
     sku: string;
@@ -61,6 +62,20 @@ export function buildEbayRows(
         priceCents: r.priceCents,
         url: r.url,
         imageUrl: r.imageUrl,
+        quantity: r.quantity,
+        market: marketMetrics.get(r.ebayListingId) ?? null,
+        suggestedPriceCents: null,
+        match: null,
+      });
+      continue;
+    }
+    if (!["MATCH", "LIKELY"].includes(localListing.sourceMatchVerdict)) {
+      rows.push({
+        ebayListingId: r.ebayListingId,
+        title: r.title,
+        priceCents: r.priceCents,
+        url: r.url,
+        imageUrl: r.imageUrl ?? firstImage(localListing.imageUrlsJson),
         quantity: r.quantity,
         market: marketMetrics.get(r.ebayListingId) ?? null,
         suggestedPriceCents: null,

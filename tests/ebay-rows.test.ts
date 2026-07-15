@@ -20,6 +20,7 @@ function local(
   return {
     ebayListingId: id,
     status: overrides.status ?? "ACTIVE",
+    sourceMatchVerdict: "MATCH",
     imageUrlsJson: "[]",
     product: {
       sku: `SKU-${id}`,
@@ -44,6 +45,14 @@ describe("buildEbayRows", () => {
   it("marks untracked listings as unmatched", () => {
     const rows = buildEbayRows([remote("9")], []);
     expect(rows[0].match).toBeNull();
+  });
+
+  it("does not show stale profitability before exact-variant verification", () => {
+    const tracked = local("9");
+    tracked.sourceMatchVerdict = "UNVERIFIED";
+    const row = buildEbayRows([remote("9")], [tracked])[0];
+    expect(row.match).toBeNull();
+    expect(row.suggestedPriceCents).toBeNull();
   });
 
   it("deduplicates listings repeated across eBay pagination boundaries", () => {
