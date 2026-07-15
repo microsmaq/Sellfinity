@@ -29,6 +29,21 @@ function xmlField(block: string, tag: string): string | null {
   return block.match(new RegExp(`<${tag}[^>]*>([^<]*)</${tag}>`))?.[1] ?? null;
 }
 
+function decodeTradingXml(value: string): string {
+  return value
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'");
+}
+
+/** Recover the immutable Inventory SKU that eBay attached to a listing. */
+export function inventorySkuFromTradingItem(xml: string): string | null {
+  const sku = xmlField(xml, "SKU");
+  return sku ? decodeTradingXml(sku) : null;
+}
+
 /** Parse one GetMyeBaySelling <Item> block into a RemoteListing. Exported
  * for tests. */
 export function parseTradingItem(block: string): RemoteListing | null {
@@ -41,12 +56,7 @@ export function parseTradingItem(block: string): RemoteListing | null {
   return {
     ebayListingId,
     // Trading XML escapes entities; unescape the common ones.
-    title: title
-      .replace(/&amp;/g, "&")
-      .replace(/&lt;/g, "<")
-      .replace(/&gt;/g, ">")
-      .replace(/&quot;/g, '"')
-      .replace(/&apos;/g, "'"),
+    title: decodeTradingXml(title),
     priceCents: Math.round(parseFloat(price) * 100),
     url: xmlField(block, "ViewItemURL") ?? `https://www.ebay.com/itm/${ebayListingId}`,
     imageUrl: xmlField(block, "GalleryURL"),
@@ -351,22 +361,36 @@ export class RealEbayClient implements EbayClient {
       include: { product: { select: { sku: true } } },
     });
     if (!listing) return null;
-    let res: { offers?: InventoryOfferSummary[] };
-    try {
-      res = await this.request<{ offers?: InventoryOfferSummary[] }>(
-        "GET",
-        `/sell/inventory/v1/offer?sku=${encodeURIComponent(listing.product.sku)}&marketplace_id=${MARKETPLACE}`,
-      );
-    } catch (e) {
-      // 404 / 25713 "This Offer is not available": the listing wasn't created
-      // through the Inventory API (e.g. imported via bulk match) — signal the
-      // caller to use the Trading API instead.
-      if (e instanceof EbayApiError && /\(404\)|25713/.test(e.message)) return null;
-      throw e;
-    }
-    const offerId = inventoryOfferForListing(res.offers, ebayListingId)?.offerId;
-    if (!offerId) return null;
-    return { offerId, sku: listing.product.sku };
+    const findOffer = async (sku: string) => {
+      let res: { offers?: InventoryOfferSummary[] };
+      try {
+        res = await this.request<{ offers?: InventoryOfferSummary[] }>(
+          "GET",
+          `/sell/inventory/v1/offer?sku=${encodeURIComponent(sku)}&marketplace_id=${MARKETPLACE}`,
+        );
+      } catch (e) {
+        if (e instanceof EbayApiError && /\(404\)|25713/.test(e.message)) return null;
+        throw e;
+      }
+      const offerId = inventoryOfferForListing(res.offers, ebayListingId)?.offerId;
+      return offerId ? { offerId, sku } : null;
+    };
+
+    // Fast path for listings whose local source product/SKU never changed.
+    const currentSkuOffer = await findOffer(listing.product.sku);
+    if (currentSkuOffer) return currentSkuOffer;
+
+    // Source repair can reassign listing.product to a different Amazon ASIN,
+    // but eBay's Inventory SKU is immutable. GetItem is still allowed to read
+    // an Inventory-managed listing and returns that original SKU; use it to
+    // resolve the correct offer instead of attempting a Trading API revision.
+    const itemXml = await this.tradingRequest(
+      "GetItem",
+      `<ItemID>${ebayListingId}</ItemID><DetailLevel>ReturnAll</DetailLevel>`,
+    );
+    const originalSku = inventorySkuFromTradingItem(itemXml);
+    if (!originalSku || originalSku === listing.product.sku) return null;
+    return findOffer(originalSku);
   }
 
   /** Trading API call (XML) — used for the seller's full listing inventory

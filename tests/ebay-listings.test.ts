@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { inventoryOfferForListing, parseTradingItem } from "@/lib/ebay/real";
+import {
+  inventoryOfferForListing,
+  inventorySkuFromTradingItem,
+  parseTradingItem,
+} from "@/lib/ebay/real";
 import { isAlreadyEndedEbayError } from "@/lib/ebay/errors";
 import { findAmazonMatch } from "@/lib/mirror/match";
 
@@ -61,6 +65,20 @@ describe("inventoryOfferForListing", () => {
 
   it("does not adopt another listing's offer for the same SKU", () => {
     expect(inventoryOfferForListing(offers, "999999999999")).toBeNull();
+  });
+});
+
+describe("inventorySkuFromTradingItem", () => {
+  it("recovers the original Inventory SKU returned by GetItem", () => {
+    expect(
+      inventorySkuFromTradingItem(
+        "<GetItemResponse><Item><ItemID>123</ItemID><SKU>ORIGINAL&amp;SKU</SKU></Item></GetItemResponse>",
+      ),
+    ).toBe("ORIGINAL&SKU");
+  });
+
+  it("returns null when the listing has no Inventory SKU", () => {
+    expect(inventorySkuFromTradingItem("<Item><ItemID>123</ItemID></Item>")).toBeNull();
   });
 });
 
