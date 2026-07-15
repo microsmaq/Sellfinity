@@ -13,7 +13,6 @@ import {
   unmatchEbayListing,
 } from "@/lib/actions/ebay-listings";
 import {
-  classifyListing,
   suggestedListingPriceCents,
 } from "@/lib/listings/cleanup";
 import { formatCents, parseDollarsToCents } from "@/lib/money";
@@ -260,37 +259,36 @@ export function EbayListingsTable({
   }
 
   function cleanUp() {
-    // Preview using the same classifier the server applies (shipping cost is
-    // 0 for Amazon-sourced items, which all matched imports are).
-    const matched = rows.filter((r) => r.match);
-    const preview = matched.map((r) => ({
-      row: r,
-      decision: classifyListing(r.priceCents, r.match!.amazonPriceCents, 0),
-    }));
-    const toReprice = preview.filter((p) => p.decision.action === "reprice");
-    const toEnd = preview.filter((p) => p.decision.action === "end");
-    if (toReprice.length === 0 && toEnd.length === 0) {
-      setNotice({ text: "Nothing to clean up — every matched listing already meets the 30% margin / $7 profit target.", error: false });
+    const toReprice = rows.filter(
+      (row) =>
+        row.match &&
+        row.suggestedPriceCents !== null &&
+        row.suggestedPriceCents !== row.priceCents,
+    );
+    if (toReprice.length === 0) {
+      setNotice({ text: "Nothing to clean up — every matched listing is already at its profitable suggested price.", error: false });
       return;
     }
     if (
       !confirm(
-        `Clean up will RAISE prices on ${toReprice.length} listing${toReprice.length === 1 ? "" : "s"} to reach 30% margin or $7 profit (incl. fees + 3% ad rate), and END ${toEnd.length} listing${toEnd.length === 1 ? "" : "s"} with worse than -30% margin.\n\nThis revises your live eBay listings. Continue?`,
+        `Clean up will adjust ${toReprice.length} live eBay price${toReprice.length === 1 ? "" : "s"} to the suggested price. Prices may move up or down, but the server will not allow a price below the 30% margin / $7 profit floor (including estimated fees and a 3% ad rate).\n\nNo listings will be ended. Continue?`,
       )
     ) {
       return;
     }
-    const ids = [...toReprice, ...toEnd].map((p) => p.row.ebayListingId);
+    const items = toReprice.map((row) => ({
+      ebayListingId: row.ebayListingId,
+      suggestedPriceCents: row.suggestedPriceCents!,
+    }));
     setNotice(null);
     startTransition(async () => {
-      let repriced = 0, ended = 0, errors = 0;
-      for (let i = 0; i < ids.length; i += 10) {
-        const results = await cleanupEbayListings(ids.slice(i, i + 10));
+      let repriced = 0, errors = 0;
+      for (let i = 0; i < items.length; i += 10) {
+        const results = await cleanupEbayListings(items.slice(i, i + 10));
         setRows((prev) =>
           prev.flatMap((row) => {
             const r = results.find((x) => x.ebayListingId === row.ebayListingId);
             if (!r) return [row];
-            if (r.action === "ended") return [];
             if (r.action === "repriced" && row.match) {
               return [{
                 ...row,
@@ -303,15 +301,14 @@ export function EbayListingsTable({
         );
         for (const r of results) {
           if (r.action === "repriced") repriced++;
-          else if (r.action === "ended") ended++;
           else if (r.action === "error") errors++;
         }
-        setBulkProgress(`Cleaning up… ${Math.min(i + 10, ids.length)}/${ids.length} (${repriced} repriced, ${ended} ended)`);
+        setBulkProgress(`Cleaning up… ${Math.min(i + 10, items.length)}/${items.length} (${repriced} adjusted)`);
       }
       setBulkProgress(null);
       setNotice({
-        text: `Clean-up complete: ${repriced} repriced, ${ended} ended${errors ? `, ${errors} failed` : ""}.`,
-        error: false,
+        text: `Clean-up complete: ${repriced} adjusted to profitable suggested prices${errors ? `, ${errors} failed` : ""}.`,
+        error: errors > 0,
       });
     });
   }
@@ -429,7 +426,7 @@ export function EbayListingsTable({
         <span>{rows.length} active on eBay</span>
         {problems > 0 && <Badge tone="red">{problems} need attention</Badge>}
         <Button size="sm" variant="secondary" disabled={pending} onClick={cleanUp}>
-          {bulkProgress?.startsWith("Cleaning") ? bulkProgress : "Clean up prices"}
+          {bulkProgress?.startsWith("Cleaning") ? bulkProgress : "Apply suggested prices"}
         </Button>
         <Button size="sm" variant="secondary" disabled={pending} onClick={cleanUpSources}>
           {bulkProgress?.startsWith("Verifying sources")

@@ -18,7 +18,7 @@ import {
   type TrackInput,
   type TrackResult,
 } from "@/lib/mirror/track";
-import { classifyListing } from "@/lib/listings/cleanup";
+import { targetPriceCents } from "@/lib/listings/cleanup";
 import { estimateMargin } from "@/lib/fees";
 import { assessProductMatch, isApprovedProductMatch } from "@/lib/arbitrage/product-match";
 import { findAmazonMatches } from "@/lib/mirror/match";
@@ -197,18 +197,20 @@ export type CleanupItemResult = {
 const CLEANUP_BATCH_SIZE = 10;
 
 /**
- * Clean up a batch of tracked listings: raise prices to the 30%-margin /
- * $7-profit target (whichever is cheaper), end listings whose margin is
- * beyond -30%. The client loops batches with progress.
+ * Apply suggested prices to a batch of tracked listings. The server clamps
+ * every requested price to the profitability floor, so stale or manipulated
+ * client data can never push a live listing below the 30%-margin / $7-profit
+ * target. This workflow never ends a listing.
  */
 export async function cleanupEbayListings(
-  ebayListingIds: string[],
+  items: Array<{ ebayListingId: string; suggestedPriceCents: number }>,
 ): Promise<CleanupItemResult[]> {
   const user = await requireUser();
   const client = await getEbayClientForUser(user.id);
   const results: CleanupItemResult[] = [];
 
-  for (const ebayListingId of ebayListingIds.slice(0, CLEANUP_BATCH_SIZE)) {
+  for (const item of items.slice(0, CLEANUP_BATCH_SIZE)) {
+    const { ebayListingId } = item;
     const listing = await db.listing.findFirst({
       where: { userId: user.id, ebayListingId, status: "ACTIVE" },
       include: { product: true },
@@ -217,39 +219,35 @@ export async function cleanupEbayListings(
       results.push({ ebayListingId, action: "error", error: "Not tracked/active" });
       continue;
     }
-    const decision = classifyListing(
-      listing.priceCents,
+    const profitableFloor = targetPriceCents(
       listing.product.costCents,
       listing.product.shippingCostCents,
     );
+    const requestedPrice = Number.isSafeInteger(item.suggestedPriceCents)
+      ? item.suggestedPriceCents
+      : profitableFloor;
+    const newPriceCents = Math.max(profitableFloor, requestedPrice);
     try {
-      if (decision.action === "reprice") {
+      if (newPriceCents !== listing.priceCents) {
         await client.updateListing(ebayListingId, {
-          priceCents: decision.newPriceCents,
+          priceCents: newPriceCents,
         });
         await db.listing.update({
           where: { id: listing.id },
-          data: { priceCents: decision.newPriceCents },
+          data: { priceCents: newPriceCents },
         });
         const margin = estimateMargin(
-          decision.newPriceCents,
+          newPriceCents,
           listing.product.costCents,
           listing.product.shippingCostCents,
         );
         results.push({
           ebayListingId,
           action: "repriced",
-          newPriceCents: decision.newPriceCents,
+          newPriceCents,
           profitCents: margin.estimatedProfitCents,
           marginPct: Math.round(margin.marginPct),
         });
-      } else if (decision.action === "end") {
-        await client.endListing(ebayListingId);
-        await db.listing.update({
-          where: { id: listing.id },
-          data: { status: "ENDED", endedAt: new Date() },
-        });
-        results.push({ ebayListingId, action: "ended" });
       } else {
         results.push({ ebayListingId, action: "ok" });
       }
