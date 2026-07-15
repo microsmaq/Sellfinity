@@ -6,6 +6,7 @@ import { estimateMargin } from "@/lib/fees";
 import { LISTING_QUANTITY_CAP } from "@/lib/listings/generate";
 import { serializeImageUrls } from "@/lib/types";
 import { findAmazonMatch } from "./match";
+import { resolveExactAmazonVariant } from "./variant";
 
 export type TrackInput = {
   ebayListingId: string;
@@ -45,33 +46,42 @@ export async function matchAndTrackListing(
   });
   if (existing) return fail("Already tracked.");
 
-  const match = await findAmazonMatch(input.title);
-  if (!match) return fail("No confident Amazon match.");
+  const seed = await findAmazonMatch(input.title);
+  if (!seed) return fail("No confident Amazon match.");
+  const match = await resolveExactAmazonVariant(
+    { title: input.title, imageUrl: input.imageUrl },
+    seed,
+  );
+  if (!match) return fail("No exact, live-priced Amazon variant could be verified.");
 
   const images = input.imageUrl ? [input.imageUrl] : [];
   await db.$transaction(async (tx) => {
-    const product =
-      (await tx.product.findUnique({
-        where: { userId_sku: { userId, sku: match.asin } },
-      })) ??
-      (await tx.product.create({
-        data: {
-          userId,
-          sku: match.asin,
-          title: match.title,
-          description: match.title,
-          imageUrlsJson: serializeImageUrls(images),
-          category: "Imported",
-          supplierName: "Amazon",
-          supplierProductId: match.asin,
-          supplierUrl: match.url,
-          costCents: match.priceCents,
-          supplierStock: 50,
-          shippingCostCents: 0,
-          suggestedPriceCents: input.priceCents,
-          sourceScore: 0,
-        },
-      }));
+    const product = await tx.product.upsert({
+      where: { userId_sku: { userId, sku: match.asin } },
+      create: {
+        userId,
+        sku: match.asin,
+        title: match.title,
+        description: match.title,
+        imageUrlsJson: serializeImageUrls(images),
+        category: "Imported",
+        supplierName: "Amazon",
+        supplierProductId: match.asin,
+        supplierUrl: match.url,
+        costCents: match.priceCents,
+        supplierStock: 50,
+        shippingCostCents: 0,
+        suggestedPriceCents: input.priceCents,
+        sourceScore: 0,
+      },
+      update: {
+        title: match.title,
+        supplierProductId: match.asin,
+        supplierUrl: match.url,
+        costCents: match.priceCents,
+        supplierStock: 50,
+      },
+    });
     await tx.listing.create({
       data: {
         userId,

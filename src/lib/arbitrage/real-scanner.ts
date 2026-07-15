@@ -8,6 +8,7 @@ import { db } from "@/lib/db";
 import { estimateMargin } from "@/lib/fees";
 import { appAccessToken, ebayEnvConfig } from "@/lib/ebay/oauth";
 import { findAmazonMatch } from "@/lib/mirror/match";
+import { resolveExactAmazonVariant } from "@/lib/mirror/variant";
 import { persistOpportunities } from "./store";
 import type { ArbitrageOpportunity } from "./scanner";
 import type { ScanReport } from "./scan-types";
@@ -164,16 +165,23 @@ async function browseSearch(
 async function amazonMatch(
   candidate: EbayCandidate,
 ): Promise<ArbitrageOpportunity | null> {
-  const match = await findAmazonMatch(candidate.title);
+  const seed = await findAmazonMatch(candidate.title);
+  if (!seed) return null;
+  const match = await resolveExactAmazonVariant(
+    { title: candidate.title, imageUrl: candidate.imageUrl },
+    seed,
+  );
   if (!match) return null;
   // Break-even and better both qualify: the Amazon source just can't cost
   // more than the eBay comp — the seller adds their margin at publish time.
   if (match.priceCents > candidate.priceCents) return null;
 
-  const assessment = await assessProductMatch(
-    { title: candidate.title, imageUrl: candidate.imageUrl },
-    { title: match.title, imageUrl: match.imageUrl },
-  );
+  const assessment =
+    match.variantAssessment ??
+    (await assessProductMatch(
+      { title: candidate.title, imageUrl: candidate.imageUrl },
+      { title: match.title, imageUrl: match.imageUrl },
+    ));
   if (!isApprovedProductMatch(assessment)) return null;
 
   const margin = estimateMargin(candidate.priceCents, match.priceCents, 0);

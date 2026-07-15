@@ -55,6 +55,8 @@ type ListingSortKey =
   | "averagePrice"
   | "suggestedPrice";
 
+const PRICE_CLEANUP_BATCH_SIZE = 4;
+
 function ListingSortHeader({
   label,
   value,
@@ -255,45 +257,51 @@ export function EbayListingsTable({
         text: `Source cleanup complete: ${totals.kept} correct, ${totals.replaced} replaced, ${totals.ended} ended, ${totals.review} need review.`,
         error: totals.review > 0,
       });
+      window.location.reload();
     });
   }
 
   function cleanUp() {
-    const toReprice = rows.filter(
-      (row) =>
-        row.match &&
-        row.suggestedPriceCents !== null &&
-        row.suggestedPriceCents !== row.priceCents,
-    );
+    const toReprice = rows.filter((row) => row.match);
     if (toReprice.length === 0) {
       setNotice({ text: "Nothing to clean up — every matched listing is already at its profitable suggested price.", error: false });
       return;
     }
     if (
       !confirm(
-        `Clean up will adjust ${toReprice.length} live eBay price${toReprice.length === 1 ? "" : "s"} to the suggested price. Prices may move up or down, but the server will not allow a price below the 30% margin / $7 profit floor (including estimated fees and a 3% ad rate).\n\nNo listings will be ended. Continue?`,
+        `Sellfinity will verify the exact Amazon child variant and its live price for ${toReprice.length} listing${toReprice.length === 1 ? "" : "s"}, then adjust each live eBay price when needed. Ambiguous variants will be skipped. Every applied price must clear the 30% margin / $7 profit floor (including estimated fees and a 3% ad rate).\n\nNo listings will be ended. Continue?`,
       )
     ) {
       return;
     }
     const items = toReprice.map((row) => ({
       ebayListingId: row.ebayListingId,
-      suggestedPriceCents: row.suggestedPriceCents!,
+      averageCompetitorPriceCents: row.market?.averageCompetitorPriceCents,
     }));
     setNotice(null);
     startTransition(async () => {
       let repriced = 0, errors = 0;
-      for (let i = 0; i < items.length; i += 10) {
-        const results = await cleanupEbayListings(items.slice(i, i + 10));
+      for (let i = 0; i < items.length; i += PRICE_CLEANUP_BATCH_SIZE) {
+        const results = await cleanupEbayListings(
+          items.slice(i, i + PRICE_CLEANUP_BATCH_SIZE),
+        );
         setRows((prev) =>
           prev.flatMap((row) => {
             const r = results.find((x) => x.ebayListingId === row.ebayListingId);
             if (!r) return [row];
-            if (r.action === "repriced" && row.match) {
+            if ((r.action === "repriced" || r.action === "ok") && row.match) {
               return [{
                 ...row,
-                priceCents: r.newPriceCents!,
-                match: { ...row.match, profitCents: r.profitCents!, marginPct: r.marginPct! },
+                priceCents: r.newPriceCents ?? row.priceCents,
+                suggestedPriceCents: r.suggestedPriceCents ?? row.suggestedPriceCents,
+                match: {
+                  ...row.match,
+                  sku: r.sku ?? row.match.sku,
+                  amazonPriceCents: r.amazonPriceCents ?? row.match.amazonPriceCents,
+                  amazonUrl: r.amazonUrl ?? row.match.amazonUrl,
+                  profitCents: r.profitCents ?? row.match.profitCents,
+                  marginPct: r.marginPct ?? row.match.marginPct,
+                },
               }];
             }
             return [row];
@@ -303,7 +311,7 @@ export function EbayListingsTable({
           if (r.action === "repriced") repriced++;
           else if (r.action === "error") errors++;
         }
-        setBulkProgress(`Cleaning up… ${Math.min(i + 10, items.length)}/${items.length} (${repriced} adjusted)`);
+        setBulkProgress(`Cleaning up… ${Math.min(i + PRICE_CLEANUP_BATCH_SIZE, items.length)}/${items.length} (${repriced} adjusted)`);
       }
       setBulkProgress(null);
       setNotice({
@@ -431,7 +439,7 @@ export function EbayListingsTable({
         <Button size="sm" variant="secondary" disabled={pending} onClick={cleanUpSources}>
           {bulkProgress?.startsWith("Verifying sources")
             ? bulkProgress
-            : "Verify Amazon sources"}
+            : "Verify exact Amazon variants"}
         </Button>
         <Button size="sm" variant="secondary" disabled={pending} onClick={researchMarket}>
           {bulkProgress?.startsWith("Researching") ? bulkProgress : "Research market data"}

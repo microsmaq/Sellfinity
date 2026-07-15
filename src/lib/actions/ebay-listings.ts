@@ -18,10 +18,11 @@ import {
   type TrackInput,
   type TrackResult,
 } from "@/lib/mirror/track";
-import { targetPriceCents } from "@/lib/listings/cleanup";
+import { suggestedListingPriceCents } from "@/lib/listings/cleanup";
 import { estimateMargin } from "@/lib/fees";
 import { assessProductMatch, isApprovedProductMatch } from "@/lib/arbitrage/product-match";
 import { findAmazonMatches } from "@/lib/mirror/match";
+import { resolveExactAmazonVariant } from "@/lib/mirror/variant";
 import { serializeImageUrls } from "@/lib/types";
 
 export type EbayListingResult = { error?: string };
@@ -188,13 +189,17 @@ export type CleanupItemResult = {
   ebayListingId: string;
   action: "ok" | "repriced" | "ended" | "error";
   newPriceCents?: number;
+  suggestedPriceCents?: number;
+  amazonPriceCents?: number;
+  amazonUrl?: string;
+  sku?: string;
   profitCents?: number;
   marginPct?: number;
   error?: string;
 };
 
 /** How many listings one clean-up batch call processes. */
-const CLEANUP_BATCH_SIZE = 10;
+const CLEANUP_BATCH_SIZE = 4;
 
 /**
  * Apply suggested prices to a batch of tracked listings. The server clamps
@@ -203,7 +208,10 @@ const CLEANUP_BATCH_SIZE = 10;
  * target. This workflow never ends a listing.
  */
 export async function cleanupEbayListings(
-  items: Array<{ ebayListingId: string; suggestedPriceCents: number }>,
+  items: Array<{
+    ebayListingId: string;
+    averageCompetitorPriceCents?: number | null;
+  }>,
 ): Promise<CleanupItemResult[]> {
   const user = await requireUser();
   const client = await getEbayClientForUser(user.id);
@@ -219,15 +227,62 @@ export async function cleanupEbayListings(
       results.push({ ebayListingId, action: "error", error: "Not tracked/active" });
       continue;
     }
-    const profitableFloor = targetPriceCents(
-      listing.product.costCents,
-      listing.product.shippingCostCents,
-    );
-    const requestedPrice = Number.isSafeInteger(item.suggestedPriceCents)
-      ? item.suggestedPriceCents
-      : profitableFloor;
-    const newPriceCents = Math.max(profitableFloor, requestedPrice);
     try {
+      const exact = await resolveExactAmazonVariant(
+        { title: listing.title, imageUrl: firstImage(listing.imageUrlsJson) },
+        {
+          asin: listing.product.supplierProductId,
+          title: listing.product.title,
+          priceCents: listing.product.costCents,
+          url: listing.product.supplierUrl,
+          imageUrl: firstImage(listing.product.imageUrlsJson) ?? undefined,
+        },
+      );
+      if (!exact) {
+        results.push({
+          ebayListingId,
+          action: "error",
+          error: "Exact Amazon variant and live price could not be verified.",
+        });
+        continue;
+      }
+      const product = await db.product.upsert({
+        where: { userId_sku: { userId: user.id, sku: exact.asin } },
+        create: {
+          userId: user.id,
+          sku: exact.asin,
+          title: exact.title,
+          description: exact.title,
+          imageUrlsJson: serializeImageUrls(exact.imageUrl ? [exact.imageUrl] : []),
+          category: listing.product.category,
+          supplierName: "Amazon",
+          supplierProductId: exact.asin,
+          supplierUrl: exact.url,
+          costCents: exact.priceCents,
+          supplierStock: 50,
+          shippingCostCents: listing.product.shippingCostCents,
+          suggestedPriceCents: listing.product.suggestedPriceCents,
+          sourceScore: listing.product.sourceScore,
+        },
+        update: {
+          title: exact.title,
+          supplierProductId: exact.asin,
+          supplierUrl: exact.url,
+          costCents: exact.priceCents,
+          supplierStock: 50,
+        },
+      });
+      if (product.id !== listing.productId) {
+        await db.listing.update({
+          where: { id: listing.id },
+          data: { productId: product.id },
+        });
+      }
+      const newPriceCents = suggestedListingPriceCents(
+        exact.priceCents,
+        product.shippingCostCents,
+        item.averageCompetitorPriceCents,
+      );
       if (newPriceCents !== listing.priceCents) {
         await client.updateListing(ebayListingId, {
           priceCents: newPriceCents,
@@ -238,24 +293,40 @@ export async function cleanupEbayListings(
         });
         const margin = estimateMargin(
           newPriceCents,
-          listing.product.costCents,
-          listing.product.shippingCostCents,
+          exact.priceCents,
+          product.shippingCostCents,
         );
         results.push({
           ebayListingId,
           action: "repriced",
           newPriceCents,
+          suggestedPriceCents: newPriceCents,
+          amazonPriceCents: exact.priceCents,
+          amazonUrl: exact.url,
+          sku: exact.asin,
           profitCents: margin.estimatedProfitCents,
           marginPct: Math.round(margin.marginPct),
         });
       } else {
-        results.push({ ebayListingId, action: "ok" });
+        results.push({
+          ebayListingId,
+          action: "ok",
+          suggestedPriceCents: newPriceCents,
+          amazonPriceCents: exact.priceCents,
+          amazonUrl: exact.url,
+          sku: exact.asin,
+        });
       }
     } catch (e) {
       results.push({
         ebayListingId,
         action: "error",
-        error: e instanceof EbayApiError ? e.message.slice(0, 150) : "failed",
+        error:
+          e instanceof EbayApiError
+            ? e.message.slice(0, 150)
+            : e instanceof Error
+              ? e.message.slice(0, 150)
+              : "failed",
       });
     }
   }
@@ -338,22 +409,63 @@ export async function cleanupListingSourcesBatch(): Promise<SourceCleanupBatchRe
   for (const listing of listings) {
     const ebayListingId = listing.ebayListingId!;
     try {
+      const ebayIdentity = {
+        title: listing.title,
+        imageUrl: firstImage(listing.imageUrlsJson),
+      };
       const current = await assessProductMatch(
-        { title: listing.title, imageUrl: firstImage(listing.imageUrlsJson) },
+        ebayIdentity,
         { title: listing.product.title, imageUrl: firstImage(listing.product.imageUrlsJson) },
       );
-      if (isApprovedProductMatch(current)) {
+      const exactCurrent = await resolveExactAmazonVariant(ebayIdentity, {
+        asin: listing.product.supplierProductId,
+        title: listing.product.title,
+        priceCents: listing.product.costCents,
+        url: listing.product.supplierUrl,
+        imageUrl: firstImage(listing.product.imageUrlsJson) ?? undefined,
+      });
+      if (exactCurrent) {
+        const assessment = exactCurrent.variantAssessment ?? current;
+        const product = await db.product.upsert({
+          where: { userId_sku: { userId: user.id, sku: exactCurrent.asin } },
+          create: {
+            userId: user.id,
+            sku: exactCurrent.asin,
+            title: exactCurrent.title,
+            description: exactCurrent.title,
+            imageUrlsJson: serializeImageUrls(exactCurrent.imageUrl ? [exactCurrent.imageUrl] : []),
+            category: listing.product.category,
+            supplierName: "Amazon",
+            supplierProductId: exactCurrent.asin,
+            supplierUrl: exactCurrent.url,
+            costCents: exactCurrent.priceCents,
+            supplierStock: 50,
+            shippingCostCents: listing.product.shippingCostCents,
+            suggestedPriceCents: listing.priceCents,
+            sourceScore: assessment.confidence,
+          },
+          update: {
+            title: exactCurrent.title,
+            supplierProductId: exactCurrent.asin,
+            supplierUrl: exactCurrent.url,
+            costCents: exactCurrent.priceCents,
+            supplierStock: 50,
+            sourceScore: assessment.confidence,
+          },
+        });
         await db.listing.update({
           where: { id: listing.id },
           data: {
-            sourceMatchVerdict: current.verdict,
-            sourceMatchConfidence: current.confidence,
-            sourceMatchReason: current.reason,
-            sourceMatchMethod: current.method,
+            productId: product.id,
+            sourceMatchVerdict: assessment.verdict,
+            sourceMatchConfidence: assessment.confidence,
+            sourceMatchReason: `Exact Amazon variant: ${assessment.reason}`,
+            sourceMatchMethod: assessment.method,
             sourceMatchCheckedAt: new Date(),
           },
         });
-        counts.kept++;
+        if (exactCurrent.asin === listing.product.supplierProductId) counts.kept++;
+        else counts.replaced++;
         continue;
       }
 
@@ -361,16 +473,23 @@ export async function cleanupListingSourcesBatch(): Promise<SourceCleanupBatchRe
       const assessedCandidates = await Promise.all(
         candidates
           .filter((candidate) => candidate.asin !== listing.product.sku)
-          .map(async (candidate) => ({
-            candidate,
-            assessment: await assessProductMatch(
-              { title: listing.title, imageUrl: firstImage(listing.imageUrlsJson) },
-              { title: candidate.title, imageUrl: candidate.imageUrl },
-            ),
-          })),
+          .map(async (candidate) => {
+            const exact = await resolveExactAmazonVariant(ebayIdentity, candidate);
+            return exact
+              ? {
+                  candidate: exact,
+                  assessment:
+                    exact.variantAssessment ??
+                    (await assessProductMatch(ebayIdentity, {
+                      title: exact.title,
+                      imageUrl: exact.imageUrl,
+                    })),
+                }
+              : null;
+          }),
       );
-      const replacement = assessedCandidates.find(({ assessment }) =>
-        isApprovedProductMatch(assessment),
+      const replacement = assessedCandidates.find(
+        (value) => value !== null && isApprovedProductMatch(value.assessment),
       );
 
       if (replacement) {

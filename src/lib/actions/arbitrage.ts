@@ -16,6 +16,8 @@ import { db } from "@/lib/db";
 import type { ListingMarketMetrics } from "@/lib/listings/market-metrics";
 import { createArbitrageWorkbook } from "@/lib/export/excel";
 import { assessProductMatch } from "@/lib/arbitrage/product-match";
+import { resolveExactAmazonVariant } from "@/lib/mirror/variant";
+import { estimateMargin } from "@/lib/fees";
 
 /** One page of the research database (filters/sort/pagination server-side). */
 export async function fetchArbitragePage(
@@ -95,6 +97,10 @@ type MatchVerificationRow = {
   ebayTitle: string;
   imageUrl: string;
   amazonTitle: string;
+  asin: string;
+  amazonPriceCents: number;
+  amazonUrl: string;
+  ebayPriceCents: number;
 };
 
 async function assessAndPersistMatches(
@@ -102,27 +108,58 @@ async function assessAndPersistMatches(
 ): Promise<MatchVerificationResult[]> {
   if (rows.length === 0) return [];
   const assessed = await Promise.all(
-    rows.map(async (row) => ({
-      row,
-      assessment: await assessProductMatch(
+    rows.map(async (row) => {
+      const exact = await resolveExactAmazonVariant(
         { title: row.ebayTitle, imageUrl: row.imageUrl },
-        { title: row.amazonTitle },
-      ),
-    })),
+        {
+          asin: row.asin,
+          title: row.amazonTitle,
+          priceCents: row.amazonPriceCents,
+          url: row.amazonUrl,
+        },
+      );
+      const assessment = exact
+        ? exact.variantAssessment ??
+          (await assessProductMatch(
+            { title: row.ebayTitle, imageUrl: row.imageUrl },
+            { title: exact.title, imageUrl: exact.imageUrl },
+          ))
+        : {
+            verdict: "REJECTED" as const,
+            confidence: 99,
+            reason: "The exact Amazon child variant and its live price could not be proven.",
+            method: "RULES" as const,
+          };
+      return { row, exact, assessment };
+    }),
   );
   await db.$transaction(
-    assessed.map(({ row, assessment }) =>
-      db.arbitrageItem.update({
+    assessed.map(({ row, exact, assessment }) => {
+      const margin = exact
+        ? estimateMargin(row.ebayPriceCents, exact.priceCents, 0)
+        : null;
+      return db.arbitrageItem.update({
         where: { ebayItemId: row.ebayItemId },
         data: {
+          ...(exact && margin
+            ? {
+                asin: exact.asin,
+                amazonTitle: exact.title,
+                amazonPriceCents: exact.priceCents,
+                amazonUrl: exact.url,
+                profitCents: margin.estimatedProfitCents,
+                marginPct: Math.round(margin.marginPct),
+                feeCents: margin.estimatedFeeCents,
+              }
+            : {}),
           matchVerdict: assessment.verdict,
           matchConfidence: assessment.confidence,
           matchReason: assessment.reason,
           matchMethod: assessment.method,
           matchCheckedAt: new Date(),
         },
-      }),
-    ),
+      });
+    }),
   );
   return assessed.map(({ row, assessment }) => ({
     ebayItemId: row.ebayItemId,
@@ -144,6 +181,10 @@ export async function verifyArbitrageMatches(
       ebayTitle: true,
       imageUrl: true,
       amazonTitle: true,
+      asin: true,
+      amazonPriceCents: true,
+      amazonUrl: true,
+      ebayPriceCents: true,
     },
   });
   const results = await assessAndPersistMatches(rows);
@@ -175,6 +216,10 @@ export async function verifyHistoricalArbitrageMatches(
       ebayTitle: true,
       imageUrl: true,
       amazonTitle: true,
+      asin: true,
+      amazonPriceCents: true,
+      amazonUrl: true,
+      ebayPriceCents: true,
     },
   });
   const results = await assessAndPersistMatches(rows);
