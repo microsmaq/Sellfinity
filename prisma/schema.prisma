@@ -52,6 +52,10 @@ model MirrorBatch {
   totalCount     Int
   succeededCount Int       @default(0)
   failedCount    Int       @default(0)
+  // PENDING | SENDING | SENT | FAILED
+  emailStatus    String    @default("PENDING")
+  emailSentAt    DateTime?
+  emailError     String?
   createdAt      DateTime  @default(now())
   startedAt      DateTime?
   completedAt    DateTime?

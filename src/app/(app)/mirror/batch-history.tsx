@@ -20,6 +20,7 @@ export function BatchHistory({ batches }: { batches: MirrorBatchHistoryRow[] }) 
             <th className="px-4 py-3 text-right">Published</th>
             <th className="px-4 py-3 text-right">Success</th>
             <th className="px-4 py-3">Status</th>
+            <th className="px-4 py-3">Email</th>
             <th className="px-4 py-3" />
           </tr>
         </thead>
@@ -47,6 +48,23 @@ export function BatchHistory({ batches }: { batches: MirrorBatchHistoryRow[] }) 
                     {batch.status.toLowerCase()}
                   </Badge>
                 </td>
+                <td className="px-4 py-3">
+                  <Badge
+                    tone={
+                      batch.emailStatus === "SENT"
+                        ? "green"
+                        : batch.emailStatus === "FAILED"
+                          ? "red"
+                          : "slate"
+                    }
+                  >
+                    {batch.emailStatus === "SENT"
+                      ? "sent"
+                      : batch.emailStatus === "FAILED"
+                        ? "not sent"
+                        : "pending"}
+                  </Badge>
+                </td>
                 <td className="px-4 py-3 text-right">
                   <Link href={`/mirror/batches/${batch.id}`} className="font-medium text-indigo-600 hover:underline">
                     View results →
@@ -57,7 +75,7 @@ export function BatchHistory({ batches }: { batches: MirrorBatchHistoryRow[] }) 
           })}
           {batches.length === 0 && (
             <tr>
-              <td colSpan={7} className="px-5 py-10 text-center text-slate-500">
+              <td colSpan={8} className="px-5 py-10 text-center text-slate-500">
                 No publishing batches yet.
               </td>
             </tr>

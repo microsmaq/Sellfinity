@@ -1,0 +1,4 @@
+ALTER TABLE "MirrorBatch"
+ADD COLUMN "emailStatus" TEXT NOT NULL DEFAULT 'PENDING',
+ADD COLUMN "emailSentAt" TIMESTAMP(3),
+ADD COLUMN "emailError" TEXT;

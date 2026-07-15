@@ -33,6 +33,11 @@ For AI-assisted Arbitrage Finder product-identity verification, also set
 `google/gemini-2.5-flash-lite`. Strict model, variant, quantity, and size
 checks remain active when no AI key is configured.
 
+For one transactional summary email after every publishing batch, verify the
+`sellfinity.app` domain in Resend and set `RESEND_API_KEY`, `EMAIL_FROM` (for
+example `Sellfinity <updates@sellfinity.app>`), and
+`APP_URL=https://www.sellfinity.app` in Vercel.
+
 ## 3. Domain (~10 min + DNS propagation)
 
 1. Vercel project → Settings → Domains → add `sellfinity.app` (and

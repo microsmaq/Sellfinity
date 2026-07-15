@@ -8,6 +8,7 @@ import {
   discardFailedMirrorDraft,
   publishListingForUser,
 } from "@/lib/listings/publish";
+import { sendBatchCompletionEmail } from "@/lib/email/batch-completion";
 
 const MAX_BATCH_ITEMS = 50;
 const STALE_PROCESSING_MS = 3 * 60 * 1000;
@@ -34,6 +35,9 @@ export type MirrorBatchView = {
   createdAt: string;
   startedAt: string | null;
   completedAt: string | null;
+  emailStatus: string;
+  emailSentAt: string | null;
+  emailError: string | null;
   items: MirrorBatchItemView[];
 };
 
@@ -49,6 +53,9 @@ function toView(batch: {
   createdAt: Date;
   startedAt: Date | null;
   completedAt: Date | null;
+  emailStatus: string;
+  emailSentAt: Date | null;
+  emailError: string | null;
   items: Array<{
     id: string;
     position: number;
@@ -66,6 +73,7 @@ function toView(batch: {
     createdAt: batch.createdAt.toISOString(),
     startedAt: batch.startedAt?.toISOString() ?? null,
     completedAt: batch.completedAt?.toISOString() ?? null,
+    emailSentAt: batch.emailSentAt?.toISOString() ?? null,
     items: batch.items,
   };
 }
@@ -167,7 +175,46 @@ export async function listMirrorBatchHistory(
     createdAt: batch.createdAt.toISOString(),
     startedAt: batch.startedAt?.toISOString() ?? null,
     completedAt: batch.completedAt?.toISOString() ?? null,
+    emailStatus: batch.emailStatus,
+    emailSentAt: batch.emailSentAt?.toISOString() ?? null,
+    emailError: batch.emailError,
   }));
+}
+
+async function sendCompletionNotification(batchId: string): Promise<void> {
+  const claimed = await db.mirrorBatch.updateMany({
+    where: { id: batchId, status: "COMPLETED", emailStatus: "PENDING" },
+    data: { emailStatus: "SENDING", emailError: null },
+  });
+  if (claimed.count === 0) return;
+
+  const batch = await db.mirrorBatch.findUnique({
+    where: { id: batchId },
+    include: { user: { select: { email: true, name: true } } },
+  });
+  if (!batch) return;
+
+  const activeListingCount = await db.listing.count({
+    where: { userId: batch.userId, status: "ACTIVE" },
+  });
+  const result = await sendBatchCompletionEmail(batch.user.email, {
+    name: batch.user.name,
+    batchId: batch.id,
+    source: batch.source,
+    succeededCount: batch.succeededCount,
+    failedCount: batch.failedCount,
+    totalCount: batch.totalCount,
+    activeListingCount,
+    completedAt: batch.completedAt ?? new Date(),
+    appUrl: process.env.APP_URL ?? "https://www.sellfinity.app",
+  });
+
+  await db.mirrorBatch.update({
+    where: { id: batchId },
+    data: result.ok
+      ? { emailStatus: "SENT", emailSentAt: new Date(), emailError: null }
+      : { emailStatus: "FAILED", emailError: result.error.slice(0, 500) },
+  });
 }
 
 async function completeItem(
@@ -205,6 +252,7 @@ async function completeItem(
       where: { id: batchId },
       data: { status: "COMPLETED", completedAt: new Date() },
     });
+    await sendCompletionNotification(batchId);
   }
 }
 
@@ -219,7 +267,10 @@ export async function processNextMirrorBatchItem(
     select: { id: true, status: true },
   });
   if (!batch) return null;
-  if (batch.status === "COMPLETED") return loadBatch(user.id, batchId);
+  if (batch.status === "COMPLETED") {
+    await sendCompletionNotification(batchId);
+    return loadBatch(user.id, batchId);
+  }
 
   const staleBefore = new Date(Date.now() - STALE_PROCESSING_MS);
   const staleItems = await db.mirrorBatchItem.findMany({

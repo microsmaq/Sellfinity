@@ -118,13 +118,22 @@ export function BatchProgress({ initial }: { initial: MirrorBatchView }) {
           </p>
         )}
         {batch.status === "COMPLETED" && (
-          <div className="mt-4 flex gap-4 text-sm">
-            <Link href="/listings" className="font-medium text-indigo-600 hover:underline">
-              View active listings →
-            </Link>
-            <Link href="/mirror" className="font-medium text-indigo-600 hover:underline">
-              Start another batch →
-            </Link>
+          <div className="mt-4 space-y-3">
+            <p className={`text-sm ${batch.emailStatus === "SENT" ? "text-emerald-700" : batch.emailStatus === "FAILED" ? "text-amber-700" : "text-slate-600"}`}>
+              {batch.emailStatus === "SENT"
+                ? "A publishing summary was emailed to you."
+                : batch.emailStatus === "FAILED"
+                  ? "The batch completed, but the email summary could not be sent. The result is saved in batch history."
+                  : "Preparing your email summary…"}
+            </p>
+            <div className="flex gap-4 text-sm">
+              <Link href="/listings" className="font-medium text-indigo-600 hover:underline">
+                View active listings →
+              </Link>
+              <Link href="/mirror" className="font-medium text-indigo-600 hover:underline">
+                Start another batch →
+              </Link>
+            </div>
           </div>
         )}
       </Card>
