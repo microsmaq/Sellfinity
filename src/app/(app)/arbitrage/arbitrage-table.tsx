@@ -11,7 +11,6 @@ import {
   scanForNew,
   setArbitrageAutoPublish,
   verifyArbitrageMatches,
-  verifyHistoricalArbitrageMatches,
 } from "@/lib/actions/arbitrage";
 import {
   createArbitrageMirrorBatch,
@@ -86,7 +85,6 @@ export function ArbitrageTable({
   const [scanning, startScan] = useTransition();
   const [researching, startResearch] = useTransition();
   const [verifying, startVerify] = useTransition();
-  const [verifyingHistory, startVerifyHistory] = useTransition();
   const [savingAutoPublish, startAutoPublishSave] = useTransition();
   const [autoPublishEnabled, setAutoPublishEnabled] = useState(initialAutoPublish);
   const [scanTarget, setScanTarget] = useState(50);
@@ -357,48 +355,6 @@ export function ArbitrageTable({
     });
   }
 
-  function verifyAllHistoricalMatches() {
-    setNotice(null);
-    startVerifyHistory(async () => {
-      let processed = 0;
-      let approved = 0;
-      let removed = 0;
-      let aiChecked = 0;
-      let errors = 0;
-      let remaining = 1;
-      let interrupted = false;
-      for (let batch = 0; remaining > 0 && batch < 1000; batch++) {
-        let result: Awaited<ReturnType<typeof verifyHistoricalArbitrageMatches>>;
-        try {
-          result = await verifyHistoricalArbitrageMatches(4);
-        } catch {
-          interrupted = true;
-          break;
-        }
-        processed += result.processed;
-        approved += result.approved;
-        removed += result.removed;
-        aiChecked += result.aiChecked;
-        errors += result.errors;
-        remaining = result.remaining;
-        setNotice({
-          text: `Verifying historical matches… ${processed} processed, ${remaining} remaining (${approved} approved, ${removed} flagged${errors ? `, ${errors} temporarily failed` : ""})`,
-          error: errors > 0,
-        });
-        if (result.processed === 0) break;
-      }
-      setData(await fetchArbitragePage(params));
-      setSelected(new Set());
-      setNotice({
-        text:
-          !interrupted && remaining === 0
-            ? `Historical verification complete: ${processed} checked, ${approved} approved, ${removed} flagged for review or excluded, ${aiChecked} checked by AI${errors ? `, ${errors} provider failures can be retried in five minutes` : ""}.`
-            : `Historical verification paused safely: ${processed} checked and ${remaining} remain. Run it again to resume.`,
-        error: interrupted || remaining > 0 || errors > 0,
-      });
-    });
-  }
-
   function exportExcel() {
     startTransition(async () => {
       const file = await exportArbitrageExcel(params);
@@ -552,13 +508,6 @@ export function ArbitrageTable({
           </Button>
           <Button variant="secondary" disabled={verifying} onClick={verifyPageMatches}>
             {verifying ? "Verifying matches…" : "Verify product matches"}
-          </Button>
-          <Button
-            variant="secondary"
-            disabled={verifyingHistory}
-            onClick={verifyAllHistoricalMatches}
-          >
-            {verifyingHistory ? "Verifying history…" : "Verify all historical"}
           </Button>
           <Button variant="secondary" disabled={pending} onClick={exportExcel}>
             Export Excel
