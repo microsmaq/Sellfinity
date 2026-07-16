@@ -20,7 +20,11 @@ import {
 } from "@/lib/mirror/track";
 import { aiSuggestedListingPriceCents } from "@/lib/listings/cleanup";
 import { estimateMargin } from "@/lib/fees";
-import { assessProductMatch, isApprovedProductMatch } from "@/lib/arbitrage/product-match";
+import {
+  assessProductMatch,
+  assessProductMatchRules,
+  isApprovedProductMatch,
+} from "@/lib/arbitrage/product-match";
 import { findAmazonMatches } from "@/lib/mirror/match";
 import { resolveExactAmazonVariant } from "@/lib/mirror/variant";
 import { serializeImageUrls } from "@/lib/types";
@@ -252,6 +256,7 @@ export async function cleanupEbayListings(
           url: listing.product.supplierUrl,
           imageUrl: firstImage(listing.product.imageUrlsJson) ?? undefined,
         },
+        { workflow: "apply_suggested_price" },
       );
       if (!exact) {
         results.push({
@@ -367,14 +372,25 @@ export async function startListingHealthSync(): Promise<{
   queued: number;
   activeQueued: number;
   recoveryQueued: number;
+  freshSkipped: number;
 }> {
   const user = await requireUser();
+  const activeCutoff = new Date(Date.now() - 4 * 60 * 60 * 1000);
+  const recoveryCutoff = new Date(Date.now() - 24 * 60 * 60 * 1000);
+  const eligibleActive = {
+    userId: user.id,
+    status: "ACTIVE" as const,
+    ebayListingId: { not: null },
+    sourceMatchVerdict: { not: "PROCESSING" },
+  };
+  const activeTotal = await db.listing.count({ where: eligibleActive });
   const active = await db.listing.updateMany({
     where: {
-      userId: user.id,
-      status: "ACTIVE",
-      ebayListingId: { not: null },
-      sourceMatchVerdict: { not: "PROCESSING" },
+      ...eligibleActive,
+      OR: [
+        { sourceMatchCheckedAt: null },
+        { sourceMatchCheckedAt: { lt: activeCutoff } },
+      ],
     },
     data: {
       sourceMatchVerdict: "UNVERIFIED",
@@ -386,6 +402,10 @@ export async function startListingHealthSync(): Promise<{
       userId: user.id,
       status: "ENDED",
       endedReason: "SOURCE_UNAVAILABLE",
+      OR: [
+        { sourceMatchCheckedAt: null },
+        { sourceMatchCheckedAt: { lt: recoveryCutoff } },
+      ],
     },
     data: {
       sourceMatchVerdict: "UNVERIFIED",
@@ -397,6 +417,7 @@ export async function startListingHealthSync(): Promise<{
     queued: active.count + recovery.count,
     activeQueued: active.count,
     recoveryQueued: recovery.count,
+    freshSkipped: Math.max(0, activeTotal - active.count),
   };
 }
 
@@ -545,7 +566,7 @@ export async function cleanupListingSourcesBatch(): Promise<SourceCleanupBatchRe
         priceCents: listing.product.costCents,
         url: listing.product.supplierUrl,
         imageUrl: firstImage(listing.product.imageUrlsJson) ?? undefined,
-      });
+      }, { workflow: "listing_health_sync" });
       const exactCurrentAssessment = exactCurrent?.variantAssessment ?? current;
       if (exactCurrent && isApprovedProductMatch(exactCurrentAssessment)) {
         const assessment = exactCurrentAssessment;
@@ -610,28 +631,39 @@ export async function cleanupListingSourcesBatch(): Promise<SourceCleanupBatchRe
         continue;
       }
 
-      const candidates = await findAmazonMatches(listing.title, 5, { throwOnError: true });
-      const assessedCandidates = await Promise.all(
-        candidates
-          .filter((candidate) => candidate.asin !== listing.product.sku)
-          .map(async (candidate) => {
-            const exact = await resolveExactAmazonVariant(ebayIdentity, candidate);
-            return exact
-              ? {
-                  candidate: exact,
-                  assessment:
-                    exact.variantAssessment ??
-                    (await assessProductMatch(ebayIdentity, {
-                      title: exact.title,
-                      imageUrl: exact.imageUrl,
-                    })),
-                }
-              : null;
-          }),
-      );
-      const replacement = assessedCandidates.find(
-        (value) => value !== null && isApprovedProductMatch(value.assessment),
-      );
+      const candidates = await findAmazonMatches(listing.title, 5, {
+        throwOnError: true,
+        workflow: "listing_source_repair_search",
+      });
+      let replacement: {
+        candidate: NonNullable<Awaited<ReturnType<typeof resolveExactAmazonVariant>>>;
+        assessment: Awaited<ReturnType<typeof assessProductMatch>>;
+      } | null = null;
+      // Never buy five variant lookups simultaneously. Rule-reject for free,
+      // then validate the best two sequentially and stop on the first success.
+      const repairCandidates = candidates
+        .filter((candidate) => candidate.asin !== listing.product.sku)
+        .filter(
+          (candidate) =>
+            assessProductMatchRules(listing.title, candidate.title).verdict !== "REJECTED",
+        )
+        .slice(0, 2);
+      for (const candidate of repairCandidates) {
+        const exact = await resolveExactAmazonVariant(ebayIdentity, candidate, {
+          workflow: "listing_source_repair_variant",
+        });
+        if (!exact) continue;
+        const assessment =
+          exact.variantAssessment ??
+          (await assessProductMatch(ebayIdentity, {
+            title: exact.title,
+            imageUrl: exact.imageUrl,
+          }));
+        if (isApprovedProductMatch(assessment)) {
+          replacement = { candidate: exact, assessment };
+          break;
+        }
+      }
 
       if (replacement) {
         const { candidate, assessment } = replacement;

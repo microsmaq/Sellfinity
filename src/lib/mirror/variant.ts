@@ -123,16 +123,23 @@ export function selectExactAmazonVariant(
 export async function resolveExactAmazonVariant(
   ebay: { title: string; imageUrl?: string | null },
   seed: AmazonMatch,
+  options: { workflow?: string; forceFresh?: boolean } = {},
 ): Promise<(AmazonMatch & { variantAssessment?: ProductMatchAssessment }) | null> {
   if (!process.env.RAINFOREST_API_KEY) return seed;
   const data = await rainforestRequest<{
     request_info?: { success?: boolean };
     product?: VariantProduct;
-  }>({
-    type: "product",
-    asin: seed.asin,
-    variant_prices: "true",
-  });
+  }>(
+    {
+      type: "product",
+      asin: seed.asin,
+      variant_prices: "true",
+    },
+    {
+      workflow: options.workflow ?? "variant_verification",
+      forceFresh: options.forceFresh,
+    },
+  );
   if (data.request_info?.success === false) {
     throw new Error("Amazon variant lookup returned an incomplete response.");
   }
@@ -164,10 +171,16 @@ export async function resolveExactAmazonVariant(
     const child = await rainforestRequest<{
       request_info?: { success?: boolean };
       product?: VariantProduct;
-    }>({
-      type: "product",
-      asin,
-    });
+    }>(
+      {
+        type: "product",
+        asin,
+      },
+      {
+        workflow: options.workflow ?? "variant_child_price",
+        forceFresh: options.forceFresh,
+      },
+    );
     if (child.request_info?.success === false) {
       throw new Error("Amazon child-variant lookup returned an incomplete response.");
     }

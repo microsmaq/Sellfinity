@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { findAmazonMatches } from "@/lib/mirror/match";
+import {
+  findAmazonCatalogProducts,
+  findAmazonMatches,
+} from "@/lib/mirror/match";
 import { resolveExactAmazonVariant } from "@/lib/mirror/variant";
 
 const originalKey = process.env.RAINFOREST_API_KEY;
@@ -11,6 +14,51 @@ afterEach(() => {
 });
 
 describe("Amazon replacement-source search safety", () => {
+  it("turns one source-first search page into multiple unique Amazon products", async () => {
+    process.env.RAINFOREST_API_KEY = "test";
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          request_info: { success: true },
+          search_results: [
+            { asin: "B000000001", title: "Coffee Grinder", price: { value: 19.99 } },
+            { asin: "B000000002", title: "Coffee Scale", price: { value: 14.5 } },
+            { asin: "B000000001", title: "Duplicate", price: { value: 19.99 } },
+            { asin: "B000000003", title: "Unavailable" },
+          ],
+        }),
+        { status: 200 },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const products = await findAmazonCatalogProducts("coffee accessories", 2);
+    expect(products.map((product) => product.asin)).toEqual([
+      "B000000001",
+      "B000000002",
+    ]);
+    expect(products[0].priceCents).toBe(1999);
+    expect(String(fetchMock.mock.calls[0][0])).toContain("page=2");
+  });
+
+  it("coalesces concurrent identical searches into one provider request", async () => {
+    process.env.RAINFOREST_API_KEY = "test";
+    const fetchMock = vi.fn(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      return new Response(
+        JSON.stringify({ request_info: { success: true }, search_results: [] }),
+        { status: 200 },
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await Promise.all([
+      findAmazonCatalogProducts("wireless charger", 1),
+      findAmazonCatalogProducts("wireless charger", 1),
+    ]);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it("throws on an incomplete provider response instead of treating it as no match", async () => {
     process.env.RAINFOREST_API_KEY = "test";
     vi.stubGlobal(

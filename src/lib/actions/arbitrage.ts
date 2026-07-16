@@ -137,6 +137,7 @@ async function assessAndPersistMatches(
             priceCents: row.amazonPriceCents,
             url: row.amazonUrl,
           },
+          { workflow: "historical_variant_verification" },
         );
         const identity = await assessProductMatch(
           { title: row.ebayTitle, imageUrl: row.imageUrl },

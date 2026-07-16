@@ -5,6 +5,7 @@
 import { db } from "@/lib/db";
 import { getScraper } from "./index";
 import type { ProductPageScraper } from "./scraper";
+import { extractAsin } from "./scraper";
 
 const AMAZON_SUPPLIER_NAME = "Amazon";
 import { generateMirrorDescription, generateSeoTitle } from "./seo";
@@ -50,6 +51,16 @@ export async function mirrorUrl(
     sourceMarkupPct?: number;
   } = {},
 ): Promise<MirrorOutcome> {
+  const inputAsin = extractAsin(url);
+  if (inputAsin) {
+    const alreadyImported = await db.product.findUnique({
+      where: { userId_sku: { userId, sku: inputAsin } },
+      select: { id: true },
+    });
+    if (alreadyImported) {
+      return { url, ok: false, error: `Already imported (SKU ${inputAsin}).` };
+    }
+  }
   const scraped = await scraper.scrape(url);
   if (!scraped) {
     return {

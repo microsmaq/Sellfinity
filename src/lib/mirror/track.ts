@@ -52,11 +52,14 @@ export async function matchAndTrackListing(
   });
   if (existing) return fail("Already tracked.");
 
-  const seed = await findAmazonMatch(input.title);
+  const seed = await findAmazonMatch(input.title, {
+    workflow: "listing_match_search",
+  });
   if (!seed) return fail("No confident Amazon match.");
   const match = await resolveExactAmazonVariant(
     { title: input.title, imageUrl: input.imageUrl },
     seed,
+    { workflow: "listing_match_variant" },
   );
   if (!match) return fail("No exact, live-priced Amazon variant could be verified.");
   const assessment = match.variantAssessment ?? {

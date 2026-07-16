@@ -7,7 +7,11 @@
 import { db } from "@/lib/db";
 import { estimateMargin } from "@/lib/fees";
 import { appAccessToken, ebayEnvConfig } from "@/lib/ebay/oauth";
-import { findAmazonMatch } from "@/lib/mirror/match";
+import {
+  findAmazonCatalogProducts,
+  findAmazonMatch,
+  type AmazonMatch,
+} from "@/lib/mirror/match";
 import { resolveExactAmazonVariant } from "@/lib/mirror/variant";
 import { persistOpportunities } from "./store";
 import type { ArbitrageOpportunity } from "./scanner";
@@ -65,6 +69,7 @@ type EbayCandidate = {
   url: string;
   imageUrl: string;
   category: string;
+  amazonSeed?: AmazonMatch;
 };
 
 type ScanCursor = {
@@ -72,13 +77,15 @@ type ScanCursor = {
   keywordIdx: number;
   pageOffset: number;
   exhausted: boolean;
+  failures?: Record<string, { attempts: number; retryAfter: number }>;
 };
 
 const EMPTY_CURSOR: ScanCursor = {
   pending: [],
   keywordIdx: 0,
-  pageOffset: 0,
+  pageOffset: 1,
   exhausted: false,
+  failures: {},
 };
 
 /** Cap on the rolling examined-set (each entry saved one repeat credit). */
@@ -106,13 +113,14 @@ async function browseSearch(
   keyword: string,
   category: string,
   offset = 0,
+  limit = BROWSE_PAGE_SIZE,
 ): Promise<EbayCandidate[]> {
   const config = ebayEnvConfig();
   if (!config) return [];
   const token = await appAccessToken(config);
   const params = new URLSearchParams({
     q: keyword,
-    limit: String(BROWSE_PAGE_SIZE),
+    limit: String(limit),
     offset: String(offset),
     filter: `price:[${(MIN_EBAY_PRICE_CENTS / 100).toFixed(0)}..${(MAX_EBAY_PRICE_CENTS / 100).toFixed(0)}],priceCurrency:USD,buyingOptions:{FIXED_PRICE}`,
   });
@@ -160,18 +168,64 @@ async function browseSearch(
   return out;
 }
 
-/** Find the Amazon counterpart of an eBay candidate; null when no confident,
- * sufficiently cheaper match exists. Costs one Rainforest credit. */
+async function ebayCandidatesForAmazonSources(
+  sources: AmazonMatch[],
+  category: string,
+): Promise<EbayCandidate[]> {
+  const candidates: EbayCandidate[] = [];
+  // eBay lookups do not consume Rainforest credits. Four-at-a-time keeps a
+  // source page inside serverless limits without creating a large burst.
+  for (let index = 0; index < sources.length; index += 4) {
+    const group = await Promise.all(
+      sources.slice(index, index + 4).map(async (source) => {
+        const ebayRows = await browseSearch(source.title, category, 0, 10);
+        const ranked = ebayRows
+          .map((candidate) => ({
+            candidate,
+            assessment: assessProductMatchRules(candidate.title, source.title),
+          }))
+          .filter(
+            ({ candidate, assessment }) =>
+              assessment.verdict !== "REJECTED" &&
+              candidate.priceCents >= source.priceCents,
+          )
+          .sort(
+            (left, right) =>
+              right.assessment.confidence - left.assessment.confidence ||
+              right.candidate.priceCents - left.candidate.priceCents,
+          );
+        return ranked[0]
+          ? { ...ranked[0].candidate, amazonSeed: source }
+          : null;
+      }),
+    );
+    for (const candidate of group) {
+      if (candidate) candidates.push(candidate);
+    }
+  }
+  return candidates;
+}
+
+/** Find the Amazon counterpart of an eBay candidate. Search is paid, so all
+ * cheap local rejection gates run before buying exact-variant detail. */
 async function amazonMatch(
   candidate: EbayCandidate,
 ): Promise<ArbitrageOpportunity | null> {
-  const seed = await findAmazonMatch(candidate.title);
+  const seed = candidate.amazonSeed ?? await findAmazonMatch(candidate.title, {
+    throwOnError: true,
+    workflow: "arbitrage_scan_search_fallback",
+  });
   if (!seed) return null;
   const seedAssessment = assessProductMatchRules(candidate.title, seed.title);
   if (seedAssessment.verdict === "REJECTED") return null;
+  // The search response already contains a current price. Avoid a second
+  // paid request for candidates that cannot be profitable even before exact
+  // child-variant verification.
+  if (seed.priceCents > candidate.priceCents) return null;
   const match = await resolveExactAmazonVariant(
     { title: candidate.title, imageUrl: candidate.imageUrl },
     seed,
+    { workflow: "arbitrage_scan_variant" },
   );
   // Preserve plausible candidates for human review when Amazon cannot prove
   // one exact, live-priced child variant. The UI keeps their estimated
@@ -226,8 +280,9 @@ export async function realScanMore(opts: {
 } = {}): Promise<ScanReport> {
   const target = opts.target ?? 50;
   const deadline = Date.now() + (opts.timeBudgetMs ?? 22_000);
-  const cursorKey = `arbitrage:cursor2:${currentDayNumber()}`;
+  const cursorKey = `arbitrage:source-cursor3:${currentDayNumber()}`;
   const cursor = await loadJson<ScanCursor>(cursorKey, EMPTY_CURSOR);
+  cursor.failures ??= {};
   const examinedList = await loadJson<string[]>("arbitrage:examined", []);
   const examined = new Set(examinedList);
 
@@ -247,34 +302,60 @@ export async function realScanMore(opts: {
         cursor.exhausted = true;
         break;
       }
-      // Day-dependent rotation so scanning starts somewhere new each day.
+      // Source-first discovery: one paid Amazon search page yields many
+      // source products, then eBay/local rules narrow them for free.
       const idx =
         (cursor.keywordIdx + currentDayNumber()) % CATEGORY_KEYWORDS.length;
       const { keyword, category } = CATEGORY_KEYWORDS[idx];
       let candidates: EbayCandidate[];
       try {
-        candidates = await browseSearch(keyword, category, cursor.pageOffset);
+        const sources = await findAmazonCatalogProducts(
+          keyword,
+          cursor.pageOffset,
+          "arbitrage_catalog_search",
+        );
+        candidates = await ebayCandidatesForAmazonSources(sources, category);
+        if (sources.length === 0 || cursor.pageOffset >= MAX_PAGES_PER_KEYWORD) {
+          cursor.keywordIdx++;
+          cursor.pageOffset = 1;
+        } else {
+          cursor.pageOffset++;
+        }
       } catch {
         paused = true;
         errors++;
         break;
       }
-      // Advance: next page of this keyword, or the next keyword when the
-      // pages run dry.
-      if (
-        candidates.length < BROWSE_PAGE_SIZE ||
-        cursor.pageOffset + BROWSE_PAGE_SIZE >= BROWSE_PAGE_SIZE * MAX_PAGES_PER_KEYWORD
-      ) {
-        cursor.keywordIdx++;
-        cursor.pageOffset = 0;
-      } else {
-        cursor.pageOffset += BROWSE_PAGE_SIZE;
-      }
-      cursor.pending.push(...candidates.filter((c) => !examined.has(c.itemId)));
+      const blocked = candidates.length > 0
+        ? await db.arbitrageCandidateAttempt.findMany({
+            where: {
+              ebayItemId: { in: candidates.map((candidate) => candidate.itemId) },
+              retryAfter: { gt: new Date() },
+            },
+            select: { ebayItemId: true },
+          })
+        : [];
+      const blockedIds = new Set(blocked.map((attempt) => attempt.ebayItemId));
+      cursor.pending.push(
+        ...candidates.filter(
+          (candidate) =>
+            !examined.has(candidate.itemId) && !blockedIds.has(candidate.itemId),
+        ),
+      );
       continue;
     }
 
-    const batch = cursor.pending.splice(0, LOOKUP_BATCH);
+    const ready = cursor.pending.filter((candidate) => {
+      const failure = cursor.failures?.[candidate.itemId];
+      return !failure || failure.retryAfter <= Date.now();
+    });
+    if (ready.length === 0) {
+      paused = true;
+      break;
+    }
+    const batch = ready.slice(0, LOOKUP_BATCH);
+    const batchIds = new Set(batch.map((candidate) => candidate.itemId));
+    cursor.pending = cursor.pending.filter((candidate) => !batchIds.has(candidate.itemId));
     const outcomes = await Promise.all(
       batch.map(async (candidate) => {
         try {
@@ -289,11 +370,36 @@ export async function realScanMore(opts: {
     // Keep transient failures at the front of the persisted queue. Stop this
     // advance so the client can pause instead of hammering the provider.
     if (failed.length > 0) {
-      cursor.pending.unshift(...failed.map((outcome) => outcome.candidate));
+      for (const outcome of failed) {
+        const previous = cursor.failures?.[outcome.candidate.itemId]?.attempts ?? 0;
+        const attempts = previous + 1;
+        cursor.failures![outcome.candidate.itemId] = {
+          attempts,
+          retryAfter: Date.now() + Math.min(60, 5 * 2 ** previous) * 60_000,
+        };
+        if (attempts < 3) cursor.pending.push(outcome.candidate);
+        else examined.add(outcome.candidate.itemId);
+      }
       errors += failed.length;
       paused = true;
     }
-    for (const outcome of completed) examined.add(outcome.candidate.itemId);
+    for (const outcome of completed) {
+      examined.add(outcome.candidate.itemId);
+      delete cursor.failures![outcome.candidate.itemId];
+      await db.arbitrageCandidateAttempt.upsert({
+        where: { ebayItemId: outcome.candidate.itemId },
+        create: {
+          ebayItemId: outcome.candidate.itemId,
+          outcome: outcome.match ? "MATCH" : "REJECTED",
+          retryAfter: new Date(Date.now() + (outcome.match ? 30 : 14) * 86_400_000),
+        },
+        update: {
+          outcome: outcome.match ? "MATCH" : "REJECTED",
+          retryAfter: new Date(Date.now() + (outcome.match ? 30 : 14) * 86_400_000),
+          checkedAt: new Date(),
+        },
+      });
+    }
     examinedNow += completed.length;
     added += await persistOpportunities(
       completed

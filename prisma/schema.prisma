@@ -333,6 +333,50 @@ model ScanCache {
   updatedAt DateTime @updatedAt
 }
 
+// Shared paid-provider response cache. Amazon catalog identity changes slowly,
+// while live price/availability entries use short expirations in application
+// code. A lease prevents concurrent serverless workers buying the same lookup.
+model RainforestCache {
+  cacheKey     String    @id
+  requestType  String
+  responseJson String?
+  expiresAt    DateTime
+  lockedUntil  DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@index([expiresAt])
+  @@index([requestType, expiresAt])
+}
+
+// Aggregated operational accounting; never stores API keys or response data.
+model RainforestUsageDaily {
+  id               String   @id @default(cuid())
+  day              String
+  workflow         String
+  requestType      String
+  providerRequests Int      @default(0)
+  cacheHits        Int      @default(0)
+  failures         Int      @default(0)
+  budgetBlocks     Int      @default(0)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@unique([day, workflow, requestType])
+  @@index([day])
+}
+
+// Durable negative/positive scan memory. Rejected eBay candidates are not
+// paid for again on every daily cursor rotation.
+model ArbitrageCandidateAttempt {
+  ebayItemId String   @id
+  outcome    String
+  retryAfter DateTime
+  checkedAt  DateTime @default(now())
+
+  @@index([retryAfter])
+}
+
 // A detected mismatch between supplier truth and the live listing.
 model SyncIssue {
   id          String    @id @default(cuid())

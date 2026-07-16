@@ -77,12 +77,60 @@ type RainforestSearchResult = {
   image?: string;
 };
 
+/** Source-first discovery: one paid Amazon search supplies many products;
+ * callers use free marketplace/local filters before buying product detail. */
+export async function findAmazonCatalogProducts(
+  searchTerm: string,
+  page = 1,
+  workflow = "amazon_catalog_discovery",
+): Promise<AmazonMatch[]> {
+  if (!process.env.RAINFOREST_API_KEY) {
+    const match = mockMatch(searchTerm);
+    return match ? [match] : [];
+  }
+  const normalized = titleTokens(searchTerm).slice(0, 7).join(" ");
+  if (!normalized) return [];
+  const data = await rainforestRequest<{
+    request_info?: { success?: boolean };
+    search_results?: RainforestSearchResult[];
+  }>(
+    { type: "search", search_term: normalized, page: String(Math.max(1, page)) },
+    { workflow },
+  );
+  if (data.request_info?.success === false || !Array.isArray(data.search_results)) {
+    throw new Error("Amazon catalog search returned an incomplete response.");
+  }
+  const seen = new Set<string>();
+  return data.search_results.flatMap((result) => {
+    if (
+      !result.asin ||
+      seen.has(result.asin) ||
+      !result.title ||
+      typeof result.price?.value !== "number" ||
+      result.price.value <= 0
+    ) {
+      return [];
+    }
+    seen.add(result.asin);
+    return [{
+      asin: result.asin,
+      title: result.title,
+      priceCents: Math.round(result.price.value * 100),
+      url: result.link ?? `https://www.amazon.com/dp/${result.asin}`,
+      imageUrl: result.image,
+    }];
+  });
+}
+
 /**
  * Best title-similar Amazon product with a live price; null when nothing
  * clears the similarity threshold.
  */
-export async function findAmazonMatch(title: string): Promise<AmazonMatch | null> {
-  return (await findAmazonMatches(title, 1))[0] ?? null;
+export async function findAmazonMatch(
+  title: string,
+  options: { throwOnError?: boolean; workflow?: string } = {},
+): Promise<AmazonMatch | null> {
+  return (await findAmazonMatches(title, 1, options))[0] ?? null;
 }
 
 /** Ranked Amazon candidates for source repair. The caller applies the stricter
@@ -90,7 +138,7 @@ export async function findAmazonMatch(title: string): Promise<AmazonMatch | null
 export async function findAmazonMatches(
   title: string,
   limit = 5,
-  options: { throwOnError?: boolean } = {},
+  options: { throwOnError?: boolean; workflow?: string } = {},
 ): Promise<AmazonMatch[]> {
   if (!process.env.RAINFOREST_API_KEY) {
     const match = mockMatch(title);
@@ -104,7 +152,10 @@ export async function findAmazonMatches(
     const data = await rainforestRequest<{
       request_info?: { success?: boolean };
       search_results?: RainforestSearchResult[];
-    }>({ type: "search", search_term: searchTerm });
+    }>(
+      { type: "search", search_term: searchTerm },
+      { workflow: options.workflow ?? "amazon_match_search" },
+    );
     if (
       data.request_info?.success === false ||
       !Array.isArray(data.search_results)

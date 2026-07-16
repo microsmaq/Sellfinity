@@ -3,6 +3,7 @@ import { db } from "@/lib/db";
 import { ebayEnvConfig } from "@/lib/ebay/oauth";
 import { Card, PageHeader } from "@/components/ui";
 import { EbayConnectionCard } from "./ebay-connection";
+import { getRainforestEfficiencySummary } from "@/lib/mirror/rainforest";
 
 export const metadata = { title: "Settings — Sellfinity" };
 
@@ -25,9 +26,10 @@ export default async function SettingsPage({
   searchParams: Promise<{ ebay?: string }>;
 }) {
   const user = await requireUser();
-  const connection = await db.ebayConnection.findUnique({
-    where: { userId: user.id },
-  });
+  const [connection, rainforest] = await Promise.all([
+    db.ebayConnection.findUnique({ where: { userId: user.id } }),
+    getRainforestEfficiencySummary(),
+  ]);
   const oauthConfig = ebayEnvConfig();
   const callback = CALLBACK_MESSAGES[(await searchParams).ebay ?? ""];
 
@@ -72,6 +74,46 @@ export default async function SettingsPage({
           connectedAt={connection?.connectedAt?.toISOString() ?? null}
           oauth={oauthConfig ? { env: oauthConfig.env } : null}
         />
+        <Card className="p-6">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <h2 className="text-sm font-semibold text-slate-900">Rainforest efficiency</h2>
+              <p className="mt-1 text-xs text-slate-500">
+                Paid provider requests and shared-cache savings for {rainforest.day} UTC.
+              </p>
+            </div>
+            <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-700">
+              {rainforest.providerRequests + rainforest.cacheHits > 0
+                ? `${Math.round((rainforest.cacheHits / (rainforest.providerRequests + rainforest.cacheHits)) * 100)}% cache hit`
+                : "Ready"}
+            </span>
+          </div>
+          <dl className="mt-5 grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
+            <div className="rounded-lg bg-slate-50 p-3">
+              <dt className="text-xs text-slate-500">Paid requests</dt>
+              <dd className="mt-1 text-lg font-semibold text-slate-900">{rainforest.providerRequests}</dd>
+            </div>
+            <div className="rounded-lg bg-cyan-50 p-3">
+              <dt className="text-xs text-cyan-700">Cache saves</dt>
+              <dd className="mt-1 text-lg font-semibold text-cyan-900">{rainforest.cacheHits}</dd>
+            </div>
+            <div className="rounded-lg bg-amber-50 p-3">
+              <dt className="text-xs text-amber-700">Failures</dt>
+              <dd className="mt-1 text-lg font-semibold text-amber-900">{rainforest.failures}</dd>
+            </div>
+            <div className="rounded-lg bg-violet-50 p-3">
+              <dt className="text-xs text-violet-700">Credits remaining</dt>
+              <dd className="mt-1 text-lg font-semibold text-violet-900">
+                {rainforest.account?.creditsRemaining ?? "—"}
+              </dd>
+            </div>
+          </dl>
+          {rainforest.budgetBlocks > 0 && (
+            <p className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">
+              {rainforest.budgetBlocks} request{rainforest.budgetBlocks === 1 ? " was" : "s were"} safely paused by the credit budget today.
+            </p>
+          )}
+        </Card>
       </div>
     </>
   );

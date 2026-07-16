@@ -77,6 +77,7 @@ type ListingSyncProgress = {
   total: number;
   activeQueued: number;
   recoveryQueued: number;
+  freshSkipped: number;
   kept: number;
   replaced: number;
   ended: number;
@@ -150,6 +151,7 @@ function SmartSyncStatus({ progress }: { progress: ListingSyncProgress }) {
           </div>
           <div className="mt-3 flex flex-wrap gap-2 text-xs">
             <span className="rounded-full bg-white px-2.5 py-1 text-slate-600 shadow-sm ring-1 ring-slate-200">✓ {progress.kept} verified</span>
+            {progress.freshSkipped > 0 && <span className="rounded-full bg-cyan-50 px-2.5 py-1 text-cyan-700 ring-1 ring-cyan-200">⚡ {progress.freshSkipped} recent checks reused</span>}
             <span className="rounded-full bg-white px-2.5 py-1 text-slate-600 shadow-sm ring-1 ring-slate-200">↔ {progress.replaced} sources replaced</span>
             <span className="rounded-full bg-emerald-50 px-2.5 py-1 font-medium text-emerald-700 ring-1 ring-emerald-200">↗ {progress.relisted} recovered &amp; relisted</span>
             <span className="rounded-full bg-amber-50 px-2.5 py-1 text-amber-700 ring-1 ring-amber-200">{progress.ended} delisted · {progress.stillUnavailable} still unavailable</span>
@@ -352,7 +354,7 @@ export function EbayListingsTable({
   function syncListingHealth() {
     if (
       !confirm(
-        "Sellfinity will verify the exact live Amazon variant for every tracked eBay listing, look for an approved replacement when needed, and refresh competitor pricing. Listings previously delisted by this sync because their source was unavailable will also be checked and safely relisted when a profitable equivalent source is found. Manually ended listings are never relisted. If no fulfillable equivalent Amazon variant can be found, an active eBay listing will be ended so you cannot receive an order you cannot fulfill. Temporary provider failures remain active for review.\n\nContinue?",
+        "Sellfinity will verify tracked eBay listings whose Amazon check is stale, reuse recent paid-provider results, look for an approved replacement when needed, and refresh competitor pricing. Listings previously delisted by this sync because their source was unavailable are retried at most once per day and safely relisted when a profitable equivalent source is found. Manually ended listings are never relisted. If no fulfillable equivalent Amazon variant can be found, an active eBay listing will be ended so you cannot receive an order you cannot fulfill. Temporary provider failures remain active for review.\n\nContinue?",
       )
     ) {
       return;
@@ -364,6 +366,7 @@ export function EbayListingsTable({
       total: 0,
       activeQueued: 0,
       recoveryQueued: 0,
+      freshSkipped: 0,
       kept: 0,
       replaced: 0,
       ended: 0,
@@ -382,6 +385,7 @@ export function EbayListingsTable({
         total: started.queued,
         activeQueued: started.activeQueued,
         recoveryQueued: started.recoveryQueued,
+        freshSkipped: started.freshSkipped,
         kept: 0,
         replaced: 0,
         ended: 0,
@@ -412,6 +416,7 @@ export function EbayListingsTable({
             total: started.queued,
             activeQueued: started.activeQueued,
             recoveryQueued: started.recoveryQueued,
+            freshSkipped: started.freshSkipped,
             kept: totals.kept,
             replaced: totals.replaced,
             ended: totals.ended,
@@ -448,7 +453,7 @@ export function EbayListingsTable({
         }));
       }
       setNotice({
-        text: `Smart listing sync complete: ${totals.kept} sources verified, ${totals.replaced} replaced, ${totals.relisted} recovered and relisted, ${totals.ended} delisted without a fulfillable source, ${totals.stillUnavailable} recovery candidates remain unavailable, and ${marketUpdated} competitor prices refreshed${totals.review ? `, ${totals.review} need review` : ""}${marketErrors ? `, ${marketErrors} market lookups failed` : ""}.`,
+        text: `Smart listing sync complete: ${totals.kept} sources verified, ${started.freshSkipped} recent Amazon checks reused, ${totals.replaced} replaced, ${totals.relisted} recovered and relisted, ${totals.ended} delisted without a fulfillable source, ${totals.stillUnavailable} recovery candidates remain unavailable, and ${marketUpdated} competitor prices refreshed${totals.review ? `, ${totals.review} need review` : ""}${marketErrors ? `, ${marketErrors} market lookups failed` : ""}.`,
         error: totals.review > 0 || marketErrors > 0,
       });
       setSyncProgress((current) => current && ({ ...current, stage: "complete", completed: current.total }));
