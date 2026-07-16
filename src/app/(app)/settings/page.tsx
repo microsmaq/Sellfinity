@@ -91,7 +91,10 @@ export default async function SettingsPage({
           <dl className="mt-5 grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
             <div className="rounded-lg bg-slate-50 p-3">
               <dt className="text-xs text-slate-500">Paid requests</dt>
-              <dd className="mt-1 text-lg font-semibold text-slate-900">{rainforest.providerRequests}</dd>
+              <dd className="mt-1 text-lg font-semibold text-slate-900">
+                {rainforest.providerRequests}
+                {rainforest.dailyBudget ? ` / ${rainforest.dailyBudget}` : ""}
+              </dd>
             </div>
             <div className="rounded-lg bg-cyan-50 p-3">
               <dt className="text-xs text-cyan-700">Cache saves</dt>
@@ -111,6 +114,11 @@ export default async function SettingsPage({
           {rainforest.budgetBlocks > 0 && (
             <p className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">
               {rainforest.budgetBlocks} request{rainforest.budgetBlocks === 1 ? " was" : "s were"} safely paused by the credit budget today.
+            </p>
+          )}
+          {rainforest.dailyBudget && (
+            <p className="mt-3 text-xs leading-5 text-slate-500">
+              Paid lookups pause at {rainforest.dailyBudget} per UTC day and preserve at least {rainforest.minimumReserve} account credits. Cached lookups do not count toward this limit.
             </p>
           )}
         </Card>

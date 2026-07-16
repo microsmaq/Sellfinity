@@ -129,12 +129,7 @@ async function enforceBudget(
     await recordUsage(workflow, requestType, "budgetBlocks");
     throw new Error(`Rainforest credit reserve reached (${account.creditsRemaining} remaining).`);
   }
-  const configured = Number(process.env.RAINFOREST_DAILY_CREDIT_BUDGET ?? "");
-  const dailyBudget = Number.isFinite(configured) && configured > 0
-    ? configured
-    : account?.creditsLimit
-      ? Math.max(1, Math.floor((account.creditsLimit / 30) * 0.9))
-      : null;
+  const dailyBudget = rainforestDailyBudget(account);
   if (!dailyBudget) return;
   const aggregate = await db.rainforestUsageDaily.aggregate({
     where: { day: todayUtc() },
@@ -144,6 +139,17 @@ async function enforceBudget(
     await recordUsage(workflow, requestType, "budgetBlocks");
     throw new Error(`Rainforest daily credit budget reached (${dailyBudget}).`);
   }
+}
+
+function rainforestDailyBudget(
+  account: RainforestAccountUsage | null,
+): number | null {
+  const configured = Number(process.env.RAINFOREST_DAILY_CREDIT_BUDGET ?? "");
+  return Number.isFinite(configured) && configured > 0
+    ? configured
+    : account?.creditsLimit
+      ? Math.max(1, Math.floor((account.creditsLimit / 30) * 0.9))
+      : null;
 }
 
 export async function getRainforestEfficiencySummary() {
@@ -159,7 +165,17 @@ export async function getRainforestEfficiencySummary() {
     }),
     { providerRequests: 0, cacheHits: 0, failures: 0, budgetBlocks: 0 },
   );
-  return { day: todayUtc(), ...totals, account: await getRainforestAccountUsage() };
+  const account = await getRainforestAccountUsage();
+  return {
+    day: todayUtc(),
+    ...totals,
+    account,
+    dailyBudget: rainforestDailyBudget(account),
+    minimumReserve: Math.max(
+      0,
+      Number(process.env.RAINFOREST_MIN_CREDIT_RESERVE ?? 50),
+    ),
+  };
 }
 
 /** The slice of Rainforest's type=product response we consume. */
