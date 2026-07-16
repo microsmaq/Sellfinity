@@ -16,6 +16,14 @@ function statusTone(status: string): "green" | "red" | "indigo" | "slate" {
   return "slate";
 }
 
+function imageStatusLabel(status: string): string {
+  if (status === "SUCCEEDED") return "AI improved";
+  if (status === "FALLBACK") return "Original used";
+  if (status === "GENERATING") return "Improving…";
+  if (status === "PENDING") return "Waiting";
+  return "Not requested";
+}
+
 export function BatchProgress({ initial }: { initial: MirrorBatchView }) {
   const [batch, setBatch] = useState(initial);
   const [connectionError, setConnectionError] = useState<string | null>(null);
@@ -72,6 +80,11 @@ export function BatchProgress({ initial }: { initial: MirrorBatchView }) {
               {batch.trigger === "AUTOMATIC" ? "Automatic " : "Manual "}
               {batch.source === "ARBITRAGE" ? "Arbitrage Finder batch" : "Amazon URL batch"}
             </p>
+            {batch.improveMainImage && (
+              <p className="mt-1 text-sm font-medium text-violet-700">
+                ✨ AI main-image enhancement enabled
+              </p>
+            )}
             <h2 className="mt-1 text-xl font-semibold text-slate-900">
               {batch.status === "COMPLETED"
                 ? "Publishing complete"
@@ -148,6 +161,7 @@ export function BatchProgress({ initial }: { initial: MirrorBatchView }) {
               <th className="px-4 py-3 text-right">Amazon source</th>
               <th className="px-4 py-3 text-right">eBay list price</th>
               <th className="px-4 py-3">Status</th>
+              {batch.improveMainImage && <th className="px-4 py-3">Main image</th>}
               <th className="px-4 py-3">Result</th>
             </tr>
           </thead>
@@ -175,6 +189,26 @@ export function BatchProgress({ initial }: { initial: MirrorBatchView }) {
                 <td className="px-4 py-3">
                   <Badge tone={statusTone(item.status)}>{item.status.toLowerCase()}</Badge>
                 </td>
+                {batch.improveMainImage && (
+                  <td className="max-w-xs px-4 py-3">
+                    <Badge
+                      tone={
+                        item.imageImprovementStatus === "SUCCEEDED"
+                          ? "green"
+                          : item.imageImprovementStatus === "FALLBACK"
+                            ? "slate"
+                            : "indigo"
+                      }
+                    >
+                      {imageStatusLabel(item.imageImprovementStatus)}
+                    </Badge>
+                    {item.imageImprovementError && (
+                      <p className="mt-1 text-xs text-slate-500" title={item.imageImprovementError}>
+                        {item.imageImprovementError}
+                      </p>
+                    )}
+                  </td>
+                )}
                 <td className="max-w-md px-4 py-3">
                   {item.ebayListingId ? (
                     <a

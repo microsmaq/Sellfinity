@@ -9,6 +9,7 @@ import { Button, Card } from "@/components/ui";
 export function MirrorForm({ ebayConnected }: { ebayConnected: boolean }) {
   const router = useRouter();
   const [input, setInput] = useState("");
+  const [improveMainImage, setImproveMainImage] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
   const lineCount = input.split("\n").filter((line) => line.trim()).length;
@@ -16,7 +17,7 @@ export function MirrorForm({ ebayConnected }: { ebayConnected: boolean }) {
   function run() {
     setError(null);
     startTransition(async () => {
-      const result = await createUrlMirrorBatch(input);
+      const result = await createUrlMirrorBatch(input, improveMainImage);
       if (result.error || !result.batchId) {
         setError(result.error ?? "Could not create the publishing batch.");
         return;
@@ -44,6 +45,25 @@ export function MirrorForm({ ebayConnected }: { ebayConnected: boolean }) {
           Each product is published directly to eBay at 30% above its live Amazon source price.
           No drafts are retained when publication fails.
         </p>
+        <label className="mt-4 flex cursor-pointer gap-3 rounded-xl border border-indigo-200 bg-gradient-to-r from-indigo-50 to-violet-50 p-4 transition hover:border-indigo-300">
+          <input
+            type="checkbox"
+            checked={improveMainImage}
+            onChange={(event) => setImproveMainImage(event.target.checked)}
+            className="mt-1 h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+          />
+          <span>
+            <span className="flex items-center gap-2 font-semibold text-slate-900">
+              <span aria-hidden="true">✨</span>
+              AI-enhance the main listing image
+            </span>
+            <span className="mt-1 block text-sm leading-5 text-slate-600">
+              Uses OpenAI image editing to create a premium, eBay-compliant white-background
+              hero photo. The original Amazon photos stay as secondary images, and Sellfinity
+              falls back safely if editing fails. Only enable this for images you are authorized to use and edit.
+            </span>
+          </span>
+        </label>
         <div className="mt-4 flex flex-wrap items-center gap-3">
           <Button
             onClick={run}

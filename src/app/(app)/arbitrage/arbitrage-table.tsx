@@ -87,6 +87,7 @@ export function ArbitrageTable({
   const [verifying, startVerify] = useTransition();
   const [savingAutoPublish, startAutoPublishSave] = useTransition();
   const [autoPublishEnabled, setAutoPublishEnabled] = useState(initialAutoPublish);
+  const [improveMainImage, setImproveMainImage] = useState(false);
   const [scanTarget, setScanTarget] = useState(50);
   const [busyAsin, setBusyAsin] = useState<string | null>(null);
   const [hidingId, setHidingId] = useState<string | null>(null);
@@ -371,7 +372,7 @@ export function ArbitrageTable({
     setNotice(null);
     setBusyAsin(row.asin);
     startTransition(async () => {
-      const result = await createArbitrageMirrorBatch([row.ebayItemId]);
+      const result = await createArbitrageMirrorBatch([row.ebayItemId], improveMainImage);
       setBusyAsin(null);
       if (result.error || !result.batchId) {
         setNotice({ text: result.error ?? "Could not create the publishing batch.", error: true });
@@ -403,7 +404,7 @@ export function ArbitrageTable({
       .map((r) => r.ebayItemId);
     setNotice(null);
     startTransition(async () => {
-      const result = await createArbitrageMirrorBatch(ebayItemIds);
+      const result = await createArbitrageMirrorBatch(ebayItemIds, improveMainImage);
       if (result.error || !result.batchId) {
         setNotice({ text: result.error ?? "Could not create the publishing batch.", error: true });
         return;
@@ -512,6 +513,15 @@ export function ArbitrageTable({
           <Button variant="secondary" disabled={pending} onClick={exportExcel}>
             Export Excel
           </Button>
+          <label className="flex cursor-pointer items-center gap-2 rounded-lg border border-violet-200 bg-violet-50 px-3 py-2 text-sm font-medium text-violet-800">
+            <input
+              type="checkbox"
+              checked={improveMainImage}
+              onChange={(event) => setImproveMainImage(event.target.checked)}
+              className="h-4 w-4 rounded border-slate-300 text-violet-600"
+            />
+            ✨ AI-enhance main image
+          </label>
           <Button disabled={pending || selected.size === 0} onClick={mirrorSelected}>
             {`Publish selected (${selected.size})`}
           </Button>

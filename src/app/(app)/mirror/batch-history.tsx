@@ -40,6 +40,9 @@ export function BatchHistory({ batches }: { batches: MirrorBatchHistoryRow[] }) 
                     <Badge tone={batch.trigger === "AUTOMATIC" ? "indigo" : "slate"}>
                       {batch.trigger === "AUTOMATIC" ? "automatic" : "manual"}
                     </Badge>
+                    {batch.improveMainImage && (
+                      <span className="ml-2 text-xs font-medium text-violet-700">✨ AI images</span>
+                    )}
                   </div>
                 </td>
                 <td className="px-4 py-3 text-right tabular-nums">{batch.totalCount}</td>

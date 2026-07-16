@@ -39,6 +39,7 @@ model User {
   ebayMarketMetrics       EbayMarketMetric[]
   hiddenArbitrageItems    HiddenArbitrageItem[]
   mirrorBatches           MirrorBatch[]
+  generatedListingImages GeneratedListingImage[]
   ebayConnection          EbayConnection?
 }
 
@@ -52,6 +53,9 @@ model MirrorBatch {
   source         String
   // MANUAL | AUTOMATIC
   trigger        String    @default("MANUAL")
+  // When enabled, the Amazon main photo is edited into an eBay-compliant
+  // studio hero image before the listing is published.
+  improveMainImage Boolean @default(false)
   // PENDING | RUNNING | COMPLETED
   status         String    @default("PENDING")
   totalCount     Int
@@ -86,6 +90,9 @@ model MirrorBatchItem {
   listingId         String?
   ebayListingId     String?
   error             String?
+  // NOT_REQUESTED | PENDING | GENERATING | SUCCEEDED | FALLBACK
+  imageImprovementStatus String @default("NOT_REQUESTED")
+  imageImprovementError  String?
   attempts          Int       @default(0)
   createdAt         DateTime  @default(now())
   startedAt         DateTime?
@@ -95,6 +102,20 @@ model MirrorBatchItem {
 
   @@unique([batchId, position])
   @@index([batchId, status])
+}
+
+// Durable public image bytes used by eBay while it imports an AI-edited hero
+// photo. IDs are unguessable and the route exposes no seller information.
+model GeneratedListingImage {
+  id        String   @id @default(cuid())
+  userId    String
+  mimeType  String   @default("image/jpeg")
+  data      Bytes
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
 }
 
 // A seller explicitly ended this item through Sellfinity. eBay's ActiveList

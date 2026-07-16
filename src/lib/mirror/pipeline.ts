@@ -12,6 +12,7 @@ import { generateMirrorDescription, generateSeoTitle } from "./seo";
 import { LISTING_QUANTITY_CAP } from "@/lib/listings/generate";
 import { suggestPriceCents } from "@/lib/sourcing/scoring";
 import { serializeImageUrls } from "@/lib/types";
+import { improveMainListingImage } from "./improve-main-image";
 
 /** Typical eBay resale premium over the Amazon buy price for dropshipped
  * items; the suggested price undercuts this market estimate. */
@@ -36,6 +37,8 @@ export type MirrorOutcome = {
   title?: string;
   priceCents?: number;
   sourcePriceCents?: number;
+  imageImprovementStatus?: "SUCCEEDED" | "FALLBACK";
+  imageImprovementError?: string;
 };
 
 export async function mirrorUrl(
@@ -49,6 +52,10 @@ export async function mirrorUrl(
     /** List at this percentage above the exact scraped Amazon source price.
      * Used by direct-publish batches; takes precedence over market pricing. */
     sourceMarkupPct?: number;
+    /** Replace only the eBay listing's lead photo with a truthful AI-edited
+     * studio image. Original supplier photos remain available as secondary
+     * listing images and on the source Product record. */
+    improveMainImage?: boolean;
   } = {},
 ): Promise<MirrorOutcome> {
   const inputAsin = extractAsin(url);
@@ -90,6 +97,18 @@ export async function mirrorUrl(
 
   const title = generateSeoTitle(scraped);
   const description = generateMirrorDescription(scraped);
+  const imageImprovement = opts.improveMainImage
+    ? await improveMainListingImage({
+        userId,
+        sourceImageUrl: scraped.imageUrls[0],
+        title: scraped.title,
+        category: scraped.category,
+        bulletPoints: scraped.bulletPoints,
+      })
+    : null;
+  const listingImages = imageImprovement?.ok
+    ? [imageImprovement.imageUrl, ...scraped.imageUrls].slice(0, 12)
+    : scraped.imageUrls;
 
   const listing = await db.$transaction(async (tx) => {
     const product = await tx.product.create({
@@ -118,7 +137,7 @@ export async function mirrorUrl(
         description,
         priceCents,
         quantity: Math.min(LISTING_QUANTITY_CAP, supplierStock),
-        imageUrlsJson: serializeImageUrls(scraped.imageUrls),
+        imageUrlsJson: serializeImageUrls(listingImages),
         status: "DRAFT",
       },
     });
@@ -131,6 +150,10 @@ export async function mirrorUrl(
     title,
     priceCents,
     sourcePriceCents: scraped.priceCents,
+    ...(imageImprovement && {
+      imageImprovementStatus: imageImprovement.ok ? "SUCCEEDED" : "FALLBACK",
+      imageImprovementError: imageImprovement.ok ? undefined : imageImprovement.error,
+    }),
   };
 }
 

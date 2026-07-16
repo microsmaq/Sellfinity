@@ -15,7 +15,7 @@ import {
 } from "@/lib/arbitrage/auto-publish";
 
 const MAX_BATCH_ITEMS = 50;
-const STALE_PROCESSING_MS = 3 * 60 * 1000;
+const STALE_PROCESSING_MS = 6 * 60 * 1000;
 
 export type MirrorBatchItemView = {
   id: string;
@@ -27,12 +27,15 @@ export type MirrorBatchItemView = {
   listingPriceCents: number | null;
   ebayListingId: string | null;
   error: string | null;
+  imageImprovementStatus: string;
+  imageImprovementError: string | null;
 };
 
 export type MirrorBatchView = {
   id: string;
   source: string;
   trigger: string;
+  improveMainImage: boolean;
   status: string;
   totalCount: number;
   succeededCount: number;
@@ -52,6 +55,7 @@ function toView(batch: {
   id: string;
   source: string;
   trigger: string;
+  improveMainImage: boolean;
   status: string;
   totalCount: number;
   succeededCount: number;
@@ -72,6 +76,8 @@ function toView(batch: {
     listingPriceCents: number | null;
     ebayListingId: string | null;
     error: string | null;
+    imageImprovementStatus: string;
+    imageImprovementError: string | null;
   }>;
 }): MirrorBatchView {
   return {
@@ -97,6 +103,7 @@ async function createBatch(
   source: "URL_BULK" | "ARBITRAGE",
   items: Array<{ inputUrl: string; sourceReferenceId?: string }>,
   trigger: "MANUAL" | "AUTOMATIC" = "MANUAL",
+  improveMainImage = false,
 ): Promise<{ batchId?: string; error?: string }> {
   const connection = await db.ebayConnection.findUnique({ where: { userId } });
   if (!connection || connection.status === "DISCONNECTED") {
@@ -109,12 +116,14 @@ async function createBatch(
       userId,
       source,
       trigger,
+      improveMainImage,
       totalCount: items.length,
       items: {
         create: items.map((item, position) => ({
           position,
           inputUrl: item.inputUrl,
           sourceReferenceId: item.sourceReferenceId,
+          imageImprovementStatus: improveMainImage ? "PENDING" : "NOT_REQUESTED",
         })),
       },
     },
@@ -125,6 +134,7 @@ async function createBatch(
 
 export async function createUrlMirrorBatch(
   input: string,
+  improveMainImage = false,
 ): Promise<{ batchId?: string; error?: string }> {
   const user = await requireUser();
   const urls = parseUrlLines(input, MAX_BATCH_ITEMS);
@@ -133,11 +143,14 @@ export async function createUrlMirrorBatch(
     user.id,
     "URL_BULK",
     urls.map((inputUrl) => ({ inputUrl })),
+    "MANUAL",
+    improveMainImage,
   );
 }
 
 export async function createArbitrageMirrorBatch(
   ebayItemIds: string[],
+  improveMainImage = false,
 ): Promise<{ batchId?: string; error?: string }> {
   const user = await requireUser();
   const ids = [...new Set(ebayItemIds)].slice(0, MAX_BATCH_ITEMS);
@@ -156,7 +169,7 @@ export async function createArbitrageMirrorBatch(
       inputUrl: row.amazonUrl,
       sourceReferenceId: row.ebayItemId,
     }));
-  return createBatch(user.id, "ARBITRAGE", items);
+  return createBatch(user.id, "ARBITRAGE", items, "MANUAL", improveMainImage);
 }
 
 /** Build an automatic batch from every currently available opportunity that
@@ -268,6 +281,7 @@ export async function listMirrorBatchHistory(
     id: batch.id,
     source: batch.source,
     trigger: batch.trigger,
+    improveMainImage: batch.improveMainImage,
     status: batch.status,
     totalCount: batch.totalCount,
     succeededCount: batch.succeededCount,
@@ -365,7 +379,7 @@ async function processNextMirrorBatchItemForUser(
 ): Promise<MirrorBatchView | null> {
   const batch = await db.mirrorBatch.findFirst({
     where: { id: batchId, userId },
-    select: { id: true, status: true },
+    select: { id: true, status: true, improveMainImage: true },
   });
   if (!batch) return null;
   if (batch.status === "COMPLETED") {
@@ -415,8 +429,15 @@ async function processNextMirrorBatchItemForUser(
   let listingId = next.listingId;
   try {
     if (!listingId) {
+      if (batch.improveMainImage) {
+        await db.mirrorBatchItem.update({
+          where: { id: next.id },
+          data: { imageImprovementStatus: "GENERATING", imageImprovementError: null },
+        });
+      }
       const outcome = await mirrorUrl(userId, next.inputUrl, undefined, {
         sourceMarkupPct: 30,
+        improveMainImage: batch.improveMainImage,
       });
       if (!outcome.ok || !outcome.listingId) {
         await completeItem(batchId, next.id, "FAILED", {
@@ -432,6 +453,10 @@ async function processNextMirrorBatchItemForUser(
           title: outcome.title,
           sourcePriceCents: outcome.sourcePriceCents,
           listingPriceCents: outcome.priceCents,
+          ...(batch.improveMainImage && {
+            imageImprovementStatus: outcome.imageImprovementStatus ?? "FALLBACK",
+            imageImprovementError: outcome.imageImprovementError?.slice(0, 500),
+          }),
         },
       });
     }
