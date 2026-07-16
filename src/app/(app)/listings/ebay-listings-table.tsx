@@ -18,6 +18,7 @@ import {
 import { formatCents, parseDollarsToCents } from "@/lib/money";
 import { Badge, Button, Card, cx } from "@/components/ui";
 import { downloadBase64File } from "@/lib/download";
+import { listingNeedsAttention } from "@/lib/listings/attention";
 
 export type EbayRow = {
   ebayListingId: string;
@@ -155,6 +156,13 @@ export function EbayListingsTable({
   const [sortDescending, setSortDescending] = useState(true);
   const [pageSize, setPageSize] = useState(25);
   const [page, setPage] = useState(1);
+  const [attentionOnly, setAttentionOnly] = useState(false);
+
+  const problems = rows.filter(listingNeedsAttention).length;
+  const filteredRows = useMemo(
+    () => (attentionOnly ? rows.filter(listingNeedsAttention) : rows),
+    [attentionOnly, rows],
+  );
 
   const sortedRows = useMemo(() => {
     const value = (row: EbayRow): string | number | null => {
@@ -171,7 +179,7 @@ export function EbayListingsTable({
         case "matchConfidence": return row.sourceAssessment?.confidence ?? null;
       }
     };
-    return [...rows].sort((left, right) => {
+    return [...filteredRows].sort((left, right) => {
       const a = value(left);
       const b = value(right);
       if (a === null) return b === null ? 0 : 1;
@@ -182,9 +190,13 @@ export function EbayListingsTable({
           : Number(a) - Number(b);
       return sortDescending ? -comparison : comparison;
     });
-  }, [rows, sortKey, sortDescending]);
+  }, [filteredRows, sortKey, sortDescending]);
   const pageCount = Math.max(1, Math.ceil(sortedRows.length / pageSize));
-  const visibleRows = sortedRows.slice((page - 1) * pageSize, page * pageSize);
+  const currentPage = Math.min(page, pageCount);
+  const visibleRows = sortedRows.slice(
+    (currentPage - 1) * pageSize,
+    currentPage * pageSize,
+  );
 
   function sortBy(next: ListingSortKey) {
     if (next === sortKey) setSortDescending((current) => !current);
@@ -439,19 +451,37 @@ export function EbayListingsTable({
     });
   }
 
-  const problems = rows.filter(
-    (r) =>
-      (r.match && (r.match.unavailable || r.match.profitCents <= 0)) ||
-      (r.sourceAssessment &&
-        !["MATCH", "LIKELY"].includes(r.sourceAssessment.verdict)),
-  ).length;
   const unmatched = rows.filter((r) => !r.match && !r.sourceAssessment).length;
 
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-3 text-sm text-slate-500">
         <span>{rows.length} active on eBay</span>
-        {problems > 0 && <Badge tone="red">{problems} need attention</Badge>}
+        {(problems > 0 || attentionOnly) && (
+          <button
+            type="button"
+            aria-pressed={attentionOnly}
+            aria-label={
+              attentionOnly
+                ? "Show all active eBay listings"
+                : "Show only listings that need attention"
+            }
+            onClick={() => {
+              setAttentionOnly((current) => !current);
+              setPage(1);
+            }}
+            className={cx(
+              "rounded-md focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2",
+              attentionOnly && "ring-2 ring-red-500 ring-offset-1",
+            )}
+          >
+            <Badge tone="red">
+              {attentionOnly
+                ? `Showing ${problems} need attention · Show all`
+                : `${problems} need attention`}
+            </Badge>
+          </button>
+        )}
         <Button size="sm" variant="secondary" disabled={pending} onClick={cleanUp}>
           {bulkProgress?.startsWith("Cleaning") ? bulkProgress : "Apply suggested prices"}
         </Button>
@@ -525,8 +555,7 @@ export function EbayListingsTable({
           </thead>
           <tbody>
             {visibleRows.map((r) => {
-              const problem =
-                r.match && (r.match.unavailable || r.match.profitCents <= 0);
+              const problem = listingNeedsAttention(r);
               return (
                 <tr
                   key={r.ebayListingId}
@@ -746,10 +775,12 @@ export function EbayListingsTable({
                 </tr>
               );
             })}
-            {rows.length === 0 && !fetchError && (
+            {filteredRows.length === 0 && !fetchError && (
               <tr>
                 <td colSpan={11} className="px-4 py-12 text-center text-slate-500">
-                  No active listings found on your eBay account.
+                  {attentionOnly
+                    ? "No active listings currently need attention."
+                    : "No active listings found on your eBay account."}
                 </td>
               </tr>
             )}
@@ -757,11 +788,11 @@ export function EbayListingsTable({
         </table>
       </Card>
       <div className="flex items-center justify-center gap-4 text-sm">
-        <Button variant="secondary" size="sm" disabled={page <= 1} onClick={() => setPage((current) => current - 1)}>
+        <Button variant="secondary" size="sm" disabled={currentPage <= 1} onClick={() => setPage((current) => current - 1)}>
           ← Previous
         </Button>
-        <span className="text-slate-500">Page {page} of {pageCount}</span>
-        <Button variant="secondary" size="sm" disabled={page >= pageCount} onClick={() => setPage((current) => current + 1)}>
+        <span className="text-slate-500">Page {currentPage} of {pageCount}</span>
+        <Button variant="secondary" size="sm" disabled={currentPage >= pageCount} onClick={() => setPage((current) => current + 1)}>
           Next →
         </Button>
       </div>
