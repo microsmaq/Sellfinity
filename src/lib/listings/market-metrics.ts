@@ -19,44 +19,32 @@ type ResearchMetricRow = {
 export function aggregateListingMarketMetrics(
   rows: ResearchMetricRow[],
 ): Map<string, ListingMarketMetrics> {
-  const totals = new Map<
-    string,
-    {
-      priceCents: number;
-      sales30d: number;
-      count: number;
-      bestSellingPriceCents: number;
-      bestSales30d: number;
-    }
-  >();
+  const totals = new Map<string, ResearchMetricRow[]>();
   for (const row of rows) {
-    const current = totals.get(row.asin) ?? {
-      priceCents: 0,
-      sales30d: 0,
-      count: 0,
-      bestSellingPriceCents: row.ebayPriceCents,
-      bestSales30d: row.salesEst,
-    };
-    current.priceCents += row.ebayPriceCents;
-    current.sales30d += row.salesEst;
-    current.count++;
-    if (row.salesEst > current.bestSales30d) {
-      current.bestSales30d = row.salesEst;
-      current.bestSellingPriceCents = row.ebayPriceCents;
-    }
-    totals.set(row.asin, current);
+    totals.set(row.asin, [...(totals.get(row.asin) ?? []), row]);
   }
 
   return new Map(
-    [...totals].map(([asin, total]) => [
-      asin,
-      {
-        estimatedSales30d: Math.round(total.sales30d / total.count),
-        competitorCount: total.count,
-        averageCompetitorPriceCents: Math.round(total.priceCents / total.count),
-        bestSellingPriceCents: total.bestSellingPriceCents,
-      },
-    ]),
+    [...totals].map(([asin, asinRows]) => {
+      const sortedPrices = asinRows
+        .map((row) => row.ebayPriceCents)
+        .sort((a, b) => a - b);
+      return [
+        asin,
+        {
+          estimatedSales30d: Math.round(
+            asinRows.reduce((sum, row) => sum + row.salesEst, 0) / asinRows.length,
+          ),
+          competitorCount: asinRows.length,
+          averageCompetitorPriceCents: Math.round(
+            asinRows.reduce((sum, row) => sum + row.ebayPriceCents, 0) /
+              asinRows.length,
+          ),
+          bestSellingPriceCents:
+            sortedPrices[Math.floor((sortedPrices.length - 1) * 0.25)],
+        },
+      ];
+    }),
   );
 }
 

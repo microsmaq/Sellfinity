@@ -13,7 +13,7 @@ describe("aggregateListingMarketMetrics", () => {
       estimatedSales30d: 25,
       competitorCount: 2,
       averageCompetitorPriceCents: 2499,
-      bestSellingPriceCents: 2999,
+      bestSellingPriceCents: 1999,
     });
     expect(metrics.get("B0TWO")).toEqual({
       estimatedSales30d: 10,

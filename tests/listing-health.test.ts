@@ -34,7 +34,7 @@ describe("assessListingHealth", () => {
     );
   });
 
-  it("compares a profitable listing with the best-selling comparable price", () => {
+  it("compares a profitable listing with the eBay market recommendation", () => {
     const competitive = assessListingHealth(listing(3000, 1000, 3200));
     expect(competitive.status).toBe("COMPETITIVE");
     expect(competitive.benchmarkPriceCents).toBe(3200);

@@ -937,7 +937,7 @@ export function EbayListingsTable({
                     </Badge>
                     {health.benchmarkPriceCents !== null && (
                       <p className="mt-1 whitespace-nowrap text-xs text-slate-500">
-                        Est. best seller {formatCents(health.benchmarkPriceCents)}
+                        eBay market rec. {formatCents(health.benchmarkPriceCents)}
                       </p>
                     )}
                     {health.profitCents !== null && (

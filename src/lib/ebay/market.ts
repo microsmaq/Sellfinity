@@ -38,6 +38,7 @@ export async function researchEbayMarket(
     data.total ?? 0,
     data.itemSummaries ?? [],
     ownEbayListingId,
+    title,
   );
   return metrics ? { query, metrics } : null;
 }

@@ -16,14 +16,36 @@ export function marketSearchQuery(title: string): string {
     .join(" ");
 }
 
-export type BrowseSummary = { itemId?: string; price?: { value?: string } };
+export type BrowseSummary = {
+  itemId?: string;
+  title?: string;
+  price?: { value?: string };
+};
+
+function titleIsComparable(sourceTitle: string, candidateTitle?: string): boolean {
+  if (!candidateTitle) return true;
+  const source = marketSearchQuery(sourceTitle).split(" ").filter(Boolean);
+  if (source.length === 0) return true;
+  const candidate = new Set(marketSearchQuery(candidateTitle).split(" ").filter(Boolean));
+  const overlap = source.filter((token) => candidate.has(token)).length;
+  const required = source.length <= 4
+    ? Math.ceil(source.length * 0.75)
+    : Math.max(3, Math.ceil(source.length * 0.5));
+  return overlap >= required;
+}
+
+function medianPrice(items: { priceCents: number }[]): number {
+  const prices = items.map((item) => item.priceCents).sort((a, b) => a - b);
+  return prices[Math.floor((prices.length - 1) / 2)];
+}
 
 export function summarizeBrowseMarket(
   total: number,
   items: BrowseSummary[],
   ownEbayListingId: string,
+  sourceTitle = "",
 ): ListingMarketMetrics | null {
-  const competitors = items.flatMap((item) => {
+  const pricedCandidates = items.flatMap((item) => {
     if (!item.itemId || item.itemId.includes(`|${ownEbayListingId}|`)) return [];
     const priceCents = Math.round(parseFloat(item.price?.value ?? "0") * 100);
     return priceCents > 0
@@ -36,12 +58,27 @@ export function summarizeBrowseMarket(
         ]
       : [];
   });
-  if (competitors.length === 0) return null;
-  const bestSeller = [...competitors].sort(
-    (left, right) =>
-      right.estimatedSales30d - left.estimatedSales30d ||
-      left.priceCents - right.priceCents,
-  )[0];
+  const candidates = sourceTitle
+    ? pricedCandidates.filter((item) => {
+        const original = items.find((candidate) => candidate.itemId === item.itemId);
+        return titleIsComparable(sourceTitle, original?.title);
+      })
+    : pricedCandidates;
+  if (candidates.length === 0) return null;
+  const median = medianPrice(candidates);
+  const priceBand = candidates.filter(
+    (item) => item.priceCents >= median * 0.5 && item.priceCents <= median * 1.5,
+  );
+  const competitors = priceBand.length >= 3 ? priceBand : candidates;
+  const prices = competitors.map((item) => item.priceCents).sort((a, b) => a - b);
+  const recommendation = prices[Math.floor((prices.length - 1) * 0.25)];
+  const estimatedComparableCount = Math.max(
+    competitors.length,
+    Math.round(
+      Math.max(0, total - 1) *
+        (competitors.length / Math.max(1, pricedCandidates.length)),
+    ),
+  );
   return {
     estimatedSales30d: Math.round(
       competitors.reduce(
@@ -49,11 +86,13 @@ export function summarizeBrowseMarket(
         0,
       ) / competitors.length,
     ),
-    competitorCount: Math.max(competitors.length, total - 1),
+    competitorCount: estimatedComparableCount,
     averageCompetitorPriceCents: Math.round(
       competitors.reduce((sum, item) => sum + item.priceCents, 0) /
         competitors.length,
     ),
-    bestSellingPriceCents: bestSeller.priceCents,
+    // Kept under the historical field name for database compatibility. This
+    // is now a robust lower-quartile eBay market recommendation.
+    bestSellingPriceCents: recommendation,
   };
 }

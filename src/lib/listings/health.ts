@@ -1,6 +1,5 @@
 import {
-  TARGET_MARGIN,
-  TARGET_PROFIT_CENTS,
+  AI_MIN_MARGIN,
   trueProfitCents,
 } from "@/lib/listings/cleanup";
 
@@ -65,10 +64,7 @@ export function assessListingHealth(listing: HealthListing): ListingHealth {
       priceDifferencePct: null,
     };
   }
-  if (
-    marginPct < TARGET_MARGIN * 100 &&
-    profitCents < TARGET_PROFIT_CENTS
-  ) {
+  if (marginPct < AI_MIN_MARGIN * 100) {
     return {
       status: "THIN_MARGIN",
       label: "Thin margin",
@@ -104,7 +100,7 @@ export function assessListingHealth(listing: HealthListing): ListingHealth {
   }
   return {
     status: "ABOVE_MARKET",
-    label: `${priceDifferencePct}% above est. best seller`,
+    label: `${priceDifferencePct}% above eBay market rec.`,
     profitCents,
     marginPct,
     benchmarkPriceCents,
