@@ -89,6 +89,7 @@ export function ArbitrageTable({
   const [verifyingHistory, startVerifyHistory] = useTransition();
   const [savingAutoPublish, startAutoPublishSave] = useTransition();
   const [autoPublishEnabled, setAutoPublishEnabled] = useState(initialAutoPublish);
+  const [scanTarget, setScanTarget] = useState(50);
   const [busyAsin, setBusyAsin] = useState<string | null>(null);
   const [hidingId, setHidingId] = useState<string | null>(null);
   const [notice, setNotice] = useState<{ text: string; error: boolean } | null>(null);
@@ -127,8 +128,6 @@ export function ArbitrageTable({
   function isVerifiedMatch(r: OpportunityRow) {
     return r.matchVerdict === "MATCH" || r.matchVerdict === "LIKELY";
   }
-
-  const SCAN_TARGET = 50;
 
   async function waitForScanRetry(delayMs: number): Promise<boolean> {
     const retryAt = Date.now() + delayMs;
@@ -170,6 +169,7 @@ export function ArbitrageTable({
   }
 
   function scanNow() {
+    const SCAN_TARGET = scanTarget;
     stopScanRequested.current = false;
     setNotice(null);
     startScan(async () => {
@@ -529,9 +529,23 @@ export function ArbitrageTable({
               Stop scan
             </Button>
           ) : (
-            <Button variant="secondary" onClick={scanNow}>
-              Scan for 50 new items
-            </Button>
+            <div className="flex items-center gap-2">
+              <select
+                value={scanTarget}
+                onChange={(event) => setScanTarget(Number(event.target.value))}
+                className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
+                aria-label="Number of new items to scan"
+              >
+                <option value={50}>50 items</option>
+                <option value={100}>100 items</option>
+                <option value={200}>200 items</option>
+                <option value={500}>500 items</option>
+                <option value={1000}>1,000 items</option>
+              </select>
+              <Button variant="secondary" onClick={scanNow}>
+                Scan for {scanTarget.toLocaleString()} new items
+              </Button>
+            </div>
           )}
           <Button variant="secondary" disabled={researching} onClick={researchPage}>
             {researching ? "Researching market…" : "Research market data"}
