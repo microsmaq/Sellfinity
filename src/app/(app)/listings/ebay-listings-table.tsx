@@ -69,6 +69,96 @@ type ListingSortKey =
 
 const PRICE_CLEANUP_BATCH_SIZE = 4;
 
+type ListingSyncProgress = {
+  stage: "preparing" | "sources" | "market" | "complete";
+  completed: number;
+  total: number;
+  activeQueued: number;
+  recoveryQueued: number;
+  kept: number;
+  replaced: number;
+  ended: number;
+  relisted: number;
+  stillUnavailable: number;
+  review: number;
+  marketUpdated: number;
+};
+
+function SmartSyncIcon({ spinning = false }: { spinning?: boolean }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      aria-hidden="true"
+      className={cx("h-4 w-4", spinning && "animate-spin")}
+    >
+      <path d="M20 7v5h-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M4 17v-5h5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M6.1 8.5A7 7 0 0 1 18.7 7L20 12M4 12l1.3 5A7 7 0 0 0 17.9 15.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function SmartSyncStatus({ progress }: { progress: ListingSyncProgress }) {
+  const sourceRatio = progress.total > 0 ? progress.completed / progress.total : 1;
+  const marketRatio = progress.total > 0 ? progress.completed / progress.total : 1;
+  const percentage =
+    progress.stage === "preparing"
+      ? 3
+      : progress.stage === "sources"
+        ? Math.max(5, Math.round(sourceRatio * 75))
+        : progress.stage === "market"
+          ? 75 + Math.round(marketRatio * 24)
+          : 100;
+  const title =
+    progress.stage === "preparing"
+      ? "Preparing your inventory health scan"
+      : progress.stage === "sources"
+        ? `Verifying Amazon variants · ${progress.completed}/${progress.total}`
+        : progress.stage === "market"
+          ? `Refreshing competitive pricing · ${progress.completed}/${progress.total}`
+          : "Smart inventory sync complete";
+  const subtitle =
+    progress.stage === "sources" && progress.recoveryQueued > 0
+      ? `${progress.recoveryQueued} previously unavailable listing${progress.recoveryQueued === 1 ? " is" : "s are"} also being checked for recovery.`
+      : progress.stage === "complete"
+        ? "Your refreshed listings and recovered products are ready."
+        : "This page can remain open while Sellfinity works through each item.";
+
+  return (
+    <Card className="relative overflow-hidden border-indigo-200 bg-gradient-to-br from-indigo-50 via-white to-violet-50 px-5 py-4 shadow-md shadow-indigo-100/60">
+      <div className="absolute -right-8 -top-10 h-28 w-28 rounded-full bg-violet-200/30 blur-2xl" />
+      <div className="relative flex items-start gap-3">
+        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-600 to-violet-600 text-white shadow-lg shadow-indigo-200">
+          <SmartSyncIcon spinning={progress.stage !== "complete"} />
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <p className="font-semibold text-slate-900">{title}</p>
+              <p className="mt-0.5 text-xs text-slate-500">{subtitle}</p>
+            </div>
+            <span className="text-sm font-semibold tabular-nums text-indigo-700">{percentage}%</span>
+          </div>
+          <div className="mt-3 h-2 overflow-hidden rounded-full bg-indigo-100">
+            <div
+              className="h-full rounded-full bg-gradient-to-r from-indigo-600 via-violet-500 to-fuchsia-500 transition-[width] duration-700 ease-out"
+              style={{ width: `${percentage}%` }}
+            />
+          </div>
+          <div className="mt-3 flex flex-wrap gap-2 text-xs">
+            <span className="rounded-full bg-white px-2.5 py-1 text-slate-600 shadow-sm ring-1 ring-slate-200">✓ {progress.kept} verified</span>
+            <span className="rounded-full bg-white px-2.5 py-1 text-slate-600 shadow-sm ring-1 ring-slate-200">↔ {progress.replaced} sources replaced</span>
+            <span className="rounded-full bg-emerald-50 px-2.5 py-1 font-medium text-emerald-700 ring-1 ring-emerald-200">↗ {progress.relisted} recovered &amp; relisted</span>
+            <span className="rounded-full bg-amber-50 px-2.5 py-1 text-amber-700 ring-1 ring-amber-200">{progress.ended} delisted · {progress.stillUnavailable} still unavailable</span>
+            {progress.review > 0 && <span className="rounded-full bg-red-50 px-2.5 py-1 text-red-700 ring-1 ring-red-200">! {progress.review} need review</span>}
+          </div>
+        </div>
+      </div>
+    </Card>
+  );
+}
+
 function ListingSortHeader({
   label,
   value,
@@ -155,6 +245,7 @@ export function EbayListingsTable({
   const [busyId, setBusyId] = useState<string | null>(null);
   const [notice, setNotice] = useState<{ text: string; error: boolean } | null>(null);
   const [bulkProgress, setBulkProgress] = useState<string | null>(null);
+  const [syncProgress, setSyncProgress] = useState<ListingSyncProgress | null>(null);
   const [sortKey, setSortKey] = useState<ListingSortKey>("margin");
   const [sortDescending, setSortDescending] = useState(true);
   const [pageSize, setPageSize] = useState(25);
@@ -258,17 +349,44 @@ export function EbayListingsTable({
   function syncListingHealth() {
     if (
       !confirm(
-        "Sellfinity will verify the exact live Amazon variant for every tracked eBay listing, look for an approved replacement when needed, and refresh competitor pricing. If no fulfillable equivalent Amazon variant can be found, the eBay listing will be ended so you cannot receive an order you cannot fulfill. Temporary provider failures will remain active for review.\n\nContinue?",
+        "Sellfinity will verify the exact live Amazon variant for every tracked eBay listing, look for an approved replacement when needed, and refresh competitor pricing. Listings previously delisted by this sync because their source was unavailable will also be checked and safely relisted when a profitable equivalent source is found. Manually ended listings are never relisted. If no fulfillable equivalent Amazon variant can be found, an active eBay listing will be ended so you cannot receive an order you cannot fulfill. Temporary provider failures remain active for review.\n\nContinue?",
       )
     ) {
       return;
     }
     setNotice(null);
+    setSyncProgress({
+      stage: "preparing",
+      completed: 0,
+      total: 0,
+      activeQueued: 0,
+      recoveryQueued: 0,
+      kept: 0,
+      replaced: 0,
+      ended: 0,
+      relisted: 0,
+      stillUnavailable: 0,
+      review: 0,
+      marketUpdated: 0,
+    });
     startTransition(async () => {
-      const totals = { processed: 0, kept: 0, replaced: 0, ended: 0, review: 0 };
+      const totals = { processed: 0, kept: 0, replaced: 0, ended: 0, relisted: 0, stillUnavailable: 0, review: 0 };
       const endedIds = new Set<string>();
       const started = await startListingHealthSync();
-      let remaining = started.queued;
+      setSyncProgress({
+        stage: "sources",
+        completed: 0,
+        total: started.queued,
+        activeQueued: started.activeQueued,
+        recoveryQueued: started.recoveryQueued,
+        kept: 0,
+        replaced: 0,
+        ended: 0,
+        relisted: 0,
+        stillUnavailable: 0,
+        review: 0,
+        marketUpdated: 0,
+      });
       async function worker() {
         while (true) {
           const result = await cleanupListingSourcesBatch();
@@ -277,16 +395,28 @@ export function EbayListingsTable({
           totals.kept += result.kept;
           totals.replaced += result.replaced;
           totals.ended += result.ended;
+          totals.relisted += result.relisted;
+          totals.stillUnavailable += result.stillUnavailable;
           totals.review += result.review;
           result.endedIds.forEach((id) => endedIds.add(id));
-          remaining = result.remaining;
           if (result.endedIds.length > 0) {
             const ended = new Set(result.endedIds);
             setRows((current) => current.filter((row) => !ended.has(row.ebayListingId)));
           }
-          setBulkProgress(
-            `Syncing Amazon variants… ${totals.processed} checked (${totals.kept} verified, ${totals.replaced} replaced, ${totals.ended} delisted, ${totals.review} need review, ${remaining} remaining)`,
-          );
+          setSyncProgress({
+            stage: "sources",
+            completed: totals.processed,
+            total: started.queued,
+            activeQueued: started.activeQueued,
+            recoveryQueued: started.recoveryQueued,
+            kept: totals.kept,
+            replaced: totals.replaced,
+            ended: totals.ended,
+            relisted: totals.relisted,
+            stillUnavailable: totals.stillUnavailable,
+            review: totals.review,
+            marketUpdated: 0,
+          });
         }
       }
       await Promise.all(Array.from({ length: 4 }, () => worker()));
@@ -296,6 +426,7 @@ export function EbayListingsTable({
       );
       let marketUpdated = 0;
       let marketErrors = 0;
+      setSyncProgress((current) => current && ({ ...current, stage: "market", completed: 0, total: marketRows.length }));
       for (let i = 0; i < marketRows.length; i += 10) {
         const results = await researchEbayListingsMarket(
           marketRows.slice(i, i + 10).map((row) => ({
@@ -305,15 +436,20 @@ export function EbayListingsTable({
         );
         marketUpdated += results.filter((result) => result.market).length;
         marketErrors += results.filter((result) => result.error).length;
-        setBulkProgress(
-          `Refreshing competitor prices… ${Math.min(i + 10, marketRows.length)}/${marketRows.length} (${marketUpdated} updated)`,
-        );
+        setSyncProgress((current) => current && ({
+          ...current,
+          stage: "market",
+          completed: Math.min(i + 10, marketRows.length),
+          total: marketRows.length,
+          marketUpdated,
+        }));
       }
-      setBulkProgress(null);
       setNotice({
-        text: `Listing health sync complete: ${totals.kept} sources verified, ${totals.replaced} replaced, ${totals.ended} delisted without a fulfillable source, ${marketUpdated} competitor prices refreshed${totals.review ? `, ${totals.review} need review` : ""}${marketErrors ? `, ${marketErrors} market lookups failed` : ""}.`,
+        text: `Smart listing sync complete: ${totals.kept} sources verified, ${totals.replaced} replaced, ${totals.relisted} recovered and relisted, ${totals.ended} delisted without a fulfillable source, ${totals.stillUnavailable} recovery candidates remain unavailable, and ${marketUpdated} competitor prices refreshed${totals.review ? `, ${totals.review} need review` : ""}${marketErrors ? `, ${marketErrors} market lookups failed` : ""}.`,
         error: totals.review > 0 || marketErrors > 0,
       });
+      setSyncProgress((current) => current && ({ ...current, stage: "complete", completed: current.total }));
+      await new Promise((resolve) => setTimeout(resolve, 900));
       window.location.reload();
     });
   }
@@ -517,11 +653,14 @@ export function EbayListingsTable({
         <Button size="sm" variant="secondary" disabled={pending} onClick={cleanUp}>
           {bulkProgress?.startsWith("Cleaning") ? bulkProgress : "Apply suggested prices"}
         </Button>
-        <Button size="sm" variant="secondary" disabled={pending} onClick={syncListingHealth}>
-          {bulkProgress?.startsWith("Syncing Amazon") ||
-          bulkProgress?.startsWith("Refreshing competitor")
-            ? bulkProgress
-            : "Sync listing health"}
+        <Button
+          size="sm"
+          disabled={pending}
+          onClick={syncListingHealth}
+          className="border-0 bg-gradient-to-r from-indigo-600 to-violet-600 px-3.5 text-white shadow-md shadow-indigo-200 hover:from-indigo-500 hover:to-violet-500 disabled:from-indigo-300 disabled:to-violet-300"
+        >
+          <SmartSyncIcon spinning={syncProgress !== null && syncProgress.stage !== "complete"} />
+          {syncProgress && syncProgress.stage !== "complete" ? "Smart sync running" : "Smart Listing Sync"}
         </Button>
         <Button size="sm" variant="secondary" disabled={pending} onClick={researchMarket}>
           {bulkProgress?.startsWith("Researching") ? bulkProgress : "Research market data"}
@@ -558,6 +697,8 @@ export function EbayListingsTable({
           </span>
         )}
       </div>
+
+      {syncProgress && <SmartSyncStatus progress={syncProgress} />}
 
       {fetchError && (
         <p className="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800">

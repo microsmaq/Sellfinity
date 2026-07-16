@@ -15,14 +15,23 @@ export type PublishOneResult =
 export async function publishListingForUser(
   userId: string,
   listingId: string,
+  options: { recoverSourceUnavailable?: boolean } = {},
 ): Promise<PublishOneResult> {
   const connection = await db.ebayConnection.findUnique({ where: { userId } });
   if (!connection || connection.status === "DISCONNECTED") {
     return { ok: false, error: "Connect your eBay account in Settings before publishing." };
   }
 
+  const allowedStatus = options.recoverSourceUnavailable ? ["DRAFT", "ENDED"] : ["DRAFT"];
   const draft = await db.listing.findFirst({
-    where: { id: listingId, userId, status: "DRAFT" },
+    where: {
+      id: listingId,
+      userId,
+      status: { in: allowedStatus },
+      ...(options.recoverSourceUnavailable && {
+        OR: [{ status: "DRAFT" }, { status: "ENDED", endedReason: "SOURCE_UNAVAILABLE" }],
+      }),
+    },
     include: { product: true },
   });
   if (!draft) return { ok: false, error: "The mirrored draft is no longer available." };
@@ -42,10 +51,21 @@ export async function publishListingForUser(
   try {
     const client = await getEbayClientForUser(userId);
     const { ebayListingId } = await client.createListing(input);
-    await db.listing.update({
-      where: { id: draft.id },
-      data: { status: "ACTIVE", ebayListingId, publishedAt: new Date() },
-    });
+    await db.$transaction([
+      db.listing.update({
+        where: { id: draft.id },
+        data: {
+          status: "ACTIVE",
+          ebayListingId,
+          publishedAt: new Date(),
+          endedAt: null,
+          endedReason: null,
+        },
+      }),
+      // Republished Inventory API offers normally receive a new item id. If
+      // eBay reuses one, remove its old local tombstone so it can be displayed.
+      db.ebayListingSuppression.deleteMany({ where: { userId, ebayListingId } }),
+    ]);
     return { ok: true, ebayListingId };
   } catch (error) {
     return {

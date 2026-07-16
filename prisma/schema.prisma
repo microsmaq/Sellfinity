@@ -17,17 +17,17 @@ datasource db {
 }
 
 model User {
-  id           String    @id @default(cuid())
-  email        String    @unique
-  passwordHash String
-  name         String
+  id                   String    @id @default(cuid())
+  email                String    @unique
+  passwordHash         String
+  name                 String
   // FREE | PRO | SCALE
-  plan         String    @default("FREE")
-  planRenewsAt DateTime?
+  plan                 String    @default("FREE")
+  planRenewsAt         DateTime?
   // Automatically publish high-confidence profitable Arbitrage Finder matches
   // after a user-initiated scan finishes.
-  autoPublishArbitrage Boolean @default(false)
-  createdAt    DateTime  @default(now())
+  autoPublishArbitrage Boolean   @default(false)
+  createdAt            DateTime  @default(now())
 
   sessions                Session[]
   products                Product[]
@@ -195,27 +195,30 @@ model Product {
 // An eBay listing for a product. Mirrors what we believe the live eBay state
 // to be; ebayListingId is set on publish (mock IDs in sandbox mode).
 model Listing {
-  id            String    @id @default(cuid())
-  userId        String
-  productId     String
-  ebayListingId String?
-  title         String
-  description   String
-  priceCents    Int
-  quantity      Int
-  imageUrlsJson String    @default("[]")
+  id                    String    @id @default(cuid())
+  userId                String
+  productId             String
+  ebayListingId         String?
+  title                 String
+  description           String
+  priceCents            Int
+  quantity              Int
+  imageUrlsJson         String    @default("[]")
   // DRAFT | ACTIVE | ENDED
-  status        String    @default("DRAFT")
+  status                String    @default("DRAFT")
   // UNVERIFIED | MATCH | LIKELY | REVIEW | REJECTED
   sourceMatchVerdict    String    @default("UNVERIFIED")
   sourceMatchConfidence Int?
   sourceMatchReason     String?
   sourceMatchMethod     String?
   sourceMatchCheckedAt  DateTime?
-  publishedAt   DateTime?
-  endedAt       DateTime?
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
+  publishedAt           DateTime?
+  endedAt               DateTime?
+  // MANUAL | SOURCE_UNAVAILABLE | EBAY_ENDED. Only SOURCE_UNAVAILABLE
+  // listings are eligible for automatic recovery during listing-health sync.
+  endedReason           String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
 
   user       User        @relation(fields: [userId], references: [id], onDelete: Cascade)
   product    Product     @relation(fields: [productId], references: [id], onDelete: Cascade)
@@ -224,6 +227,7 @@ model Listing {
 
   @@index([userId, status])
   @@index([userId, status, sourceMatchVerdict])
+  @@index([userId, status, endedReason])
 }
 
 // A sale imported from eBay. Fee/cost fields are snapshotted at import so the

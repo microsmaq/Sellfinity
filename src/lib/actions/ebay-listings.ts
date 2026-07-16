@@ -24,6 +24,7 @@ import { assessProductMatch, isApprovedProductMatch } from "@/lib/arbitrage/prod
 import { findAmazonMatches } from "@/lib/mirror/match";
 import { resolveExactAmazonVariant } from "@/lib/mirror/variant";
 import { serializeImageUrls } from "@/lib/types";
+import { publishListingForUser } from "@/lib/listings/publish";
 
 export type EbayListingResult = { error?: string };
 
@@ -159,6 +160,7 @@ export async function repriceEbayListing(
 async function endEbayListingForUser(
   userId: string,
   ebayListingId: string,
+  endedReason: "MANUAL" | "SOURCE_UNAVAILABLE" = "MANUAL",
 ): Promise<EbayListingResult> {
   const client = await getEbayClientForUser(userId);
   try {
@@ -173,7 +175,7 @@ async function endEbayListingForUser(
   await db.$transaction([
     db.listing.updateMany({
       where: { userId, ebayListingId },
-      data: { status: "ENDED", endedAt: new Date() },
+      data: { status: "ENDED", endedAt: new Date(), endedReason },
     }),
     db.ebayListingSuppression.upsert({
       where: { userId_ebayListingId: { userId, ebayListingId } },
@@ -347,14 +349,21 @@ export type SourceCleanupBatchResult = {
   kept: number;
   replaced: number;
   ended: number;
+  relisted: number;
+  stillUnavailable: number;
   review: number;
   remaining: number;
   endedIds: string[];
+  relistedIds: string[];
 };
 
-export async function startListingHealthSync(): Promise<{ queued: number }> {
+export async function startListingHealthSync(): Promise<{
+  queued: number;
+  activeQueued: number;
+  recoveryQueued: number;
+}> {
   const user = await requireUser();
-  const queued = await db.listing.updateMany({
+  const active = await db.listing.updateMany({
     where: {
       userId: user.id,
       status: "ACTIVE",
@@ -366,8 +375,23 @@ export async function startListingHealthSync(): Promise<{ queued: number }> {
       sourceMatchCheckedAt: null,
     },
   });
+  const recovery = await db.listing.updateMany({
+    where: {
+      userId: user.id,
+      status: "ENDED",
+      endedReason: "SOURCE_UNAVAILABLE",
+    },
+    data: {
+      sourceMatchVerdict: "UNVERIFIED",
+      sourceMatchCheckedAt: null,
+    },
+  });
   revalidate();
-  return { queued: queued.count };
+  return {
+    queued: active.count + recovery.count,
+    activeQueued: active.count,
+    recoveryQueued: recovery.count,
+  };
 }
 
 function firstImage(json: string): string | null {
@@ -391,7 +415,10 @@ export async function cleanupListingSourcesBatch(): Promise<SourceCleanupBatchRe
   await db.listing.updateMany({
     where: {
       userId: user.id,
-      status: "ACTIVE",
+      OR: [
+        { status: "ACTIVE", ebayListingId: { not: null } },
+        { status: "ENDED", endedReason: "SOURCE_UNAVAILABLE" },
+      ],
       sourceMatchVerdict: "PROCESSING",
       sourceMatchCheckedAt: { lt: new Date(Date.now() - 3 * 60 * 1000) },
     },
@@ -400,8 +427,10 @@ export async function cleanupListingSourcesBatch(): Promise<SourceCleanupBatchRe
   const candidates = await db.listing.findMany({
     where: {
       userId: user.id,
-      status: "ACTIVE",
-      ebayListingId: { not: null },
+      OR: [
+        { status: "ACTIVE", ebayListingId: { not: null } },
+        { status: "ENDED", endedReason: "SOURCE_UNAVAILABLE" },
+      ],
       sourceMatchVerdict: "UNVERIFIED",
     },
     orderBy: [{ publishedAt: "asc" }, { id: "asc" }],
@@ -414,7 +443,10 @@ export async function cleanupListingSourcesBatch(): Promise<SourceCleanupBatchRe
       where: {
         id: candidate.id,
         userId: user.id,
-        status: "ACTIVE",
+        OR: [
+          { status: "ACTIVE", ebayListingId: { not: null } },
+          { status: "ENDED", endedReason: "SOURCE_UNAVAILABLE" },
+        ],
         sourceMatchVerdict: "UNVERIFIED",
       },
       data: { sourceMatchVerdict: "PROCESSING", sourceMatchCheckedAt: new Date() },
@@ -428,8 +460,67 @@ export async function cleanupListingSourcesBatch(): Promise<SourceCleanupBatchRe
     ? await db.listing.findUnique({ where: { id: claimedId }, include: { product: true } })
     : null;
   const listings = claimedListing ? [claimedListing] : [];
-  const counts = { kept: 0, replaced: 0, ended: 0, review: 0 };
+  const counts = {
+    kept: 0,
+    replaced: 0,
+    ended: 0,
+    relisted: 0,
+    stillUnavailable: 0,
+    review: 0,
+  };
   const endedIds: string[] = [];
+  const relistedIds: string[] = [];
+
+  async function recoverIfEligible(listingId: string): Promise<{ ebayListingId?: string; error?: string }> {
+    const recoverable = await db.listing.findFirst({
+      where: {
+        id: listingId,
+        userId: user.id,
+        status: "ENDED",
+        endedReason: "SOURCE_UNAVAILABLE",
+      },
+      include: { product: true },
+    });
+    if (!recoverable) return {};
+    const duplicate = await db.listing.findFirst({
+      where: {
+        userId: user.id,
+        id: { not: recoverable.id },
+        productId: recoverable.productId,
+        status: "ACTIVE",
+      },
+      select: { ebayListingId: true },
+    });
+    if (duplicate) {
+      return { error: "An active eBay listing already uses this recovered Amazon variant." };
+    }
+    const market = recoverable.ebayListingId
+      ? await db.ebayMarketMetric.findUnique({
+          where: {
+            userId_ebayListingId: {
+              userId: user.id,
+              ebayListingId: recoverable.ebayListingId,
+            },
+          },
+        })
+      : null;
+    const priceCents = suggestedListingPriceCents(
+      recoverable.product.costCents,
+      recoverable.product.shippingCostCents,
+      market?.bestSellingPriceCents ?? market?.averageCompetitorPriceCents,
+    );
+    await db.listing.update({
+      where: { id: recoverable.id },
+      data: {
+        priceCents,
+        quantity: Math.max(1, Math.min(recoverable.quantity || 1, recoverable.product.supplierStock)),
+      },
+    });
+    const published = await publishListingForUser(user.id, recoverable.id, {
+      recoverSourceUnavailable: true,
+    });
+    return published.ok ? { ebayListingId: published.ebayListingId } : { error: published.error };
+  }
 
   for (const listing of listings) {
     try {
@@ -489,6 +580,24 @@ export async function cleanupListingSourcesBatch(): Promise<SourceCleanupBatchRe
             sourceMatchCheckedAt: new Date(),
           },
         });
+        if (listing.status === "ENDED") {
+          const recovered = await recoverIfEligible(listing.id);
+          if (recovered.ebayListingId) {
+            counts.relisted++;
+            relistedIds.push(recovered.ebayListingId);
+          } else if (recovered.error) {
+            await db.listing.update({
+              where: { id: listing.id },
+              data: {
+                sourceMatchVerdict: "REVIEW",
+                sourceMatchReason: `Amazon source recovered, but eBay relisting failed: ${recovered.error}`.slice(0, 240),
+                sourceMatchCheckedAt: new Date(),
+              },
+            });
+            counts.review++;
+          }
+          continue;
+        }
         if (exactCurrent.asin === listing.product.supplierProductId) counts.kept++;
         else counts.replaced++;
         continue;
@@ -568,7 +677,40 @@ export async function cleanupListingSourcesBatch(): Promise<SourceCleanupBatchRe
             }
           }
         });
+        if (listing.status === "ENDED") {
+          const recovered = await recoverIfEligible(listing.id);
+          if (recovered.ebayListingId) {
+            counts.relisted++;
+            relistedIds.push(recovered.ebayListingId);
+          } else if (recovered.error) {
+            await db.listing.update({
+              where: { id: listing.id },
+              data: {
+                sourceMatchVerdict: "REVIEW",
+                sourceMatchReason: `Replacement source found, but eBay relisting failed: ${recovered.error}`.slice(0, 240),
+                sourceMatchCheckedAt: new Date(),
+              },
+            });
+            counts.review++;
+          }
+          continue;
+        }
         counts.replaced++;
+        continue;
+      }
+
+      if (listing.status === "ENDED") {
+        await db.listing.update({
+          where: { id: listing.id },
+          data: {
+            sourceMatchVerdict: "REJECTED",
+            sourceMatchConfidence: current.confidence,
+            sourceMatchReason: "Still unavailable: no fulfillable equivalent Amazon variant was found.",
+            sourceMatchMethod: current.method,
+            sourceMatchCheckedAt: new Date(),
+          },
+        });
+        counts.stillUnavailable++;
         continue;
       }
 
@@ -577,7 +719,21 @@ export async function cleanupListingSourcesBatch(): Promise<SourceCleanupBatchRe
         counts.review++;
         continue;
       }
-      const ended = await endEbayListingForUser(user.id, ebayListingId);
+      await db.listing.update({
+        where: { id: listing.id },
+        data: {
+          sourceMatchVerdict: "REJECTED",
+          sourceMatchConfidence: current.confidence,
+          sourceMatchReason: "No fulfillable equivalent Amazon variant was found during listing-health sync.",
+          sourceMatchMethod: current.method,
+          sourceMatchCheckedAt: new Date(),
+        },
+      });
+      const ended = await endEbayListingForUser(
+        user.id,
+        ebayListingId,
+        "SOURCE_UNAVAILABLE",
+      );
       if (ended.error) {
         await db.listing.update({
           where: { id: listing.id },
@@ -613,11 +769,13 @@ export async function cleanupListingSourcesBatch(): Promise<SourceCleanupBatchRe
   const remaining = await db.listing.count({
     where: {
       userId: user.id,
-      status: "ACTIVE",
-      ebayListingId: { not: null },
+      OR: [
+        { status: "ACTIVE", ebayListingId: { not: null } },
+        { status: "ENDED", endedReason: "SOURCE_UNAVAILABLE" },
+      ],
       sourceMatchVerdict: { in: ["UNVERIFIED", "PROCESSING"] },
     },
   });
   revalidate();
-  return { processed: listings.length, ...counts, remaining, endedIds };
+  return { processed: listings.length, ...counts, remaining, endedIds, relistedIds };
 }
