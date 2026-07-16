@@ -156,11 +156,11 @@ export async function repriceEbayListing(
 }
 
 /** End a live eBay listing (any origin). */
-export async function endEbayListing(
+async function endEbayListingForUser(
+  userId: string,
   ebayListingId: string,
 ): Promise<EbayListingResult> {
-  const user = await requireUser();
-  const client = await getEbayClientForUser(user.id);
+  const client = await getEbayClientForUser(userId);
   try {
     await client.endListing(ebayListingId);
   } catch (e) {
@@ -172,17 +172,25 @@ export async function endEbayListing(
   }
   await db.$transaction([
     db.listing.updateMany({
-      where: { userId: user.id, ebayListingId },
+      where: { userId, ebayListingId },
       data: { status: "ENDED", endedAt: new Date() },
     }),
     db.ebayListingSuppression.upsert({
-      where: { userId_ebayListingId: { userId: user.id, ebayListingId } },
-      create: { userId: user.id, ebayListingId },
+      where: { userId_ebayListingId: { userId, ebayListingId } },
+      create: { userId, ebayListingId },
       update: {},
     }),
   ]);
-  revalidate();
   return {};
+}
+
+export async function endEbayListing(
+  ebayListingId: string,
+): Promise<EbayListingResult> {
+  const user = await requireUser();
+  const result = await endEbayListingForUser(user.id, ebayListingId);
+  revalidate();
+  return result;
 }
 
 export type CleanupItemResult = {
@@ -344,6 +352,24 @@ export type SourceCleanupBatchResult = {
   endedIds: string[];
 };
 
+export async function startListingHealthSync(): Promise<{ queued: number }> {
+  const user = await requireUser();
+  const queued = await db.listing.updateMany({
+    where: {
+      userId: user.id,
+      status: "ACTIVE",
+      ebayListingId: { not: null },
+      sourceMatchVerdict: { not: "PROCESSING" },
+    },
+    data: {
+      sourceMatchVerdict: "UNVERIFIED",
+      sourceMatchCheckedAt: null,
+    },
+  });
+  revalidate();
+  return { queued: queued.count };
+}
+
 function firstImage(json: string): string | null {
   try {
     const images = JSON.parse(json) as unknown;
@@ -354,9 +380,10 @@ function firstImage(json: string): string | null {
 }
 
 /**
- * Verify a few tracked live listings at a time. Wrong sources are replaced
- * only by AI/rules-approved Amazon candidates. If no safe replacement exists,
- * the live listing remains active with confidence and reason for seller review.
+ * Verify a few tracked live listings at a time. Wrong or unavailable sources
+ * are replaced only by AI/rules-approved Amazon candidates. If the provider
+ * research completes but no fulfillable equivalent exists, end the eBay item;
+ * transient provider failures remain active for review and retry.
  */
 export async function cleanupListingSourcesBatch(): Promise<SourceCleanupBatchResult> {
   const user = await requireUser();
@@ -421,8 +448,9 @@ export async function cleanupListingSourcesBatch(): Promise<SourceCleanupBatchRe
         url: listing.product.supplierUrl,
         imageUrl: firstImage(listing.product.imageUrlsJson) ?? undefined,
       });
-      if (exactCurrent) {
-        const assessment = exactCurrent.variantAssessment ?? current;
+      const exactCurrentAssessment = exactCurrent?.variantAssessment ?? current;
+      if (exactCurrent && isApprovedProductMatch(exactCurrentAssessment)) {
+        const assessment = exactCurrentAssessment;
         const product = await db.product.upsert({
           where: { userId_sku: { userId: user.id, sku: exactCurrent.asin } },
           create: {
@@ -544,21 +572,28 @@ export async function cleanupListingSourcesBatch(): Promise<SourceCleanupBatchRe
         continue;
       }
 
-      // No safe replacement was proven. Keep the live listing in place and
-      // surface the evidence to the seller instead of ending it automatically.
-      // Profit and repricing remain disabled until a verified source exists.
-      await db.listing.update({
-        where: { id: listing.id },
-        data: {
-          sourceMatchVerdict:
-            current.verdict === "REJECTED" ? "REJECTED" : "REVIEW",
-          sourceMatchConfidence: current.confidence,
-          sourceMatchReason: `No exact Amazon source proven. ${current.reason}`,
-          sourceMatchMethod: current.method,
-          sourceMatchCheckedAt: new Date(),
-        },
-      });
-      counts.review++;
+      const ebayListingId = listing.ebayListingId;
+      if (!ebayListingId) {
+        counts.review++;
+        continue;
+      }
+      const ended = await endEbayListingForUser(user.id, ebayListingId);
+      if (ended.error) {
+        await db.listing.update({
+          where: { id: listing.id },
+          data: {
+            sourceMatchVerdict: "REVIEW",
+            sourceMatchConfidence: current.confidence,
+            sourceMatchReason: `No fulfillable equivalent Amazon variant was found, but eBay could not end the listing: ${ended.error}`,
+            sourceMatchMethod: current.method,
+            sourceMatchCheckedAt: new Date(),
+          },
+        });
+        counts.review++;
+      } else {
+        counts.ended++;
+        endedIds.push(ebayListingId);
+      }
     } catch (error) {
       await db.listing.update({
         where: { id: listing.id },

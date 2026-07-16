@@ -102,9 +102,16 @@ export async function findAmazonMatches(
   let results: RainforestSearchResult[];
   try {
     const data = await rainforestRequest<{
+      request_info?: { success?: boolean };
       search_results?: RainforestSearchResult[];
     }>({ type: "search", search_term: searchTerm });
-    results = data.search_results ?? [];
+    if (
+      data.request_info?.success === false ||
+      !Array.isArray(data.search_results)
+    ) {
+      throw new Error("Amazon source search returned an incomplete response.");
+    }
+    results = data.search_results;
   } catch {
     if (options.throwOnError) throw new Error("Amazon source search failed.");
     return [];

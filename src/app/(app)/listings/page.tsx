@@ -50,6 +50,7 @@ export default async function ListingsPage() {
         estimatedSales30d: true,
         competitorCount: true,
         averageCompetitorPriceCents: true,
+        bestSellingPriceCents: true,
       },
     }),
   ]);
@@ -63,6 +64,8 @@ export default async function ListingsPage() {
       estimatedSales30d: metric.estimatedSales30d,
       competitorCount: metric.competitorCount,
       averageCompetitorPriceCents: metric.averageCompetitorPriceCents,
+      bestSellingPriceCents:
+        metric.bestSellingPriceCents ?? metric.averageCompetitorPriceCents,
     });
   }
 

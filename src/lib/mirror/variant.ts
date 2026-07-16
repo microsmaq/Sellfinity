@@ -125,11 +125,17 @@ export async function resolveExactAmazonVariant(
   seed: AmazonMatch,
 ): Promise<(AmazonMatch & { variantAssessment?: ProductMatchAssessment }) | null> {
   if (!process.env.RAINFOREST_API_KEY) return seed;
-  const data = await rainforestRequest<{ product?: VariantProduct }>({
+  const data = await rainforestRequest<{
+    request_info?: { success?: boolean };
+    product?: VariantProduct;
+  }>({
     type: "product",
     asin: seed.asin,
     variant_prices: "true",
   });
+  if (data.request_info?.success === false) {
+    throw new Error("Amazon variant lookup returned an incomplete response.");
+  }
   const product = data.product;
   if (!product) return null;
   const variants = product.variants ?? [];
@@ -155,10 +161,16 @@ export async function resolveExactAmazonVariant(
     price = product.buybox_winner?.price?.value;
   }
   if (typeof price !== "number" || price <= 0) {
-    const child = await rainforestRequest<{ product?: VariantProduct }>({
+    const child = await rainforestRequest<{
+      request_info?: { success?: boolean };
+      product?: VariantProduct;
+    }>({
       type: "product",
       asin,
     });
+    if (child.request_info?.success === false) {
+      throw new Error("Amazon child-variant lookup returned an incomplete response.");
+    }
     price = child.product?.buybox_winner?.price?.value;
   }
   if (typeof price !== "number" || price <= 0) return null;

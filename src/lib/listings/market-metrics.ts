@@ -4,6 +4,7 @@ export type ListingMarketMetrics = {
   estimatedSales30d: number;
   competitorCount: number;
   averageCompetitorPriceCents: number;
+  bestSellingPriceCents: number;
 };
 
 type ResearchMetricRow = {
@@ -20,17 +21,29 @@ export function aggregateListingMarketMetrics(
 ): Map<string, ListingMarketMetrics> {
   const totals = new Map<
     string,
-    { priceCents: number; sales30d: number; count: number }
+    {
+      priceCents: number;
+      sales30d: number;
+      count: number;
+      bestSellingPriceCents: number;
+      bestSales30d: number;
+    }
   >();
   for (const row of rows) {
     const current = totals.get(row.asin) ?? {
       priceCents: 0,
       sales30d: 0,
       count: 0,
+      bestSellingPriceCents: row.ebayPriceCents,
+      bestSales30d: row.salesEst,
     };
     current.priceCents += row.ebayPriceCents;
     current.sales30d += row.salesEst;
     current.count++;
+    if (row.salesEst > current.bestSales30d) {
+      current.bestSales30d = row.salesEst;
+      current.bestSellingPriceCents = row.ebayPriceCents;
+    }
     totals.set(row.asin, current);
   }
 
@@ -41,6 +54,7 @@ export function aggregateListingMarketMetrics(
         estimatedSales30d: Math.round(total.sales30d / total.count),
         competitorCount: total.count,
         averageCompetitorPriceCents: Math.round(total.priceCents / total.count),
+        bestSellingPriceCents: total.bestSellingPriceCents,
       },
     ]),
   );

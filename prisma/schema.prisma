@@ -121,6 +121,7 @@ model EbayMarketMetric {
   estimatedSales30d           Int
   competitorCount             Int
   averageCompetitorPriceCents Int
+  bestSellingPriceCents       Int?
   query                       String
   updatedAt                   DateTime @updatedAt
   createdAt                   DateTime @default(now())

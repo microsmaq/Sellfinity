@@ -23,6 +23,7 @@ describe("eBay market research", () => {
     );
     expect(result?.competitorCount).toBe(3);
     expect(result?.averageCompetitorPriceCents).toBe(1500);
+    expect([1000, 2000]).toContain(result?.bestSellingPriceCents);
     expect(result?.estimatedSales30d).toBeGreaterThan(0);
   });
 

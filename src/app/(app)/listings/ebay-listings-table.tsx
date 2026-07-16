@@ -11,6 +11,7 @@ import {
   repriceEbayListing,
   researchEbayListingsMarket,
   unmatchEbayListing,
+  startListingHealthSync,
 } from "@/lib/actions/ebay-listings";
 import {
   suggestedListingPriceCents,
@@ -19,6 +20,7 @@ import { formatCents, parseDollarsToCents } from "@/lib/money";
 import { Badge, Button, Card, cx } from "@/components/ui";
 import { downloadBase64File } from "@/lib/download";
 import { listingNeedsAttention } from "@/lib/listings/attention";
+import { assessListingHealth } from "@/lib/listings/health";
 
 export type EbayRow = {
   ebayListingId: string;
@@ -31,6 +33,7 @@ export type EbayRow = {
     estimatedSales30d: number;
     competitorCount: number;
     averageCompetitorPriceCents: number;
+    bestSellingPriceCents: number;
   } | null;
   suggestedPriceCents: number | null;
   /** Amazon source data when this listing is matched/tracked. */
@@ -252,11 +255,20 @@ export function EbayListingsTable({
     });
   }
 
-  function cleanUpSources() {
+  function syncListingHealth() {
+    if (
+      !confirm(
+        "Sellfinity will verify the exact live Amazon variant for every tracked eBay listing, look for an approved replacement when needed, and refresh competitor pricing. If no fulfillable equivalent Amazon variant can be found, the eBay listing will be ended so you cannot receive an order you cannot fulfill. Temporary provider failures will remain active for review.\n\nContinue?",
+      )
+    ) {
+      return;
+    }
     setNotice(null);
     startTransition(async () => {
       const totals = { processed: 0, kept: 0, replaced: 0, ended: 0, review: 0 };
-      let remaining = rows.length;
+      const endedIds = new Set<string>();
+      const started = await startListingHealthSync();
+      let remaining = started.queued;
       async function worker() {
         while (true) {
           const result = await cleanupListingSourcesBatch();
@@ -266,21 +278,41 @@ export function EbayListingsTable({
           totals.replaced += result.replaced;
           totals.ended += result.ended;
           totals.review += result.review;
+          result.endedIds.forEach((id) => endedIds.add(id));
           remaining = result.remaining;
           if (result.endedIds.length > 0) {
             const ended = new Set(result.endedIds);
             setRows((current) => current.filter((row) => !ended.has(row.ebayListingId)));
           }
           setBulkProgress(
-            `Verifying sources… ${totals.processed} checked (${totals.kept} verified, ${totals.replaced} replaced, ${totals.review} need review, ${remaining} remaining)`,
+            `Syncing Amazon variants… ${totals.processed} checked (${totals.kept} verified, ${totals.replaced} replaced, ${totals.ended} delisted, ${totals.review} need review, ${remaining} remaining)`,
           );
         }
       }
       await Promise.all(Array.from({ length: 4 }, () => worker()));
+
+      const marketRows = rows.filter(
+        (row) => !endedIds.has(row.ebayListingId),
+      );
+      let marketUpdated = 0;
+      let marketErrors = 0;
+      for (let i = 0; i < marketRows.length; i += 10) {
+        const results = await researchEbayListingsMarket(
+          marketRows.slice(i, i + 10).map((row) => ({
+            ebayListingId: row.ebayListingId,
+            title: row.title,
+          })),
+        );
+        marketUpdated += results.filter((result) => result.market).length;
+        marketErrors += results.filter((result) => result.error).length;
+        setBulkProgress(
+          `Refreshing competitor prices… ${Math.min(i + 10, marketRows.length)}/${marketRows.length} (${marketUpdated} updated)`,
+        );
+      }
       setBulkProgress(null);
       setNotice({
-        text: `Source verification complete: ${totals.kept} verified, ${totals.replaced} replaced, ${totals.review} left active for your review. No listings were ended automatically.`,
-        error: totals.review > 0,
+        text: `Listing health sync complete: ${totals.kept} sources verified, ${totals.replaced} replaced, ${totals.ended} delisted without a fulfillable source, ${marketUpdated} competitor prices refreshed${totals.review ? `, ${totals.review} need review` : ""}${marketErrors ? `, ${marketErrors} market lookups failed` : ""}.`,
+        error: totals.review > 0 || marketErrors > 0,
       });
       window.location.reload();
     });
@@ -485,10 +517,11 @@ export function EbayListingsTable({
         <Button size="sm" variant="secondary" disabled={pending} onClick={cleanUp}>
           {bulkProgress?.startsWith("Cleaning") ? bulkProgress : "Apply suggested prices"}
         </Button>
-        <Button size="sm" variant="secondary" disabled={pending} onClick={cleanUpSources}>
-          {bulkProgress?.startsWith("Verifying sources")
+        <Button size="sm" variant="secondary" disabled={pending} onClick={syncListingHealth}>
+          {bulkProgress?.startsWith("Syncing Amazon") ||
+          bulkProgress?.startsWith("Refreshing competitor")
             ? bulkProgress
-            : "Verify exact Amazon variants"}
+            : "Sync listing health"}
         </Button>
         <Button size="sm" variant="secondary" disabled={pending} onClick={researchMarket}>
           {bulkProgress?.startsWith("Researching") ? bulkProgress : "Research market data"}
@@ -549,6 +582,7 @@ export function EbayListingsTable({
               <ListingSortHeader label="Avg. comp price" value="averagePrice" active={sortKey === "averagePrice"} descending={sortDescending} onSort={sortBy} />
               <ListingSortHeader label="Suggested price" value="suggestedPrice" active={sortKey === "suggestedPrice"} descending={sortDescending} onSort={sortBy} />
               <ListingSortHeader label="Match confidence" value="matchConfidence" active={sortKey === "matchConfidence"} descending={sortDescending} onSort={sortBy} />
+              <th className="px-4 py-3 text-right">Competitive health</th>
               <th className="px-4 py-3">Status</th>
               <th className="px-4 py-3" />
             </tr>
@@ -556,6 +590,7 @@ export function EbayListingsTable({
           <tbody>
             {visibleRows.map((r) => {
               const problem = listingNeedsAttention(r);
+              const health = assessListingHealth(r);
               return (
                 <tr
                   key={r.ebayListingId}
@@ -687,6 +722,33 @@ export function EbayListingsTable({
                       <Badge tone="slate">Untracked</Badge>
                     )}
                   </td>
+                  <td
+                    className="px-4 py-3 text-right"
+                    title="Profit includes estimated eBay fees, the Amazon cost, shipping cost, and a 3% promoted-listing rate."
+                  >
+                    <Badge
+                      tone={
+                        health.status === "COMPETITIVE"
+                          ? "green"
+                          : health.status === "SOURCE_ISSUE" ||
+                              health.status === "UNPROFITABLE"
+                            ? "red"
+                            : "amber"
+                      }
+                    >
+                      {health.label}
+                    </Badge>
+                    {health.benchmarkPriceCents !== null && (
+                      <p className="mt-1 whitespace-nowrap text-xs text-slate-500">
+                        Est. best seller {formatCents(health.benchmarkPriceCents)}
+                      </p>
+                    )}
+                    {health.profitCents !== null && (
+                      <p className="whitespace-nowrap text-xs text-slate-500">
+                        {formatCents(health.profitCents)} net · {health.marginPct}%
+                      </p>
+                    )}
+                  </td>
                   <td className="px-4 py-3">
                     {!r.match && r.sourceAssessment ? (
                       <Badge tone="amber">Review source</Badge>
@@ -777,7 +839,7 @@ export function EbayListingsTable({
             })}
             {filteredRows.length === 0 && !fetchError && (
               <tr>
-                <td colSpan={11} className="px-4 py-12 text-center text-slate-500">
+                <td colSpan={12} className="px-4 py-12 text-center text-slate-500">
                   {attentionOnly
                     ? "No active listings currently need attention."
                     : "No active listings found on your eBay account."}

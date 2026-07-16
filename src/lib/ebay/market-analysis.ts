@@ -26,13 +26,26 @@ export function summarizeBrowseMarket(
   const competitors = items.flatMap((item) => {
     if (!item.itemId || item.itemId.includes(`|${ownEbayListingId}|`)) return [];
     const priceCents = Math.round(parseFloat(item.price?.value ?? "0") * 100);
-    return priceCents > 0 ? [{ itemId: item.itemId, priceCents }] : [];
+    return priceCents > 0
+      ? [
+          {
+            itemId: item.itemId,
+            priceCents,
+            estimatedSales30d: estimatedSales30d(item.itemId, priceCents),
+          },
+        ]
+      : [];
   });
   if (competitors.length === 0) return null;
+  const bestSeller = [...competitors].sort(
+    (left, right) =>
+      right.estimatedSales30d - left.estimatedSales30d ||
+      left.priceCents - right.priceCents,
+  )[0];
   return {
     estimatedSales30d: Math.round(
       competitors.reduce(
-        (sum, item) => sum + estimatedSales30d(item.itemId, item.priceCents),
+        (sum, item) => sum + item.estimatedSales30d,
         0,
       ) / competitors.length,
     ),
@@ -41,5 +54,6 @@ export function summarizeBrowseMarket(
       competitors.reduce((sum, item) => sum + item.priceCents, 0) /
         competitors.length,
     ),
+    bestSellingPriceCents: bestSeller.priceCents,
   };
 }
