@@ -28,6 +28,7 @@ describe("Excel exports", () => {
         marginPct: 27,
         estimatedSales30d: 20,
         competitorCount: 45,
+        ebayRecommendedPriceCents: 2499,
         averageCompetitorPriceCents: 2599,
         suggestedPriceCents: 2499,
         matchVerdict: "MATCH",
@@ -40,7 +41,7 @@ describe("Excel exports", () => {
     const sheet = workbook.getWorksheet("Listings")!;
     expect(sheet.getCell("C2").value).toBe(24.99);
     expect(sheet.getCell("F2").value).toBe(0.27);
-    expect(sheet.getCell("O2").value).toEqual({
+    expect(sheet.getCell("P2").value).toEqual({
       text: "Open on eBay",
       hyperlink: "https://www.ebay.com/itm/123456789",
     });

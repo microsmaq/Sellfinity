@@ -14,7 +14,8 @@ import {
   startListingHealthSync,
 } from "@/lib/actions/ebay-listings";
 import {
-  suggestedListingPriceCents,
+  aiSuggestedListingPriceCents,
+  trueProfitCents,
 } from "@/lib/listings/cleanup";
 import { formatCents, parseDollarsToCents } from "@/lib/money";
 import { Badge, Button, Card, cx } from "@/components/ui";
@@ -63,6 +64,7 @@ type ListingSortKey =
   | "margin"
   | "demand"
   | "competition"
+  | "recommendedPrice"
   | "averagePrice"
   | "suggestedPrice"
   | "matchConfidence";
@@ -268,6 +270,7 @@ export function EbayListingsTable({
         case "margin": return row.match?.marginPct ?? null;
         case "demand": return row.market?.estimatedSales30d ?? null;
         case "competition": return row.market?.competitorCount ?? null;
+        case "recommendedPrice": return row.market?.bestSellingPriceCents ?? null;
         case "averagePrice": return row.market?.averageCompetitorPriceCents ?? null;
         case "suggestedPrice": return row.suggestedPriceCents;
         case "matchConfidence": return row.sourceAssessment?.confidence ?? null;
@@ -462,13 +465,14 @@ export function EbayListingsTable({
     }
     if (
       !confirm(
-        `Sellfinity will verify the exact Amazon child variant and its live price for ${toReprice.length} listing${toReprice.length === 1 ? "" : "s"}, then adjust each live eBay price when needed. Ambiguous variants will be skipped. Every applied price must clear the 30% margin / $7 profit floor (including estimated fees and a 3% ad rate).\n\nNo listings will be ended. Continue?`,
+        `Sellfinity will verify the exact Amazon child variant and its live price for ${toReprice.length} listing${toReprice.length === 1 ? "" : "s"}, then apply the AI suggested price. Pricing targets a 20% margin and may move as low as 15% to stay close to the eBay market recommendation and at or below the average competitor price. It never prices below 15% estimated margin after fees and the assumed 3% ad rate.\n\nNo listings will be ended. Continue?`,
       )
     ) {
       return;
     }
     const items = toReprice.map((row) => ({
       ebayListingId: row.ebayListingId,
+      ebayRecommendedPriceCents: row.market?.bestSellingPriceCents,
       averageCompetitorPriceCents: row.market?.averageCompetitorPriceCents,
     }));
     setNotice(null);
@@ -515,9 +519,9 @@ export function EbayListingsTable({
   }
 
   function researchMarket() {
-    const missing = rows.filter((row) => !row.market);
-    if (missing.length === 0) {
-      setNotice({ text: "Market research is already available for every matched listing.", error: false });
+    const targets = rows;
+    if (targets.length === 0) {
+      setNotice({ text: "There are no active listings to research.", error: false });
       return;
     }
     setNotice(null);
@@ -525,8 +529,8 @@ export function EbayListingsTable({
       let researched = 0;
       let unavailable = 0;
       let errors = 0;
-      for (let i = 0; i < missing.length; i += 10) {
-        const batch = missing.slice(i, i + 10).map((row) => ({
+      for (let i = 0; i < targets.length; i += 10) {
+        const batch = targets.slice(i, i + 10).map((row) => ({
           ebayListingId: row.ebayListingId,
           title: row.title,
         }));
@@ -536,31 +540,42 @@ export function EbayListingsTable({
             const result = results.find(
               (item) => item.ebayListingId === row.ebayListingId,
             );
-            return result?.market
+            if (!result || result.error) return row;
+            return result.market
               ? {
                   ...row,
                   market: result.market,
                   suggestedPriceCents: row.match
-                    ? suggestedListingPriceCents(
+                    ? aiSuggestedListingPriceCents(
                         row.match.amazonPriceCents,
                         row.match.shippingCostCents,
+                        result.market.bestSellingPriceCents,
                         result.market.averageCompetitorPriceCents,
                       )
                     : null,
                 }
-              : row;
+              : {
+                  ...row,
+                  market: null,
+                  suggestedPriceCents: row.match
+                    ? aiSuggestedListingPriceCents(
+                        row.match.amazonPriceCents,
+                        row.match.shippingCostCents,
+                      )
+                    : null,
+                };
           }),
         );
         researched += results.filter((result) => result.market).length;
         unavailable += results.filter((result) => !result.market && !result.error).length;
         errors += results.filter((result) => result.error).length;
         setBulkProgress(
-          `Researching… ${Math.min(i + 10, missing.length)}/${missing.length} (${researched} found)`,
+          `Refreshing all market data… ${Math.min(i + 10, targets.length)}/${targets.length} (${researched} updated)`,
         );
       }
       setBulkProgress(null);
       setNotice({
-        text: `Market research complete: ${researched} updated${unavailable ? `, ${unavailable} without comparable results` : ""}${errors ? `, ${errors} failed` : ""}.`,
+        text: `Full market refresh complete: ${researched} listings updated with current recommendation, demand, competition, average price, and AI suggested price${unavailable ? `, ${unavailable} without comparable results` : ""}${errors ? `, ${errors} failed` : ""}.`,
         error: errors > 0,
       });
     });
@@ -581,6 +596,7 @@ export function EbayListingsTable({
           marginPct: row.match?.marginPct ?? null,
           estimatedSales30d: row.market?.estimatedSales30d ?? null,
           competitorCount: row.market?.competitorCount ?? null,
+          ebayRecommendedPriceCents: row.market?.bestSellingPriceCents ?? null,
           averageCompetitorPriceCents:
             row.market?.averageCompetitorPriceCents ?? null,
           suggestedPriceCents: row.suggestedPriceCents,
@@ -663,7 +679,7 @@ export function EbayListingsTable({
           {syncProgress && syncProgress.stage !== "complete" ? "Smart sync running" : "Smart Listing Sync"}
         </Button>
         <Button size="sm" variant="secondary" disabled={pending} onClick={researchMarket}>
-          {bulkProgress?.startsWith("Researching") ? bulkProgress : "Research market data"}
+          {bulkProgress?.startsWith("Refreshing all") ? bulkProgress : "Refresh all market data"}
         </Button>
         <Button size="sm" variant="secondary" disabled={pending} onClick={exportExcel}>
           Export Excel
@@ -720,8 +736,9 @@ export function EbayListingsTable({
               <ListingSortHeader label="Profit / Margin" value="margin" active={sortKey === "margin"} descending={sortDescending} onSort={sortBy} />
               <ListingSortHeader label="Est. demand" value="demand" active={sortKey === "demand"} descending={sortDescending} onSort={sortBy} />
               <ListingSortHeader label="Competition" value="competition" active={sortKey === "competition"} descending={sortDescending} onSort={sortBy} />
+              <ListingSortHeader label="eBay market rec." value="recommendedPrice" active={sortKey === "recommendedPrice"} descending={sortDescending} onSort={sortBy} />
               <ListingSortHeader label="Avg. comp price" value="averagePrice" active={sortKey === "averagePrice"} descending={sortDescending} onSort={sortBy} />
-              <ListingSortHeader label="Suggested price" value="suggestedPrice" active={sortKey === "suggestedPrice"} descending={sortDescending} onSort={sortBy} />
+              <ListingSortHeader label="AI suggested price" value="suggestedPrice" active={sortKey === "suggestedPrice"} descending={sortDescending} onSort={sortBy} />
               <ListingSortHeader label="Match confidence" value="matchConfidence" active={sortKey === "matchConfidence"} descending={sortDescending} onSort={sortBy} />
               <th className="px-4 py-3 text-right">Competitive health</th>
               <th className="px-4 py-3">Status</th>
@@ -822,14 +839,53 @@ export function EbayListingsTable({
                     {r.market?.competitorCount ?? "—"}
                   </td>
                   <td className="px-4 py-3 text-right tabular-nums">
+                    {r.market ? (
+                      <span
+                        title="Sellfinity recommendation derived from the comparable listing with the strongest estimated demand in current eBay market data; it is not an official eBay Seller Hub recommendation."
+                        className="font-medium text-blue-700"
+                      >
+                        {formatCents(r.market.bestSellingPriceCents)}
+                      </span>
+                    ) : (
+                      "—"
+                    )}
+                  </td>
+                  <td className="px-4 py-3 text-right tabular-nums">
                     {r.market
                       ? formatCents(r.market.averageCompetitorPriceCents)
                       : "—"}
                   </td>
-                  <td className="px-4 py-3 text-right font-medium tabular-nums text-indigo-700">
-                    {r.suggestedPriceCents !== null
-                      ? formatCents(r.suggestedPriceCents)
-                      : "—"}
+                  <td className="px-4 py-3 text-right tabular-nums">
+                    {r.suggestedPriceCents !== null && r.match ? (
+                      <div
+                        className={cx(
+                          "font-medium",
+                          r.market && r.suggestedPriceCents > r.market.averageCompetitorPriceCents
+                            ? "text-amber-700"
+                            : "text-indigo-700",
+                        )}
+                        title={
+                          r.market && r.suggestedPriceCents > r.market.averageCompetitorPriceCents
+                            ? "The market average is too low to preserve the hard 15% estimated margin floor."
+                            : "Closest competitive price that targets 20% margin and never falls below 15%."
+                        }
+                      >
+                        {formatCents(r.suggestedPriceCents)}
+                        <p className="mt-0.5 whitespace-nowrap text-[10px] font-normal text-slate-500">
+                          {Math.round(
+                            (trueProfitCents(
+                              r.suggestedPriceCents,
+                              r.match.amazonPriceCents,
+                              r.match.shippingCostCents,
+                            ) /
+                              r.suggestedPriceCents) *
+                              100,
+                          )}% est. margin
+                        </p>
+                      </div>
+                    ) : (
+                      "—"
+                    )}
                   </td>
                   <td className="px-4 py-3 text-right">
                     {r.sourceAssessment ? (
@@ -980,7 +1036,7 @@ export function EbayListingsTable({
             })}
             {filteredRows.length === 0 && !fetchError && (
               <tr>
-                <td colSpan={12} className="px-4 py-12 text-center text-slate-500">
+                <td colSpan={13} className="px-4 py-12 text-center text-slate-500">
                   {attentionOnly
                     ? "No active listings currently need attention."
                     : "No active listings found on your eBay account."}

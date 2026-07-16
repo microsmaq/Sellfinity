@@ -18,7 +18,7 @@ import {
   type TrackInput,
   type TrackResult,
 } from "@/lib/mirror/track";
-import { suggestedListingPriceCents } from "@/lib/listings/cleanup";
+import { aiSuggestedListingPriceCents } from "@/lib/listings/cleanup";
 import { estimateMargin } from "@/lib/fees";
 import { assessProductMatch, isApprovedProductMatch } from "@/lib/arbitrage/product-match";
 import { findAmazonMatches } from "@/lib/mirror/match";
@@ -76,6 +76,9 @@ export async function researchEbayListingsMarket(
     try {
       const result = await researchEbayMarket(item.title, item.ebayListingId);
       if (!result) {
+        await db.ebayMarketMetric.deleteMany({
+          where: { userId: user.id, ebayListingId: item.ebayListingId },
+        });
         results.push({ ebayListingId: item.ebayListingId, market: null });
         continue;
       }
@@ -214,12 +217,14 @@ const CLEANUP_BATCH_SIZE = 4;
 /**
  * Apply suggested prices to a batch of tracked listings. The server clamps
  * every requested price to the profitability floor, so stale or manipulated
- * client data can never push a live listing below the 30%-margin / $7-profit
- * target. This workflow never ends a listing.
+ * client data can never push a live listing below 15% estimated margin. It
+ * targets 20% while staying close to current eBay market pricing. This
+ * workflow never ends a listing.
  */
 export async function cleanupEbayListings(
   items: Array<{
     ebayListingId: string;
+    ebayRecommendedPriceCents?: number | null;
     averageCompetitorPriceCents?: number | null;
   }>,
 ): Promise<CleanupItemResult[]> {
@@ -288,9 +293,10 @@ export async function cleanupEbayListings(
           data: { productId: product.id },
         });
       }
-      const newPriceCents = suggestedListingPriceCents(
+      const newPriceCents = aiSuggestedListingPriceCents(
         exact.priceCents,
         product.shippingCostCents,
+        item.ebayRecommendedPriceCents,
         item.averageCompetitorPriceCents,
       );
       if (newPriceCents !== listing.priceCents) {
@@ -504,10 +510,11 @@ export async function cleanupListingSourcesBatch(): Promise<SourceCleanupBatchRe
           },
         })
       : null;
-    const priceCents = suggestedListingPriceCents(
+    const priceCents = aiSuggestedListingPriceCents(
       recoverable.product.costCents,
       recoverable.product.shippingCostCents,
-      market?.bestSellingPriceCents ?? market?.averageCompetitorPriceCents,
+      market?.bestSellingPriceCents,
+      market?.averageCompetitorPriceCents,
     );
     await db.listing.update({
       where: { id: recoverable.id },

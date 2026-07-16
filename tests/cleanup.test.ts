@@ -8,6 +8,9 @@ import {
   classifyListing,
   targetPriceCents,
   suggestedListingPriceCents,
+  aiSuggestedListingPriceCents,
+  AI_MIN_MARGIN,
+  AI_TARGET_MARGIN,
   trueProfitCents,
 } from "@/lib/listings/cleanup";
 import { EBAY_FINAL_VALUE_RATE, EBAY_PER_ORDER_FEE_CENTS } from "@/lib/fees";
@@ -120,5 +123,29 @@ describe("suggestedListingPriceCents", () => {
     expect(trueProfitCents(suggested, 1000, 0)).toBeGreaterThanOrEqual(
       TARGET_PROFIT_CENTS,
     );
+  });
+});
+
+describe("aiSuggestedListingPriceCents", () => {
+  const marginAt = (price: number, cost: number) =>
+    trueProfitCents(price, cost, 0) / price;
+
+  it("stays close to the eBay recommendation while clearing the 20% target", () => {
+    const suggested = aiSuggestedListingPriceCents(2000, 0, 3999, 4299);
+    expect(suggested).toBe(3999);
+    expect(marginAt(suggested, 2000)).toBeGreaterThanOrEqual(AI_TARGET_MARGIN);
+    expect(suggested).toBeLessThanOrEqual(4299);
+  });
+
+  it("can use the 15-20% band to remain at or below the market average", () => {
+    const suggested = aiSuggestedListingPriceCents(3000, 0, 4499, 4499);
+    expect(suggested).toBeLessThanOrEqual(4499);
+    expect(marginAt(suggested, 3000)).toBeGreaterThanOrEqual(AI_MIN_MARGIN);
+  });
+
+  it("never sacrifices the 15% floor when the market average is too low", () => {
+    const suggested = aiSuggestedListingPriceCents(4000, 0, 3999, 4199);
+    expect(suggested).toBeGreaterThan(4199);
+    expect(marginAt(suggested, 4000)).toBeGreaterThanOrEqual(AI_MIN_MARGIN);
   });
 });

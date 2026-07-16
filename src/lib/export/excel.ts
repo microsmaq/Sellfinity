@@ -41,6 +41,7 @@ export type ListingsExcelRow = {
   marginPct: number | null;
   estimatedSales30d: number | null;
   competitorCount: number | null;
+  ebayRecommendedPriceCents: number | null;
   averageCompetitorPriceCents: number | null;
   suggestedPriceCents: number | null;
   matchVerdict: string | null;
@@ -57,8 +58,8 @@ export async function createListingsWorkbook(
   const sheet = workbook.addWorksheet("Listings");
   sheet.addRow([
     "Product", "eBay item ID", "eBay price", "Amazon cost", "Profit / unit",
-    "Margin", "Est. sales / 30d", "Competition", "Avg. comp price",
-    "Suggested price", "Match", "Match confidence", "Match reason",
+    "Margin", "Est. sales / 30d", "Competition", "eBay market recommendation",
+    "Avg. comp price", "AI suggested price", "Match", "Match confidence", "Match reason",
     "Status", "eBay link", "Amazon link",
   ]);
   for (const item of rows) {
@@ -71,6 +72,9 @@ export async function createListingsWorkbook(
       item.marginPct === null ? null : item.marginPct / 100,
       item.estimatedSales30d,
       item.competitorCount,
+      item.ebayRecommendedPriceCents === null
+        ? null
+        : item.ebayRecommendedPriceCents / 100,
       item.averageCompetitorPriceCents === null
         ? null
         : item.averageCompetitorPriceCents / 100,
@@ -82,14 +86,14 @@ export async function createListingsWorkbook(
       "",
       "",
     ]);
-    setLink(row.getCell(15), "Open on eBay", item.ebayUrl);
-    setLink(row.getCell(16), "Open on Amazon", item.amazonUrl);
+    setLink(row.getCell(16), "Open on eBay", item.ebayUrl);
+    setLink(row.getCell(17), "Open on Amazon", item.amazonUrl);
   }
-  [3, 4, 5, 9, 10].forEach((column) => (sheet.getColumn(column).numFmt = '"$"#,##0.00'));
+  [3, 4, 5, 9, 10, 11].forEach((column) => (sheet.getColumn(column).numFmt = '"$"#,##0.00'));
   sheet.getColumn(6).numFmt = "0%";
-  sheet.getColumn(12).numFmt = "0%";
+  sheet.getColumn(13).numFmt = "0%";
   sheet.getColumn(2).numFmt = "@";
-  styleSheet(sheet, [46, 18, 14, 14, 14, 11, 16, 13, 16, 16, 14, 18, 48, 15, 18, 18]);
+  styleSheet(sheet, [46, 18, 14, 14, 14, 11, 16, 13, 22, 16, 18, 14, 18, 48, 15, 18, 18]);
   const buffer = await workbook.xlsx.writeBuffer();
   return {
     filename: `sellfinity-listings-${new Date().toISOString().slice(0, 10)}.xlsx`,

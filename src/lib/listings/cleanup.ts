@@ -11,6 +11,11 @@ export const AD_RATE = 0.03;
 export const TARGET_MARGIN = 0.3;
 export const TARGET_PROFIT_CENTS = 700;
 
+/** AI competitive pricing aims for 20%, but will move as low as 15% when
+ * doing so keeps the listing close to the eBay market recommendation. */
+export const AI_TARGET_MARGIN = 0.2;
+export const AI_MIN_MARGIN = 0.15;
+
 /** Beyond this loss ratio, repricing would be futile — end the listing. */
 export const END_MARGIN = -0.3;
 
@@ -46,6 +51,69 @@ export function targetPriceCents(
   const priceForProfit = (TARGET_PROFIT_CENTS + fixed) / keep;
   const priceForMargin = fixed / (keep - TARGET_MARGIN);
   return charmCeilCents(Math.ceil(Math.min(priceForProfit, priceForMargin)));
+}
+
+/** Lowest exact price that clears a percentage margin after selling fees,
+ * promoted-listing spend, product cost, and outbound shipping. */
+export function marginFloorPriceCents(
+  costCents: number,
+  shippingCostCents: number,
+  margin: number,
+): number {
+  const keep = 1 - EBAY_FINAL_VALUE_RATE - AD_RATE;
+  const fixed = EBAY_PER_ORDER_FEE_CENTS + costCents + shippingCostCents;
+  let price = Math.max(99, Math.ceil(fixed / (keep - margin)));
+  // trueProfitCents rounds variable fees to cents, so close the occasional
+  // one-cent rounding gap rather than ever returning below the hard margin.
+  while (trueProfitCents(price, costCents, shippingCostCents) / price < margin) {
+    price++;
+  }
+  return price;
+}
+
+/**
+ * AI-assisted listing recommendation based on live eBay market research.
+ * It chooses the price closest to the strongest estimated-demand comparable,
+ * stays at/below the market average when that is feasible, targets 20%
+ * margin, and never crosses the hard 15% profitability floor.
+ */
+export function aiSuggestedListingPriceCents(
+  costCents: number,
+  shippingCostCents: number,
+  ebayRecommendedPriceCents?: number | null,
+  averageCompetitorPriceCents?: number | null,
+): number {
+  const minimum = marginFloorPriceCents(
+    costCents,
+    shippingCostCents,
+    AI_MIN_MARGIN,
+  );
+  const preferred = marginFloorPriceCents(
+    costCents,
+    shippingCostCents,
+    AI_TARGET_MARGIN,
+  );
+  const average =
+    averageCompetitorPriceCents && averageCompetitorPriceCents > 0
+      ? averageCompetitorPriceCents
+      : null;
+  const anchor =
+    ebayRecommendedPriceCents && ebayRecommendedPriceCents > 0
+      ? ebayRecommendedPriceCents
+      : average
+        ? Math.round(average * 0.97)
+        : preferred;
+
+  if (!average) return Math.max(preferred, anchor);
+  if (average >= preferred) {
+    return Math.min(average, Math.max(preferred, anchor));
+  }
+  if (average >= minimum) {
+    return Math.min(average, Math.max(minimum, anchor));
+  }
+  // No price at or below the average can clear 15%; profitability wins and
+  // the UI explicitly identifies this above-market exception.
+  return minimum;
 }
 
 /** A profitable, market-aware listing recommendation. The profitability

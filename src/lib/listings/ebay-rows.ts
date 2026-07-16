@@ -5,7 +5,7 @@ import { estimateMargin } from "@/lib/fees";
 import type { RemoteListing } from "@/lib/ebay/client";
 import type { EbayRow } from "@/app/(app)/listings/ebay-listings-table";
 import type { ListingMarketMetrics } from "./market-metrics";
-import { suggestedListingPriceCents } from "./cleanup";
+import { aiSuggestedListingPriceCents } from "./cleanup";
 
 export type LocalListingFacts = {
   ebayListingId: string | null;
@@ -111,9 +111,10 @@ export function buildEbayRows(
       imageUrl: r.imageUrl ?? firstImage(localListing.imageUrlsJson),
       quantity: r.quantity,
       market,
-      suggestedPriceCents: suggestedListingPriceCents(
+      suggestedPriceCents: aiSuggestedListingPriceCents(
         localListing.product.costCents,
         localListing.product.shippingCostCents,
+        market?.bestSellingPriceCents,
         market?.averageCompetitorPriceCents,
       ),
       match: {
