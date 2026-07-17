@@ -8,6 +8,7 @@ import {
 } from "@/lib/actions/mirror-batches";
 import { formatCents } from "@/lib/money";
 import { Badge, Card } from "@/components/ui";
+import { PremiumProgress } from "@/components/premium-progress";
 import { batchSourceMeta } from "@/lib/mirror/batch-labels";
 
 function statusTone(status: string): "green" | "red" | "indigo" | "slate" {
@@ -76,70 +77,30 @@ export function BatchProgress({ initial }: { initial: MirrorBatchView }) {
 
   return (
     <div className="space-y-5">
-      <Card className="p-5">
-        <div className="flex flex-wrap items-start justify-between gap-4">
-          <div>
-            <p className="text-sm font-medium text-slate-600">
-              {batch.trigger === "AUTOMATIC" ? "Automatic " : "Manual "}
-              {sourceMeta.label}
-            </p>
-            {batch.improveMainImage && (
-              <p className="mt-1 text-sm font-medium text-violet-700">
-                ✨ AI main-image enhancement enabled
-              </p>
-            )}
-            <h2 className="mt-1 text-xl font-semibold text-slate-900">
-              {batch.status === "COMPLETED"
-                ? isActivity
-                  ? `${sourceMeta.result} successfully`
-                  : "Publishing complete"
-                : isActivity
-                  ? "Updating eBay listing…"
-                  : "Publishing directly to eBay…"}
-            </h2>
-          </div>
-          <Badge tone={batch.status === "COMPLETED" ? "green" : "indigo"}>
-            {batch.status.toLowerCase()}
-          </Badge>
-        </div>
+      <PremiumProgress
+        title={
+          batch.status === "COMPLETED"
+            ? isActivity ? `${sourceMeta.result} successfully` : "Publishing complete"
+            : isActivity ? "Updating eBay listing" : "Publishing directly to eBay"
+        }
+        subtitle={
+          connectionError
+            ? `Progress temporarily disconnected. Retrying automatically… ${connectionError}`
+            : `${batch.trigger === "AUTOMATIC" ? "Automatic" : "Manual"} ${sourceMeta.label.toLowerCase()}${batch.improveMainImage ? " · AI image enhancement enabled" : ""}`
+        }
+        percentage={progressPct}
+        status={connectionError ? "paused" : batch.status === "COMPLETED" ? "complete" : "running"}
+        stats={[
+          { label: "processed", value: `${processed}/${batch.totalCount}` },
+          { label: isActivity ? "successful" : "published", value: batch.succeededCount, tone: "success" },
+          ...(batch.failedCount ? [{ label: "failed", value: batch.failedCount, tone: "danger" as const }] : []),
+          { label: "success rate", value: `${successPct}%`, tone: "info" },
+        ]}
+      />
 
-        <div className="mt-5 h-4 overflow-hidden rounded-full bg-slate-100" aria-label={`${progressPct}% complete`}>
-          <div
-            className="h-full rounded-full bg-indigo-600 transition-all duration-500"
-            style={{ width: `${progressPct}%` }}
-          />
-        </div>
-        <div className="mt-2 flex justify-between text-sm text-slate-600">
-          <span>{processed} of {batch.totalCount} processed</span>
-          <span>{progressPct}% complete</span>
-        </div>
-
-        <div className="mt-5 grid gap-3 sm:grid-cols-4">
-          <div className="rounded-lg bg-slate-50 p-3">
-            <p className="text-xs uppercase tracking-wide text-slate-500">Total</p>
-            <p className="mt-1 text-2xl font-semibold tabular-nums">{batch.totalCount}</p>
-          </div>
-          <div className="rounded-lg bg-emerald-50 p-3">
-            <p className="text-xs uppercase tracking-wide text-emerald-700">Published</p>
-            <p className="mt-1 text-2xl font-semibold text-emerald-800 tabular-nums">{batch.succeededCount}</p>
-          </div>
-          <div className="rounded-lg bg-red-50 p-3">
-            <p className="text-xs uppercase tracking-wide text-red-700">Failed</p>
-            <p className="mt-1 text-2xl font-semibold text-red-800 tabular-nums">{batch.failedCount}</p>
-          </div>
-          <div className="rounded-lg bg-indigo-50 p-3">
-            <p className="text-xs uppercase tracking-wide text-indigo-700">Success rate</p>
-            <p className="mt-1 text-2xl font-semibold text-indigo-800 tabular-nums">{successPct}%</p>
-          </div>
-        </div>
-
-        {connectionError && (
-          <p className="mt-4 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800">
-            {connectionError}
-          </p>
-        )}
-        {batch.status === "COMPLETED" && (
-          <div className="mt-4 space-y-3">
+      {batch.status === "COMPLETED" && (
+        <Card className="px-5 py-4">
+          <div className="space-y-3">
             <p className={`text-sm ${batch.emailStatus === "SENT" ? "text-emerald-700" : batch.emailStatus === "FAILED" ? "text-amber-700" : "text-slate-600"}`}>
               {batch.emailStatus === "NOT_APPLICABLE"
                 ? "This activity is saved in your permanent history."
@@ -158,8 +119,8 @@ export function BatchProgress({ initial }: { initial: MirrorBatchView }) {
               </Link>
             </div>
           </div>
-        )}
-      </Card>
+        </Card>
+      )}
 
       <Card className="overflow-x-auto">
         <table className="w-full text-sm">

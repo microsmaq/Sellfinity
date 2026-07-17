@@ -34,6 +34,9 @@ export function BatchHistory({ history }: { history: MirrorBatchHistoryPage }) {
             const successPct = batch.totalCount
               ? Math.round((batch.succeededCount / batch.totalCount) * 100)
               : 0;
+            const processedPct = batch.totalCount
+              ? Math.round(((batch.succeededCount + batch.failedCount) / batch.totalCount) * 100)
+              : 0;
             return (
               <tr key={batch.id} className="border-b border-slate-100 last:border-0">
                 <td className="whitespace-nowrap px-4 py-3 text-slate-600">
@@ -58,7 +61,18 @@ export function BatchHistory({ history }: { history: MirrorBatchHistoryPage }) {
                   {batch.succeededCount}
                   {batch.failedCount ? ` / ${batch.failedCount} failed` : ""}
                 </td>
-                <td className="px-4 py-3 text-right font-medium tabular-nums">{successPct}%</td>
+                <td className="min-w-32 px-4 py-3">
+                  <div className="flex items-center justify-between gap-2 text-xs">
+                    <span className="font-medium tabular-nums text-slate-700">{successPct}% success</span>
+                    <span className="tabular-nums text-slate-400">{processedPct}% done</span>
+                  </div>
+                  <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-slate-100" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={processedPct}>
+                    <div
+                      className="h-full rounded-full bg-gradient-to-r from-indigo-600 via-violet-500 to-fuchsia-500 transition-[width] duration-700"
+                      style={{ width: `${processedPct}%` }}
+                    />
+                  </div>
+                </td>
                 <td className="px-4 py-3">
                   <Badge tone={batch.status === "COMPLETED" ? "green" : "indigo"}>
                     {batch.status.toLowerCase()}

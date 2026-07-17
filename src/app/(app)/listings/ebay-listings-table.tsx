@@ -20,6 +20,7 @@ import {
 } from "@/lib/listings/cleanup";
 import { formatCents, parseDollarsToCents } from "@/lib/money";
 import { Badge, Button, Card, cx } from "@/components/ui";
+import { PremiumProgress, type PremiumProgressStatus } from "@/components/premium-progress";
 import { downloadBase64File } from "@/lib/download";
 import { listingNeedsAttention } from "@/lib/listings/attention";
 import { assessListingHealth } from "@/lib/listings/health";
@@ -119,6 +120,16 @@ type ListingSyncProgress = {
   marketUpdated: number;
 };
 
+type ListingOperationProgress = {
+  kind: "enhance" | "match" | "pricing" | "market";
+  completed: number;
+  total: number;
+  succeeded: number;
+  failed: number;
+  detail?: string;
+  status: PremiumProgressStatus;
+};
+
 function SmartSyncIcon({ spinning = false }: { spinning?: boolean }) {
   return (
     <svg
@@ -161,37 +172,45 @@ function SmartSyncStatus({ progress }: { progress: ListingSyncProgress }) {
         : "This page can remain open while Sellfinity works through each item.";
 
   return (
-    <Card className="relative overflow-hidden border-indigo-200 bg-gradient-to-br from-indigo-50 via-white to-violet-50 px-5 py-4 shadow-md shadow-indigo-100/60">
-      <div className="absolute -right-8 -top-10 h-28 w-28 rounded-full bg-violet-200/30 blur-2xl" />
-      <div className="relative flex items-start gap-3">
-        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-600 to-violet-600 text-white shadow-lg shadow-indigo-200">
-          <SmartSyncIcon spinning={progress.stage !== "complete"} />
-        </div>
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <p className="font-semibold text-slate-900">{title}</p>
-              <p className="mt-0.5 text-xs text-slate-500">{subtitle}</p>
-            </div>
-            <span className="text-sm font-semibold tabular-nums text-indigo-700">{percentage}%</span>
-          </div>
-          <div className="mt-3 h-2 overflow-hidden rounded-full bg-indigo-100">
-            <div
-              className="h-full rounded-full bg-gradient-to-r from-indigo-600 via-violet-500 to-fuchsia-500 transition-[width] duration-700 ease-out"
-              style={{ width: `${percentage}%` }}
-            />
-          </div>
-          <div className="mt-3 flex flex-wrap gap-2 text-xs">
-            <span className="rounded-full bg-white px-2.5 py-1 text-slate-600 shadow-sm ring-1 ring-slate-200">✓ {progress.kept} verified</span>
-            {progress.freshSkipped > 0 && <span className="rounded-full bg-cyan-50 px-2.5 py-1 text-cyan-700 ring-1 ring-cyan-200">⚡ {progress.freshSkipped} recent checks reused</span>}
-            <span className="rounded-full bg-white px-2.5 py-1 text-slate-600 shadow-sm ring-1 ring-slate-200">↔ {progress.replaced} sources replaced</span>
-            <span className="rounded-full bg-emerald-50 px-2.5 py-1 font-medium text-emerald-700 ring-1 ring-emerald-200">↗ {progress.relisted} recovered &amp; relisted</span>
-            <span className="rounded-full bg-amber-50 px-2.5 py-1 text-amber-700 ring-1 ring-amber-200">{progress.ended} delisted · {progress.stillUnavailable} still unavailable</span>
-            {progress.review > 0 && <span className="rounded-full bg-red-50 px-2.5 py-1 text-red-700 ring-1 ring-red-200">! {progress.review} need review</span>}
-          </div>
-        </div>
-      </div>
-    </Card>
+    <PremiumProgress
+      title={title}
+      subtitle={subtitle}
+      percentage={percentage}
+      status={progress.stage === "complete" ? "complete" : "running"}
+      stats={[
+        { label: "verified", value: progress.kept },
+        ...(progress.freshSkipped > 0 ? [{ label: "recent checks reused", value: progress.freshSkipped, tone: "info" as const }] : []),
+        { label: "sources replaced", value: progress.replaced },
+        { label: "recovered & relisted", value: progress.relisted, tone: "success" },
+        { label: "delisted", value: progress.ended, tone: "warning" },
+        ...(progress.review > 0 ? [{ label: "need review", value: progress.review, tone: "danger" as const }] : []),
+      ]}
+    />
+  );
+}
+
+function ListingOperationStatus({ progress }: { progress: ListingOperationProgress }) {
+  const percentage = progress.total > 0
+    ? Math.round((progress.completed / progress.total) * 100)
+    : progress.status === "complete" ? 100 : 4;
+  const meta = {
+    enhance: ["AI-enhancing selected listings", "Generating premium imagery and optimizing enabled listing content."],
+    match: ["Matching listings to Amazon sources", "Comparing product identity and exact variants for each listing."],
+    pricing: ["Applying profitable suggested prices", "Verifying live source costs before updating each eBay listing."],
+    market: ["Refreshing market intelligence", "Updating demand, competition, market pricing, and suggested prices."],
+  }[progress.kind];
+  return (
+    <PremiumProgress
+      title={progress.status === "complete" ? `${meta[0]} complete` : meta[0]}
+      subtitle={progress.detail ?? meta[1]}
+      percentage={percentage}
+      status={progress.status}
+      stats={[
+        { label: "processed", value: `${progress.completed}/${progress.total}` },
+        { label: "successful", value: progress.succeeded, tone: "success" },
+        ...(progress.failed > 0 ? [{ label: "need attention", value: progress.failed, tone: "danger" as const }] : []),
+      ]}
+    />
   );
 }
 
@@ -284,7 +303,7 @@ export function EbayListingsTable({
   const [pending, startTransition] = useTransition();
   const [busyId, setBusyId] = useState<string | null>(null);
   const [notice, setNotice] = useState<{ text: string; error: boolean } | null>(null);
-  const [bulkProgress, setBulkProgress] = useState<string | null>(null);
+  const [bulkProgress, setBulkProgress] = useState<ListingOperationProgress | null>(null);
   const [syncProgress, setSyncProgress] = useState<ListingSyncProgress | null>(null);
   const [sortKey, setSortKey] = useState<ListingSortKey>("margin");
   const [sortDescending, setSortDescending] = useState(true);
@@ -352,6 +371,7 @@ export function EbayListingsTable({
     const ids = [...selected];
     if (ids.length === 0) return;
     setNotice(null);
+    setBulkProgress({ kind: "enhance", completed: 0, total: ids.length, succeeded: 0, failed: 0, status: "running" });
     startTransition(async () => {
       let enhanced = 0;
       let failed = 0;
@@ -360,7 +380,6 @@ export function EbayListingsTable({
       let imagesRetained = 0;
       let copyRetained = 0;
       for (let index = 0; index < ids.length; index++) {
-        setBulkProgress(`AI enhancing… ${index + 1}/${ids.length}`);
         const result = await enhanceEbayListing(ids[index]);
         if (result.ok) {
           enhanced++;
@@ -387,8 +406,18 @@ export function EbayListingsTable({
         } else {
           failed++;
         }
+        setBulkProgress({
+          kind: "enhance",
+          completed: index + 1,
+          total: ids.length,
+          succeeded: enhanced,
+          failed,
+          detail: result.ok
+            ? `Finished ${index + 1} of ${ids.length}. The latest listing was updated on eBay.`
+            : `Finished ${index + 1} of ${ids.length}. The latest listing needs attention.`,
+          status: index + 1 === ids.length ? "complete" : "running",
+        });
       }
-      setBulkProgress(null);
       setNotice({
         text: `AI enhancement complete: ${enhanced} listings updated · ${imagesEnhanced} images generated · ${copyEnhanced} titles/descriptions optimized${imagesRetained ? ` · ${imagesRetained} image generations failed` : ""}${copyRetained ? ` · ${copyRetained} original descriptions retained` : ""}${failed ? ` · ${failed} failed or had no tracked Amazon source` : ""}.`,
         error: failed > 0,
@@ -423,6 +452,7 @@ export function EbayListingsTable({
   function matchAll() {
     const unmatchedRows = rows.filter((r) => !r.match && !r.sourceAssessment);
     setNotice(null);
+    setBulkProgress({ kind: "match", completed: 0, total: unmatchedRows.length, succeeded: 0, failed: 0, status: "running" });
     startTransition(async () => {
       let matched = 0;
       let noMatch = 0;
@@ -438,11 +468,16 @@ export function EbayListingsTable({
         applyTrackResults(results);
         matched += results.filter((x) => x.ok).length;
         noMatch += results.filter((x) => !x.ok).length;
-        setBulkProgress(
-          `Matching… ${Math.min(i + 10, unmatchedRows.length)}/${unmatchedRows.length} processed (${matched} matched, ${noMatch} no match)`,
-        );
+        const completed = Math.min(i + 10, unmatchedRows.length);
+        setBulkProgress({
+          kind: "match",
+          completed,
+          total: unmatchedRows.length,
+          succeeded: matched,
+          failed: noMatch,
+          status: completed === unmatchedRows.length ? "complete" : "running",
+        });
       }
-      setBulkProgress(null);
       setNotice({
         text: `Match complete: ${matched} matched, ${noMatch} without a confident Amazon match. Review the pairings — Unmatch any that look wrong.`,
         error: false,
@@ -459,6 +494,7 @@ export function EbayListingsTable({
       return;
     }
     setNotice(null);
+    setBulkProgress(null);
     setSyncProgress({
       stage: "preparing",
       completed: 0,
@@ -580,6 +616,7 @@ export function EbayListingsTable({
       averageCompetitorPriceCents: row.market?.averageCompetitorPriceCents,
     }));
     setNotice(null);
+    setBulkProgress({ kind: "pricing", completed: 0, total: items.length, succeeded: 0, failed: 0, status: "running" });
     startTransition(async () => {
       let repriced = 0, errors = 0;
       for (let i = 0; i < items.length; i += PRICE_CLEANUP_BATCH_SIZE) {
@@ -612,9 +649,16 @@ export function EbayListingsTable({
           if (r.action === "repriced") repriced++;
           else if (r.action === "error") errors++;
         }
-        setBulkProgress(`Cleaning up… ${Math.min(i + PRICE_CLEANUP_BATCH_SIZE, items.length)}/${items.length} (${repriced} adjusted)`);
+        const completed = Math.min(i + PRICE_CLEANUP_BATCH_SIZE, items.length);
+        setBulkProgress({
+          kind: "pricing",
+          completed,
+          total: items.length,
+          succeeded: repriced,
+          failed: errors,
+          status: completed === items.length ? "complete" : "running",
+        });
       }
-      setBulkProgress(null);
       setNotice({
         text: `Clean-up complete: ${repriced} adjusted to profitable suggested prices${errors ? `, ${errors} failed` : ""}.`,
         error: errors > 0,
@@ -629,6 +673,7 @@ export function EbayListingsTable({
       return;
     }
     setNotice(null);
+    setBulkProgress({ kind: "market", completed: 0, total: targets.length, succeeded: 0, failed: 0, status: "running" });
     startTransition(async () => {
       let researched = 0;
       let unavailable = 0;
@@ -673,11 +718,17 @@ export function EbayListingsTable({
         researched += results.filter((result) => result.market).length;
         unavailable += results.filter((result) => !result.market && !result.error).length;
         errors += results.filter((result) => result.error).length;
-        setBulkProgress(
-          `Refreshing all market data… ${Math.min(i + 10, targets.length)}/${targets.length} (${researched} updated)`,
-        );
+        const completed = Math.min(i + 10, targets.length);
+        setBulkProgress({
+          kind: "market",
+          completed,
+          total: targets.length,
+          succeeded: researched,
+          failed: errors,
+          detail: unavailable > 0 ? `${unavailable} listings currently have no comparable market results.` : undefined,
+          status: completed === targets.length ? "complete" : "running",
+        });
       }
-      setBulkProgress(null);
       setNotice({
         text: `Full market refresh complete: ${researched} listings updated with current recommendation, demand, competition, average price, and AI suggested price${unavailable ? `, ${unavailable} without comparable results` : ""}${errors ? `, ${errors} failed` : ""}.`,
         error: errors > 0,
@@ -772,7 +823,7 @@ export function EbayListingsTable({
           </button>
         )}
         <Button size="sm" variant="secondary" disabled={pending} onClick={cleanUp}>
-          {bulkProgress?.startsWith("Cleaning") ? bulkProgress : "Apply suggested prices"}
+          {bulkProgress?.kind === "pricing" && bulkProgress.status === "running" ? "Applying prices…" : "Apply suggested prices"}
         </Button>
         <Button
           size="sm"
@@ -784,7 +835,7 @@ export function EbayListingsTable({
           {syncProgress && syncProgress.stage !== "complete" ? "Smart sync running" : "Smart Listing Sync"}
         </Button>
         <Button size="sm" variant="secondary" disabled={pending} onClick={researchMarket}>
-          {bulkProgress?.startsWith("Refreshing all") ? bulkProgress : "Refresh all market data"}
+          {bulkProgress?.kind === "market" && bulkProgress.status === "running" ? "Refreshing market…" : "Refresh all market data"}
         </Button>
         <Button size="sm" variant="secondary" disabled={pending} onClick={exportExcel}>
           Export Excel
@@ -800,8 +851,8 @@ export function EbayListingsTable({
           }
           className="border-0 bg-gradient-to-r from-violet-600 to-fuchsia-600 text-white shadow-sm hover:from-violet-500 hover:to-fuchsia-500"
         >
-          ✨ {bulkProgress?.startsWith("AI enhancing")
-            ? bulkProgress
+          ✨ {bulkProgress?.kind === "enhance" && bulkProgress.status === "running"
+            ? `Enhancing ${bulkProgress.completed}/${bulkProgress.total}`
             : `AI enhance selected (${selected.size})`}
         </Button>
         <select
@@ -819,7 +870,9 @@ export function EbayListingsTable({
         </select>
         {unmatched > 0 && (
           <Button size="sm" disabled={pending} onClick={matchAll}>
-            {bulkProgress ?? `Match all unmatched (${unmatched})`}
+            {bulkProgress?.kind === "match" && bulkProgress.status === "running"
+              ? `Matching ${bulkProgress.completed}/${bulkProgress.total}`
+              : `Match all unmatched (${unmatched})`}
           </Button>
         )}
         {notice && (
@@ -834,7 +887,7 @@ export function EbayListingsTable({
         )}
       </div>
 
-      {syncProgress && <SmartSyncStatus progress={syncProgress} />}
+      {bulkProgress ? <ListingOperationStatus progress={bulkProgress} /> : syncProgress && <SmartSyncStatus progress={syncProgress} />}
 
       {fetchError && (
         <p className="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800">

@@ -4,6 +4,7 @@ import { useMemo, useState, useTransition } from "react";
 import { importProducts } from "@/lib/actions/sourcing";
 import { formatCents } from "@/lib/money";
 import { Badge, Button, Card, cx } from "@/components/ui";
+import { PremiumProgress } from "@/components/premium-progress";
 
 export type CandidateRow = {
   id: string;
@@ -39,6 +40,13 @@ export function SourcingTable({
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [pending, startTransition] = useTransition();
   const [notice, setNotice] = useState<string | null>(null);
+  const [importProgress, setImportProgress] = useState<{
+    total: number;
+    imported: number;
+    skipped: number;
+    complete: boolean;
+    error?: string;
+  } | null>(null);
 
   const visible = useMemo(
     () =>
@@ -72,11 +80,14 @@ export function SourcingTable({
 
   function runImport(ids: string[]) {
     setNotice(null);
+    setImportProgress({ total: ids.length, imported: 0, skipped: 0, complete: false });
     startTransition(async () => {
       const result = await importProducts(ids);
       if (result.error) {
+        setImportProgress({ total: ids.length, imported: result.imported, skipped: result.skipped, complete: true, error: result.error });
         setNotice(result.error);
       } else {
+        setImportProgress({ total: ids.length, imported: result.imported, skipped: result.skipped, complete: true });
         setNotice(
           `Imported ${result.imported} product${result.imported === 1 ? "" : "s"} to inventory` +
             (result.skipped ? ` (${result.skipped} already imported)` : "") +
@@ -122,6 +133,22 @@ export function SourcingTable({
           </Button>
         </div>
       </div>
+
+      {importProgress && (
+        <PremiumProgress
+          title={importProgress.complete ? "Inventory import complete" : "Importing sourcing candidates"}
+          subtitle={importProgress.error ?? (importProgress.complete
+            ? "Imported products are ready for listing creation."
+            : "Creating inventory records and preserving source pricing for each selected product.")}
+          percentage={importProgress.complete ? 100 : undefined}
+          status={importProgress.error ? "error" : importProgress.complete ? "complete" : "running"}
+          stats={[
+            { label: "selected", value: importProgress.total },
+            { label: "imported", value: importProgress.imported, tone: "success" },
+            ...(importProgress.skipped ? [{ label: "already imported", value: importProgress.skipped, tone: "warning" as const }] : []),
+          ]}
+        />
+      )}
 
       <Card className="overflow-x-auto">
         <table className="w-full text-sm">

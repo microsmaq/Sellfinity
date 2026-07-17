@@ -24,6 +24,7 @@ import type { OpportunityRow } from "@/lib/arbitrage/scanner";
 import { formatCents } from "@/lib/money";
 import { suggestedListingPriceCents } from "@/lib/listings/cleanup";
 import { Badge, Button, Card, Input, cx } from "@/components/ui";
+import { PremiumProgress, type PremiumProgressStatus } from "@/components/premium-progress";
 import { downloadBase64File } from "@/lib/download";
 
 type SortKey = ArbitragePageParams["sortKey"];
@@ -37,6 +38,46 @@ const DEFAULT_PARAMS: ArbitragePageParams = {
   minMarginPct: 0,
   query: "",
 };
+
+type ArbitrageProgress = {
+  kind: "scan" | "market" | "verify" | "publish";
+  completed: number;
+  total: number;
+  succeeded: number;
+  failed: number;
+  examined?: number;
+  detail?: string;
+  status: PremiumProgressStatus;
+};
+
+function ArbitrageProgressCard({ progress, onStop }: { progress: ArbitrageProgress; onStop?: () => void }) {
+  const percentage = progress.total > 0
+    ? Math.round((progress.completed / progress.total) * 100)
+    : progress.status === "complete" ? 100 : 4;
+  const meta = {
+    scan: ["Discovering profitable products", "Researching best-selling products and their exact Amazon variants."],
+    market: ["Researching market intelligence", "Updating demand, competition, competitor pricing, and suggested prices."],
+    verify: ["Verifying product matches", "Comparing eBay products with their exact Amazon source variants."],
+    publish: ["Preparing automatic publishing", "Checking every researched product against your publishing rules."],
+  }[progress.kind];
+  return (
+    <PremiumProgress
+      title={progress.status === "complete" ? `${meta[0]} complete` : meta[0]}
+      subtitle={progress.detail ?? meta[1]}
+      percentage={percentage}
+      status={progress.status}
+      action={onStop && progress.status !== "complete" ? (
+        <Button size="sm" variant="secondary" onClick={onStop}>Stop safely</Button>
+      ) : undefined}
+      stats={[
+        { label: progress.kind === "scan" ? "new products" : "processed", value: `${progress.completed}/${progress.total}` },
+        ...(progress.examined !== undefined ? [{ label: "candidates examined", value: progress.examined, tone: "info" as const }] : []),
+        { label: progress.kind === "verify" ? "approved" : "updated", value: progress.succeeded, tone: "success" },
+        ...(progress.failed > 0 ? [{ label: "need attention", value: progress.failed, tone: "danger" as const }] : []),
+      ]}
+    />
+  );
+}
 
 function SortHeader({
   label,
@@ -88,6 +129,7 @@ export function ArbitrageTable({
   const [busyAsin, setBusyAsin] = useState<string | null>(null);
   const [hidingId, setHidingId] = useState<string | null>(null);
   const [notice, setNotice] = useState<{ text: string; error: boolean } | null>(null);
+  const [progress, setProgress] = useState<ArbitrageProgress | null>(null);
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const stopScanRequested = useRef(false);
 
@@ -134,6 +176,11 @@ export function ArbitrageTable({
 
   function stopScan() {
     stopScanRequested.current = true;
+    setProgress((current) => current && ({
+      ...current,
+      status: "paused",
+      detail: "Stopping safely after the current provider lookup. Completed research is already saved.",
+    }));
     setNotice({
       text: "Stopping after the current provider lookup finishes…",
       error: false,
@@ -144,6 +191,7 @@ export function ArbitrageTable({
     const SCAN_TARGET = scanTarget;
     stopScanRequested.current = false;
     setNotice(null);
+    setProgress({ kind: "scan", completed: 0, total: SCAN_TARGET, succeeded: 0, failed: 0, examined: 0, status: "running" });
     startScan(async () => {
       let added = 0;
       let examined = 0;
@@ -170,7 +218,18 @@ export function ArbitrageTable({
             text: `Provider request temporarily failed. Retrying in ${retrySeconds} seconds… ${added}/${SCAN_TARGET} new items added.`,
             error: true,
           });
+          setProgress({
+            kind: "scan",
+            completed: added,
+            total: SCAN_TARGET,
+            succeeded: added,
+            failed: errors,
+            examined,
+            detail: `Provider request paused. Retrying automatically in ${retrySeconds} seconds…`,
+            status: "paused",
+          });
           if (!(await waitForScanRetry(retrySeconds * 1000))) break;
+          setProgress((current) => current && ({ ...current, status: "running", detail: undefined }));
           continue;
         }
         added += report.added;
@@ -187,13 +246,29 @@ export function ArbitrageTable({
           text: `Researching exact Amazon variants… ${added}/${SCAN_TARGET} new items added (${examined} candidates examined${errors ? `, ${errors} temporarily failed` : ""})`,
           error: false,
         });
+        setProgress({
+          kind: "scan",
+          completed: added,
+          total: SCAN_TARGET,
+          succeeded: added,
+          failed: errors,
+          examined,
+          detail: `Finding exact variants · ${added} of ${SCAN_TARGET} requested products added`,
+          status: "running",
+        });
         if (temporarilyPaused || (report.added === 0 && report.examined === 0 && !exhausted)) {
           const retrySeconds = Math.min(15, 2 ** consecutiveFailures);
           setNotice({
             text: `Provider lookup temporarily paused. Retrying in ${retrySeconds} seconds… ${added}/${SCAN_TARGET} new items added (${examined} examined).`,
             error: false,
           });
+          setProgress((current) => current && ({
+            ...current,
+            status: "paused",
+            detail: `Provider lookup paused. Retrying automatically in ${retrySeconds} seconds…`,
+          }));
           if (!(await waitForScanRetry(retrySeconds * 1000))) break;
+          setProgress((current) => current && ({ ...current, status: "running", detail: undefined }));
         }
       }
       try {
@@ -208,14 +283,35 @@ export function ArbitrageTable({
           ? `Scan complete: ${added} product candidate${added === 1 ? "" : "s"} added (${examined} candidates examined) — today's sources are fully scanned.`
           : `Scan complete: ${added} product candidate${added === 1 ? "" : "s"} added (${examined} candidates examined)${errors ? ` after recovering from ${errors} temporary provider failure${errors === 1 ? "" : "s"}` : ""}.`;
 
+      setProgress({
+        kind: "scan",
+        completed: stopped || exhausted ? Math.min(added, SCAN_TARGET) : SCAN_TARGET,
+        total: SCAN_TARGET,
+        succeeded: added,
+        failed: errors,
+        examined,
+        detail: stopped ? "Scan stopped safely. The persisted queue will resume on your next scan." : scanSummary,
+        status: stopped ? "paused" : "complete",
+      });
+
       if (!stopped && initialAutoPublish) {
         setNotice({
           text: `${scanSummary} Checking all available products against the automatic publishing rules…`,
           error: false,
         });
+        setProgress({
+          kind: "publish",
+          completed: 99,
+          total: 100,
+          succeeded: added,
+          failed: errors,
+          detail: "Scan finished. Checking match confidence, margin, and prior publishing history.",
+          status: "running",
+        });
         try {
           const automaticBatch = await createQualifiedArbitrageMirrorBatch();
           if (automaticBatch.error) {
+            setProgress((current) => current && ({ ...current, status: "error", completed: 100, detail: automaticBatch.error }));
             setNotice({
               text: `${scanSummary} Automatic publishing could not start: ${automaticBatch.error}`,
               error: true,
@@ -230,8 +326,10 @@ export function ArbitrageTable({
             text: `${scanSummary} No unlisted products currently meet the ${AUTO_PUBLISH_MIN_MATCH_CONFIDENCE}% match and ${AUTO_PUBLISH_MIN_MARGIN_PCT}% net-margin rules.`,
             error: false,
           });
+          setProgress((current) => current && ({ ...current, status: "complete", completed: 100, detail: "Eligibility check complete. No additional products currently qualify." }));
           return;
         } catch {
+          setProgress((current) => current && ({ ...current, status: "error", completed: 100, failed: current.failed + 1, detail: "The automatic eligibility check temporarily failed." }));
           setNotice({
             text: `${scanSummary} The automatic eligibility check temporarily failed; no products were published.`,
             error: true,
@@ -248,6 +346,7 @@ export function ArbitrageTable({
 
   function researchPage() {
     setNotice(null);
+    setProgress({ kind: "market", completed: 0, total: data.rows.length, succeeded: 0, failed: 0, status: "running" });
     startResearch(async () => {
       let updated = 0;
       let unavailable = 0;
@@ -290,6 +389,16 @@ export function ArbitrageTable({
           text: `Researching page… ${Math.min(i + 10, data.rows.length)}/${data.rows.length} (${updated} updated)`,
           error: false,
         });
+        const completed = Math.min(i + 10, data.rows.length);
+        setProgress({
+          kind: "market",
+          completed,
+          total: data.rows.length,
+          succeeded: updated,
+          failed: errors,
+          detail: unavailable ? `${unavailable} products currently have no comparable market results.` : undefined,
+          status: completed === data.rows.length ? "complete" : "running",
+        });
       }
       setNotice({
         text: `Market research complete: ${updated} updated${unavailable ? `, ${unavailable} without comparable results` : ""}${errors ? `, ${errors} failed` : ""}.`,
@@ -300,6 +409,7 @@ export function ArbitrageTable({
 
   function verifyPageMatches() {
     setNotice(null);
+    setProgress({ kind: "verify", completed: 0, total: data.rows.length, succeeded: 0, failed: 0, status: "running" });
     startVerify(async () => {
       let approved = 0;
       let removed = 0;
@@ -318,6 +428,16 @@ export function ArbitrageTable({
         setNotice({
           text: `Checking product identity… ${Math.min(i + 10, data.rows.length)}/${data.rows.length}`,
           error: false,
+        });
+        const completed = Math.min(i + 10, data.rows.length);
+        setProgress({
+          kind: "verify",
+          completed,
+          total: data.rows.length,
+          succeeded: approved,
+          failed: removed,
+          detail: aiChecked ? `${aiChecked} product pairs have been checked by AI.` : undefined,
+          status: completed === data.rows.length ? "complete" : "running",
         });
       }
       setData(await fetchArbitragePage(params));
@@ -475,7 +595,14 @@ export function ArbitrageTable({
         </div>
       </div>
 
-      {notice && (
+      {progress && (
+        <ArbitrageProgressCard
+          progress={progress}
+          onStop={progress.kind === "scan" && scanning ? stopScan : undefined}
+        />
+      )}
+
+      {notice && (!progress || progress.status === "complete" || progress.status === "error") && (
         <p
           className={cx(
             "rounded-lg px-3 py-2 text-sm",

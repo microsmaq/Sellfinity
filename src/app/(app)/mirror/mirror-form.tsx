@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { createUrlMirrorBatch } from "@/lib/actions/mirror-batches";
 import { Button, Card } from "@/components/ui";
+import { PremiumProgress } from "@/components/premium-progress";
 
 export function MirrorForm({
   ebayConnected,
@@ -70,6 +71,18 @@ export function MirrorForm({
           </span>
         </div>
       </Card>
+
+      {pending && (
+        <PremiumProgress
+          title="Preparing your publishing batch"
+          subtitle={`Validating ${lineCount} Amazon product${lineCount === 1 ? "" : "s"} and creating item-level tracking.`}
+          status="running"
+          stats={[
+            { label: "products queued", value: lineCount },
+            { label: "publishing mode", value: "Direct to eBay", tone: "info" },
+          ]}
+        />
+      )}
 
       {error && (
         <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>

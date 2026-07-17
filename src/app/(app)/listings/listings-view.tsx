@@ -12,6 +12,7 @@ import {
 } from "@/lib/actions/listings";
 import { formatCents, parseDollarsToCents } from "@/lib/money";
 import { Badge, Button, Card, cx } from "@/components/ui";
+import { PremiumProgress } from "@/components/premium-progress";
 import { EbayListingsTable, type EbayRow } from "./ebay-listings-table";
 
 export type UnlistedRow = {
@@ -130,6 +131,13 @@ export function ListingsView({
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [pending, startTransition] = useTransition();
   const [notice, setNotice] = useState<{ text: string; error: boolean } | null>(null);
+  const [actionProgress, setActionProgress] = useState<{
+    title: string;
+    total: number;
+    done: number;
+    failed: number;
+    complete: boolean;
+  } | null>(null);
 
   const byStatus = useMemo(() => {
     const map = { DRAFT: [] as ListingRow[], ACTIVE: [] as ListingRow[], ENDED: [] as ListingRow[] };
@@ -169,7 +177,8 @@ export function ListingsView({
     });
   }
 
-  function report(result: BulkResult, verb: string) {
+  function report(result: BulkResult, verb: string, title: string, total: number) {
+    setActionProgress({ title, total, done: result.done, failed: result.failed, complete: true });
     if (result.error) {
       setNotice({
         text: result.error + (result.done ? ` (${result.done} ${verb})` : ""),
@@ -186,8 +195,16 @@ export function ListingsView({
 
   function run(fn: (ids: string[]) => Promise<BulkResult>, verb: string) {
     const ids = [...selected];
+    const title = verb === "published"
+      ? "Publishing listings to eBay"
+      : verb === "drafted"
+        ? "Generating listing drafts"
+        : verb === "ended"
+          ? "Ending eBay listings"
+          : "Updating selected listings";
     setNotice(null);
-    startTransition(async () => report(await fn(ids), verb));
+    setActionProgress({ title, total: ids.length, done: 0, failed: 0, complete: false });
+    startTransition(async () => report(await fn(ids), verb, title, ids.length));
   }
 
   const bulkActions = (
@@ -251,6 +268,22 @@ export function ListingsView({
         </div>
         {bulkActions}
       </div>
+
+      {actionProgress && (
+        <PremiumProgress
+          title={actionProgress.complete ? `${actionProgress.title} complete` : actionProgress.title}
+          subtitle={actionProgress.complete
+            ? "The result has been saved to your publishing history."
+            : "Sellfinity is processing the selected items and recording each result."}
+          percentage={actionProgress.complete ? 100 : undefined}
+          status={actionProgress.complete ? (actionProgress.failed > 0 ? "error" : "complete") : "running"}
+          stats={[
+            { label: "selected", value: actionProgress.total },
+            { label: "successful", value: actionProgress.done, tone: "success" },
+            ...(actionProgress.failed ? [{ label: "failed", value: actionProgress.failed, tone: "danger" as const }] : []),
+          ]}
+        />
+      )}
 
       {notice && (
         <p

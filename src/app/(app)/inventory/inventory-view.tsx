@@ -4,6 +4,7 @@ import { useState, useTransition } from "react";
 import { fixIssueNow, ignoreIssue, runSyncNow } from "@/lib/actions/sync";
 import { formatCents } from "@/lib/money";
 import { Badge, Button, Card, EmptyState, cx } from "@/components/ui";
+import { PremiumProgress } from "@/components/premium-progress";
 
 export type IssueRow = {
   id: string;
@@ -122,15 +123,25 @@ export function InventoryView({
 }) {
   const [pending, startTransition] = useTransition();
   const [notice, setNotice] = useState<{ text: string; error: boolean } | null>(null);
+  const [syncProgress, setSyncProgress] = useState<{
+    complete: boolean;
+    checked: number;
+    issues: number;
+    fixed: number;
+    error?: string;
+  } | null>(null);
 
   function sync() {
     setNotice(null);
+    setSyncProgress({ complete: false, checked: 0, issues: 0, fixed: 0 });
     startTransition(async () => {
       const s = await runSyncNow();
       if ("error" in s) {
+        setSyncProgress({ complete: true, checked: 0, issues: 0, fixed: 0, error: s.error });
         setNotice({ text: s.error, error: true });
         return;
       }
+      setSyncProgress({ complete: true, checked: s.listingsChecked, issues: s.issuesFound, fixed: s.issuesAutoFixed });
       setNotice({
         text: `Checked ${s.listingsChecked} listing${s.listingsChecked === 1 ? "" : "s"}: ${s.issuesFound} issue${s.issuesFound === 1 ? "" : "s"} found${s.issuesAutoFixed ? `, ${s.issuesAutoFixed} auto-fixed` : ""}.`,
         error: false,
@@ -175,6 +186,22 @@ export function InventoryView({
           </p>
         )}
       </div>
+
+      {syncProgress && (
+        <PremiumProgress
+          title={syncProgress.complete ? "Inventory sync complete" : "Checking inventory health"}
+          subtitle={syncProgress.error ?? (syncProgress.complete
+            ? "Supplier stock and pricing checks are now reflected in your inventory."
+            : `Checking ${activeCount} active listing${activeCount === 1 ? "" : "s"} for stock and cost changes.`)}
+          percentage={syncProgress.complete ? 100 : undefined}
+          status={syncProgress.error ? "error" : syncProgress.complete ? "complete" : "running"}
+          stats={[
+            { label: "listings checked", value: syncProgress.checked || activeCount },
+            { label: "issues found", value: syncProgress.issues, tone: syncProgress.issues ? "warning" : "success" },
+            { label: "auto-fixed", value: syncProgress.fixed, tone: "success" },
+          ]}
+        />
+      )}
 
       <section>
         <h2 className="mb-3 text-sm font-semibold text-slate-900">
