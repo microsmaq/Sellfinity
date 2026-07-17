@@ -173,7 +173,7 @@ export function PublishingPreferences({
               For every new Amazon Mirroring or Arbitrage Finder publishing batch, Sellfinity asks OpenAI to create a premium, white-background hero image while keeping the actual product accurate. This applies to single, bulk, automatic, and scheduled publishing.
             </p>
             <p className="mt-2 text-xs leading-5 text-slate-500">
-              Original Amazon photos remain as secondary images, and the original main image is used if enhancement fails. This option uses additional AI processing. Enable it only for images you are authorized to use and edit.
+              GPT Image 2 runs at high quality, with AI checks before and after editing. Products with visible logos, labels, model numbers, packaging text, or identity-critical fine details keep the original main image instead of risking inaccurate text or branding. Original Amazon photos also remain as secondary images.
             </p>
           </div>
           <PreferenceToggle

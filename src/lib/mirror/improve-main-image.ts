@@ -1,9 +1,9 @@
 import { db } from "@/lib/db";
 
 const OPENAI_IMAGE_ENDPOINT = "https://api.openai.com/v1/images/edits";
-const OPENROUTER_IMAGE_ENDPOINT = "https://openrouter.ai/api/v1/images";
 const MAX_SOURCE_IMAGE_BYTES = 20 * 1024 * 1024;
 const MAX_GENERATED_IMAGE_BYTES = 20 * 1024 * 1024;
+const IMAGE_QA_MODEL = "gpt-5.6-sol";
 
 type ImproveMainImageInput = {
   userId: string;
@@ -16,6 +16,89 @@ type ImproveMainImageInput = {
 export type ImproveMainImageResult =
   | { ok: true; imageUrl: string }
   | { ok: false; error: string };
+
+function responseText(payload: unknown): string | null {
+  if (!payload || typeof payload !== "object") return null;
+  const data = payload as {
+    output_text?: unknown;
+    output?: Array<{ content?: Array<{ text?: unknown }> }>;
+  };
+  if (typeof data.output_text === "string") return data.output_text;
+  const parts = data.output
+    ?.flatMap((item) => item.content ?? [])
+    .map((part) => part.text)
+    .filter((part): part is string => typeof part === "string");
+  return parts?.length ? parts.join("") : null;
+}
+
+function blobDataUrl(blob: Blob): Promise<string> {
+  return blob.arrayBuffer().then(
+    (buffer) => `data:${blob.type};base64,${Buffer.from(buffer).toString("base64")}`,
+  );
+}
+
+async function inspectImageSafety(
+  apiKey: string,
+  sourceImage: string,
+  generatedImage?: string,
+): Promise<{ approved: boolean; reason: string } | null> {
+  const isComparison = !!generatedImage;
+  const prompt = isComparison
+    ? `Act as a strict ecommerce image authenticity inspector. Compare the original supplier image with the proposed edited image. Approve only if the exact product identity, shape, proportions, construction, material, color, pattern, quantity, accessories, controls, ports, logos, brand names, model numbers, printed text, labels, and packaging are unchanged. Reject any unreadable, misspelled, replaced, invented, blurred, or distorted text/branding, any changed component, or any uncertain detail. Cosmetic lighting, background, crop, and shadow changes alone are acceptable.`
+    : `Act as a strict ecommerce image-editing risk inspector. Determine whether a generative edit can safely preserve this product. Reject editing if the product or packaging shows any visible brand name, logo, model number, printed words, labels, measurement markings, display text, safety text, or other identity-critical fine detail. Also reject if the exact quantity, pattern, transparent/reflective construction, or small components could be easily altered. When uncertain, reject. An original supplier image is better than a polished but inaccurate image.`;
+  const schema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["approved", "reason"],
+    properties: {
+      approved: { type: "boolean" },
+      reason: { type: "string" },
+    },
+  };
+  try {
+    const response = await fetch("https://api.openai.com/v1/responses", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: process.env.OPENAI_IMAGE_QA_MODEL?.trim() || IMAGE_QA_MODEL,
+        input: [
+          {
+            role: "user",
+            content: [
+              { type: "input_text", text: prompt },
+              { type: "input_image", image_url: sourceImage, detail: "high" },
+              ...(generatedImage
+                ? [{ type: "input_image", image_url: generatedImage, detail: "high" }]
+                : []),
+            ],
+          },
+        ],
+        text: {
+          format: {
+            type: "json_schema",
+            name: isComparison ? "image_identity_check" : "image_edit_risk_check",
+            strict: true,
+            schema,
+          },
+        },
+        max_output_tokens: 250,
+      }),
+      signal: AbortSignal.timeout(60_000),
+    });
+    if (!response.ok) return null;
+    const text = responseText(await response.json());
+    if (!text) return null;
+    const parsed = JSON.parse(text) as { approved?: unknown; reason?: unknown };
+    return typeof parsed.approved === "boolean" && typeof parsed.reason === "string"
+      ? { approved: parsed.approved, reason: parsed.reason.slice(0, 300) }
+      : null;
+  } catch {
+    return null;
+  }
+}
 
 export function buildHeroImagePrompt(input: {
   title: string;
@@ -41,6 +124,7 @@ Verified supplier details: ${verifiedDetails || "No additional verified details 
 NON-NEGOTIABLE PRODUCT ACCURACY
 - Preserve the exact product identity, shape, proportions, dimensions, construction, materials, colors, surface patterns, branding, logos, quantity, accessories, controls, ports, fasteners, and functional parts.
 - Do not invent, remove, replace, duplicate, enlarge, shrink, recolor, relabel, or redesign any product or included component.
+- Every existing logo, brand name, model number, word, label, display, symbol, and measurement marking must remain pixel-faithful, correctly spelled, readable, and in the exact original position. Never redraw text from imagination.
 - Do not hide flaws or alter the apparent condition.
 - If a new perspective cannot be rendered with complete geometric accuracy from the reference, keep a close, truthful perspective instead of guessing unseen details.
 - Rearrange separate accessories only when every component and its quantity are completely unambiguous; otherwise preserve their arrangement.
@@ -117,9 +201,11 @@ export async function improveMainListingImage(
   input: ImproveMainImageInput,
 ): Promise<ImproveMainImageResult> {
   const openAiKey = process.env.OPENAI_API_KEY?.trim();
-  const openRouterKey = process.env.OPENROUTER_API_KEY?.trim();
-  if (!openAiKey && !openRouterKey) {
-    return { ok: false, error: "No OpenAI or OpenRouter image API key is configured." };
+  if (!openAiKey) {
+    return {
+      ok: false,
+      error: "OpenAI is required for quality-controlled GPT Image 2 editing.",
+    };
   }
   if (!input.sourceImageUrl) {
     return { ok: false, error: "Amazon did not provide a main image." };
@@ -129,50 +215,38 @@ export async function improveMainListingImage(
   }
 
   try {
-    let response: Response;
-    if (openAiKey) {
-      const sourceImage = await downloadSourceImage(input.sourceImageUrl);
-      const extension = sourceImage.type === "image/png" ? "png" : sourceImage.type === "image/webp" ? "webp" : "jpg";
-      const form = new FormData();
-      form.append("model", process.env.OPENAI_IMAGE_MODEL?.trim() || "gpt-image-2");
-      form.append("image[]", sourceImage, `amazon-main-image.${extension}`);
-      form.append("prompt", buildHeroImagePrompt(input));
-      form.append("size", "1024x1024");
-      form.append("quality", "medium");
-      form.append("output_format", "jpeg");
-      form.append("background", "opaque");
-      form.append("n", "1");
-      response = await fetch(OPENAI_IMAGE_ENDPOINT, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${openAiKey}` },
-        body: form,
-        signal: AbortSignal.timeout(180_000),
-      });
-    } else {
-      response = await fetch(OPENROUTER_IMAGE_ENDPOINT, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${openRouterKey}`,
-          "Content-Type": "application/json",
-          "HTTP-Referer": process.env.APP_URL ?? "https://www.sellfinity.app",
-          "X-Title": "Sellfinity",
-        },
-        body: JSON.stringify({
-          model: process.env.OPENROUTER_IMAGE_MODEL?.trim() || "openai/gpt-image-1",
-          prompt: buildHeroImagePrompt(input),
-          input_references: [
-            { type: "image_url", image_url: { url: input.sourceImageUrl } },
-          ],
-          size: "1024x1024",
-          quality: "medium",
-          output_format: "jpeg",
-          output_compression: 85,
-          background: "opaque",
-          n: 1,
-        }),
-        signal: AbortSignal.timeout(180_000),
-      });
+    const sourceImage = await downloadSourceImage(input.sourceImageUrl);
+    const sourceDataUrl = await blobDataUrl(sourceImage);
+    const preflight = await inspectImageSafety(openAiKey, sourceDataUrl);
+    if (!preflight) {
+      return {
+        ok: false,
+        error: "Original retained because the image safety inspection was unavailable.",
+      };
     }
+    if (!preflight.approved) {
+      return {
+        ok: false,
+        error: `Original retained to protect product text and identity: ${preflight.reason}`,
+      };
+    }
+    const extension = sourceImage.type === "image/png" ? "png" : sourceImage.type === "image/webp" ? "webp" : "jpg";
+    const form = new FormData();
+    form.append("model", process.env.OPENAI_IMAGE_MODEL?.trim() || "gpt-image-2");
+    form.append("image[]", sourceImage, `amazon-main-image.${extension}`);
+    form.append("prompt", buildHeroImagePrompt(input));
+    form.append("size", "1024x1024");
+    form.append("quality", "high");
+    form.append("output_format", "jpeg");
+    form.append("output_compression", "100");
+    form.append("background", "opaque");
+    form.append("n", "1");
+    const response = await fetch(OPENAI_IMAGE_ENDPOINT, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${openAiKey}` },
+      body: form,
+      signal: AbortSignal.timeout(240_000),
+    });
     const payload = (await response.json().catch(() => null)) as
       | { data?: Array<{ b64_json?: string; media_type?: string }>; error?: { message?: string } }
       | null;
@@ -189,6 +263,24 @@ export async function improveMainListingImage(
     const mimeType = payload?.data?.[0]?.media_type || "image/jpeg";
     if (!new Set(["image/jpeg", "image/png", "image/webp"]).has(mimeType)) {
       throw new Error("The image provider returned an unsupported image format.");
+    }
+    const generatedDataUrl = `data:${mimeType};base64,${base64}`;
+    const identityCheck = await inspectImageSafety(
+      openAiKey,
+      sourceDataUrl,
+      generatedDataUrl,
+    );
+    if (!identityCheck) {
+      return {
+        ok: false,
+        error: "Original retained because the generated-image identity check was unavailable.",
+      };
+    }
+    if (!identityCheck.approved) {
+      return {
+        ok: false,
+        error: `Generated image rejected; original retained: ${identityCheck.reason}`,
+      };
     }
     const stored = await db.generatedListingImage.create({
       data: { userId: input.userId, mimeType, data: bytes },
