@@ -1,0 +1,2 @@
+ALTER TABLE "User"
+ADD COLUMN "improveMainImage" BOOLEAN NOT NULL DEFAULT false;

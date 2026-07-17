@@ -15,6 +15,7 @@ import {
 import {
   createArbitrageMirrorBatch,
   createQualifiedArbitrageMirrorBatch,
+  setImproveMainImagePreference,
 } from "@/lib/actions/mirror-batches";
 import {
   AUTO_PUBLISH_MIN_MARGIN_PCT,
@@ -72,9 +73,11 @@ function SortHeader({
 export function ArbitrageTable({
   initial,
   initialAutoPublish,
+  initialImproveMainImage,
 }: {
   initial: ArbitragePage;
   initialAutoPublish: boolean;
+  initialImproveMainImage: boolean;
 }) {
   const router = useRouter();
   const [data, setData] = useState(initial);
@@ -86,8 +89,9 @@ export function ArbitrageTable({
   const [researching, startResearch] = useTransition();
   const [verifying, startVerify] = useTransition();
   const [savingAutoPublish, startAutoPublishSave] = useTransition();
+  const [savingImagePreference, startImagePreferenceSave] = useTransition();
   const [autoPublishEnabled, setAutoPublishEnabled] = useState(initialAutoPublish);
-  const [improveMainImage, setImproveMainImage] = useState(false);
+  const [improveMainImage, setImproveMainImage] = useState(initialImproveMainImage);
   const [scanTarget, setScanTarget] = useState(50);
   const [busyAsin, setBusyAsin] = useState<string | null>(null);
   const [hidingId, setHidingId] = useState<string | null>(null);
@@ -161,6 +165,29 @@ export function ArbitrageTable({
         setAutoPublishEnabled(previous);
         setNotice({
           text: "Could not save the automatic publishing setting. Please try again.",
+          error: true,
+        });
+      }
+    });
+  }
+
+  function toggleImageImprovement(enabled: boolean) {
+    const previous = improveMainImage;
+    setImproveMainImage(enabled);
+    setNotice(null);
+    startImagePreferenceSave(async () => {
+      try {
+        await setImproveMainImagePreference(enabled);
+        setNotice({
+          text: enabled
+            ? "AI main-image enhancement enabled for Amazon Mirroring and all Arbitrage Finder publishing."
+            : "AI main-image enhancement disabled.",
+          error: false,
+        });
+      } catch {
+        setImproveMainImage(previous);
+        setNotice({
+          text: "Could not save the AI image preference. Please try again.",
           error: true,
         });
       }
@@ -517,10 +544,11 @@ export function ArbitrageTable({
             <input
               type="checkbox"
               checked={improveMainImage}
-              onChange={(event) => setImproveMainImage(event.target.checked)}
+              disabled={savingImagePreference}
+              onChange={(event) => toggleImageImprovement(event.target.checked)}
               className="h-4 w-4 rounded border-slate-300 text-violet-600"
             />
-            ✨ AI-enhance main image
+            ✨ AI-enhance main images everywhere
           </label>
           <Button disabled={pending || selected.size === 0} onClick={mirrorSelected}>
             {`Publish selected (${selected.size})`}

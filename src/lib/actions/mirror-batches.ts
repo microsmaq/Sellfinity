@@ -172,6 +172,16 @@ export async function createArbitrageMirrorBatch(
   return createBatch(user.id, "ARBITRAGE", items, "MANUAL", improveMainImage);
 }
 
+export async function setImproveMainImagePreference(enabled: boolean): Promise<void> {
+  const user = await requireUser();
+  await db.user.update({
+    where: { id: user.id },
+    data: { improveMainImage: enabled },
+  });
+  revalidatePath("/mirror");
+  revalidatePath("/arbitrage");
+}
+
 /** Build an automatic batch from every currently available opportunity that
  * clears the documented safety gate. Existing products, hidden rows, and
  * rows already waiting in another batch are excluded. */
@@ -186,7 +196,7 @@ async function createQualifiedArbitrageMirrorBatchForUser(
 ): Promise<QualifiedArbitrageBatchResult> {
   const user = await db.user.findUnique({
     where: { id: userId },
-    select: { autoPublishArbitrage: true },
+    select: { autoPublishArbitrage: true, improveMainImage: true },
   });
   if (!user?.autoPublishArbitrage) {
     return { eligibleCount: 0, error: "Automatic publishing is turned off." };
@@ -254,6 +264,7 @@ async function createQualifiedArbitrageMirrorBatchForUser(
       sourceReferenceId: row.ebayItemId,
     })),
     "AUTOMATIC",
+    user.improveMainImage,
   );
   return { ...result, eligibleCount: uniqueRows.length };
 }

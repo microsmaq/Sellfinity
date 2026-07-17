@@ -3,16 +3,39 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
-import { createUrlMirrorBatch } from "@/lib/actions/mirror-batches";
+import {
+  createUrlMirrorBatch,
+  setImproveMainImagePreference,
+} from "@/lib/actions/mirror-batches";
 import { Button, Card } from "@/components/ui";
 
-export function MirrorForm({ ebayConnected }: { ebayConnected: boolean }) {
+export function MirrorForm({
+  ebayConnected,
+  initialImproveMainImage,
+}: {
+  ebayConnected: boolean;
+  initialImproveMainImage: boolean;
+}) {
   const router = useRouter();
   const [input, setInput] = useState("");
-  const [improveMainImage, setImproveMainImage] = useState(false);
+  const [improveMainImage, setImproveMainImage] = useState(initialImproveMainImage);
+  const [savingImagePreference, startSavingImagePreference] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
   const lineCount = input.split("\n").filter((line) => line.trim()).length;
+
+  function toggleImageImprovement(enabled: boolean) {
+    const previous = improveMainImage;
+    setImproveMainImage(enabled);
+    startSavingImagePreference(async () => {
+      try {
+        await setImproveMainImagePreference(enabled);
+      } catch {
+        setImproveMainImage(previous);
+        setError("Could not save the AI image preference. Please try again.");
+      }
+    });
+  }
 
   function run() {
     setError(null);
@@ -49,7 +72,8 @@ export function MirrorForm({ ebayConnected }: { ebayConnected: boolean }) {
           <input
             type="checkbox"
             checked={improveMainImage}
-            onChange={(event) => setImproveMainImage(event.target.checked)}
+            disabled={savingImagePreference}
+            onChange={(event) => toggleImageImprovement(event.target.checked)}
             className="mt-1 h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
           />
           <span>
@@ -60,7 +84,9 @@ export function MirrorForm({ ebayConnected }: { ebayConnected: boolean }) {
             <span className="mt-1 block text-sm leading-5 text-slate-600">
               Uses OpenAI image editing to create a premium, eBay-compliant white-background
               hero photo. The original Amazon photos stay as secondary images, and Sellfinity
-              falls back safely if editing fails. Only enable this for images you are authorized to use and edit.
+              falls back safely if editing fails. This saved preference also applies to manual
+              and automatic Arbitrage Finder publishing. Only enable this for images you are
+              authorized to use and edit.
             </span>
           </span>
         </label>

@@ -29,6 +29,7 @@ export default async function ArbitragePage() {
       <ArbitrageTable
         initial={initial}
         initialAutoPublish={user.autoPublishArbitrage}
+        initialImproveMainImage={user.improveMainImage}
       />
     </>
   );

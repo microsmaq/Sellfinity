@@ -27,7 +27,10 @@ export default async function MirrorPage() {
         }
       />
       <div className="space-y-6">
-        <MirrorForm ebayConnected={ebayConnected} />
+        <MirrorForm
+          ebayConnected={ebayConnected}
+          initialImproveMainImage={user.improveMainImage}
+        />
         <BatchHistory batches={batches} />
       </div>
     </>
