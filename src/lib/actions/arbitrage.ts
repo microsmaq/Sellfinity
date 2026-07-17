@@ -100,6 +100,7 @@ export async function setArbitrageAutoPublish(enabled: boolean): Promise<void> {
     data: { autoPublishArbitrage: enabled },
   });
   revalidatePath("/arbitrage");
+  revalidatePath("/settings");
 }
 
 export type MatchVerificationResult = {

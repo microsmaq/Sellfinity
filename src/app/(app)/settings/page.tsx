@@ -4,6 +4,7 @@ import { ebayEnvConfig } from "@/lib/ebay/oauth";
 import { Card, PageHeader } from "@/components/ui";
 import { EbayConnectionCard } from "./ebay-connection";
 import { getRainforestEfficiencySummary } from "@/lib/mirror/rainforest";
+import { PublishingPreferences } from "./publishing-preferences";
 
 export const metadata = { title: "Settings — Sellfinity" };
 
@@ -35,8 +36,8 @@ export default async function SettingsPage({
 
   return (
     <>
-      <PageHeader title="Settings" subtitle="Your account and marketplace connections." />
-      <div className="max-w-2xl space-y-6">
+      <PageHeader title="Settings" subtitle="Manage your account, publishing preferences, and marketplace connections." />
+      <div className="max-w-3xl space-y-6">
         <Card className="p-6">
           <h2 className="text-sm font-semibold text-slate-900">Account</h2>
           <dl className="mt-4 space-y-3 text-sm">
@@ -60,6 +61,11 @@ export default async function SettingsPage({
             </div>
           </dl>
         </Card>
+
+        <PublishingPreferences
+          initialAutoPublish={user.autoPublishArbitrage}
+          initialImproveMainImage={user.improveMainImage}
+        />
 
         {callback && (
           <p

@@ -9,13 +9,11 @@ import {
   hideArbitrageItem,
   researchArbitrageMarket,
   scanForNew,
-  setArbitrageAutoPublish,
   verifyArbitrageMatches,
 } from "@/lib/actions/arbitrage";
 import {
   createArbitrageMirrorBatch,
   createQualifiedArbitrageMirrorBatch,
-  setImproveMainImagePreference,
 } from "@/lib/actions/mirror-batches";
 import {
   AUTO_PUBLISH_MIN_MARGIN_PCT,
@@ -73,11 +71,9 @@ function SortHeader({
 export function ArbitrageTable({
   initial,
   initialAutoPublish,
-  initialImproveMainImage,
 }: {
   initial: ArbitragePage;
   initialAutoPublish: boolean;
-  initialImproveMainImage: boolean;
 }) {
   const router = useRouter();
   const [data, setData] = useState(initial);
@@ -88,10 +84,6 @@ export function ArbitrageTable({
   const [scanning, startScan] = useTransition();
   const [researching, startResearch] = useTransition();
   const [verifying, startVerify] = useTransition();
-  const [savingAutoPublish, startAutoPublishSave] = useTransition();
-  const [savingImagePreference, startImagePreferenceSave] = useTransition();
-  const [autoPublishEnabled, setAutoPublishEnabled] = useState(initialAutoPublish);
-  const [improveMainImage, setImproveMainImage] = useState(initialImproveMainImage);
   const [scanTarget, setScanTarget] = useState(50);
   const [busyAsin, setBusyAsin] = useState<string | null>(null);
   const [hidingId, setHidingId] = useState<string | null>(null);
@@ -145,52 +137,6 @@ export function ArbitrageTable({
     setNotice({
       text: "Stopping after the current provider lookup finishes…",
       error: false,
-    });
-  }
-
-  function toggleAutoPublish(enabled: boolean) {
-    const previous = autoPublishEnabled;
-    setAutoPublishEnabled(enabled);
-    setNotice(null);
-    startAutoPublishSave(async () => {
-      try {
-        await setArbitrageAutoPublish(enabled);
-        setNotice({
-          text: enabled
-            ? `Automatic publishing enabled. Completed scans will publish unlisted matches with at least ${AUTO_PUBLISH_MIN_MATCH_CONFIDENCE}% confidence and ${AUTO_PUBLISH_MIN_MARGIN_PCT}% estimated net margin.`
-            : "Automatic publishing disabled.",
-          error: false,
-        });
-      } catch {
-        setAutoPublishEnabled(previous);
-        setNotice({
-          text: "Could not save the automatic publishing setting. Please try again.",
-          error: true,
-        });
-      }
-    });
-  }
-
-  function toggleImageImprovement(enabled: boolean) {
-    const previous = improveMainImage;
-    setImproveMainImage(enabled);
-    setNotice(null);
-    startImagePreferenceSave(async () => {
-      try {
-        await setImproveMainImagePreference(enabled);
-        setNotice({
-          text: enabled
-            ? "AI main-image enhancement enabled for Amazon Mirroring and all Arbitrage Finder publishing."
-            : "AI main-image enhancement disabled.",
-          error: false,
-        });
-      } catch {
-        setImproveMainImage(previous);
-        setNotice({
-          text: "Could not save the AI image preference. Please try again.",
-          error: true,
-        });
-      }
     });
   }
 
@@ -262,7 +208,7 @@ export function ArbitrageTable({
           ? `Scan complete: ${added} product candidate${added === 1 ? "" : "s"} added (${examined} candidates examined) — today's sources are fully scanned.`
           : `Scan complete: ${added} product candidate${added === 1 ? "" : "s"} added (${examined} candidates examined)${errors ? ` after recovering from ${errors} temporary provider failure${errors === 1 ? "" : "s"}` : ""}.`;
 
-      if (!stopped && autoPublishEnabled) {
+      if (!stopped && initialAutoPublish) {
         setNotice({
           text: `${scanSummary} Checking all available products against the automatic publishing rules…`,
           error: false,
@@ -399,7 +345,7 @@ export function ArbitrageTable({
     setNotice(null);
     setBusyAsin(row.asin);
     startTransition(async () => {
-      const result = await createArbitrageMirrorBatch([row.ebayItemId], improveMainImage);
+      const result = await createArbitrageMirrorBatch([row.ebayItemId]);
       setBusyAsin(null);
       if (result.error || !result.batchId) {
         setNotice({ text: result.error ?? "Could not create the publishing batch.", error: true });
@@ -431,7 +377,7 @@ export function ArbitrageTable({
       .map((r) => r.ebayItemId);
     setNotice(null);
     startTransition(async () => {
-      const result = await createArbitrageMirrorBatch(ebayItemIds, improveMainImage);
+      const result = await createArbitrageMirrorBatch(ebayItemIds);
       if (result.error || !result.batchId) {
         setNotice({ text: result.error ?? "Could not create the publishing batch.", error: true });
         return;
@@ -447,23 +393,6 @@ export function ArbitrageTable({
 
   return (
     <div className="space-y-4">
-      <label className="flex max-w-3xl items-start gap-3 rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-3">
-        <input
-          type="checkbox"
-          checked={autoPublishEnabled}
-          disabled={scanning || savingAutoPublish}
-          onChange={(event) => toggleAutoPublish(event.target.checked)}
-          className="mt-1 h-4 w-4 rounded border-slate-300 text-indigo-600"
-        />
-        <span>
-          <span className="block text-sm font-semibold text-indigo-950">
-            Auto-publish qualified matches
-          </span>
-          <span className="mt-0.5 block text-xs leading-5 text-indigo-800">
-            After a completed scan, publish available products with at least {AUTO_PUBLISH_MIN_MATCH_CONFIDENCE}% Amazon-variant match confidence, {AUTO_PUBLISH_MIN_MARGIN_PCT}% estimated net margin, and positive profit. Hidden, previously listed, and already queued products are skipped.
-          </span>
-        </span>
-      </label>
       <div className="flex flex-wrap items-center gap-3">
         <Input
           value={queryInput}
@@ -540,16 +469,6 @@ export function ArbitrageTable({
           <Button variant="secondary" disabled={pending} onClick={exportExcel}>
             Export Excel
           </Button>
-          <label className="flex cursor-pointer items-center gap-2 rounded-lg border border-violet-200 bg-violet-50 px-3 py-2 text-sm font-medium text-violet-800">
-            <input
-              type="checkbox"
-              checked={improveMainImage}
-              disabled={savingImagePreference}
-              onChange={(event) => toggleImageImprovement(event.target.checked)}
-              className="h-4 w-4 rounded border-slate-300 text-violet-600"
-            />
-            ✨ AI-enhance main images everywhere
-          </label>
           <Button disabled={pending || selected.size === 0} onClick={mirrorSelected}>
             {`Publish selected (${selected.size})`}
           </Button>

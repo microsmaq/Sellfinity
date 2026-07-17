@@ -134,7 +134,6 @@ async function createBatch(
 
 export async function createUrlMirrorBatch(
   input: string,
-  improveMainImage = false,
 ): Promise<{ batchId?: string; error?: string }> {
   const user = await requireUser();
   const urls = parseUrlLines(input, MAX_BATCH_ITEMS);
@@ -144,13 +143,12 @@ export async function createUrlMirrorBatch(
     "URL_BULK",
     urls.map((inputUrl) => ({ inputUrl })),
     "MANUAL",
-    improveMainImage,
+    user.improveMainImage,
   );
 }
 
 export async function createArbitrageMirrorBatch(
   ebayItemIds: string[],
-  improveMainImage = false,
 ): Promise<{ batchId?: string; error?: string }> {
   const user = await requireUser();
   const ids = [...new Set(ebayItemIds)].slice(0, MAX_BATCH_ITEMS);
@@ -169,7 +167,7 @@ export async function createArbitrageMirrorBatch(
       inputUrl: row.amazonUrl,
       sourceReferenceId: row.ebayItemId,
     }));
-  return createBatch(user.id, "ARBITRAGE", items, "MANUAL", improveMainImage);
+  return createBatch(user.id, "ARBITRAGE", items, "MANUAL", user.improveMainImage);
 }
 
 export async function setImproveMainImagePreference(enabled: boolean): Promise<void> {
@@ -180,6 +178,7 @@ export async function setImproveMainImagePreference(enabled: boolean): Promise<v
   });
   revalidatePath("/mirror");
   revalidatePath("/arbitrage");
+  revalidatePath("/settings");
 }
 
 /** Build an automatic batch from every currently available opportunity that
