@@ -32,6 +32,7 @@ import { publishListingForUser } from "@/lib/listings/publish";
 import { improveMainListingImage } from "@/lib/mirror/improve-main-image";
 import { improveListingContent } from "@/lib/mirror/improve-listing-content";
 import { generateMirrorDescription } from "@/lib/mirror/seo";
+import { recordListingActivity } from "@/lib/listings/activity-history";
 
 export type EbayListingResult = { error?: string };
 
@@ -150,17 +151,50 @@ export async function repriceEbayListing(
 ): Promise<EbayListingResult> {
   const user = await requireUser();
   if (priceCents < 99) return { error: "Price must be at least $0.99" };
+  const listing = await db.listing.findFirst({
+    where: { userId: user.id, ebayListingId },
+    include: { product: true },
+  });
 
   const client = await getEbayClientForUser(user.id);
   try {
     await client.updateListing(ebayListingId, { priceCents });
   } catch (e) {
-    if (e instanceof EbayApiError) return { error: e.message };
+    if (e instanceof EbayApiError) {
+      await recordListingActivity({
+        userId: user.id,
+        source: "LISTING_EDIT",
+        items: [{
+          title: listing?.title ?? `eBay listing ${ebayListingId}`,
+          listingId: listing?.id,
+          ebayListingId,
+          amazonUrl: listing?.product.supplierUrl,
+          sourcePriceCents: listing?.product.costCents,
+          listingPriceCents: priceCents,
+          ok: false,
+          error: e.message,
+        }],
+      });
+      return { error: e.message };
+    }
     throw e;
   }
   await db.listing.updateMany({
     where: { userId: user.id, ebayListingId },
     data: { priceCents },
+  });
+  await recordListingActivity({
+    userId: user.id,
+    source: "LISTING_EDIT",
+    items: [{
+      title: listing?.title ?? `eBay listing ${ebayListingId}`,
+      listingId: listing?.id,
+      ebayListingId,
+      amazonUrl: listing?.product.supplierUrl,
+      sourcePriceCents: listing?.product.costCents,
+      listingPriceCents: priceCents,
+      ok: true,
+    }],
   });
   revalidate();
   return {};
@@ -245,13 +279,31 @@ export async function enhanceEbayListing(
     ? [imageResult.imageUrl, ...sourceImages].slice(0, 12)
     : undefined;
   if (!title && !imageUrls) {
+    const error =
+      (!copyResult?.ok && copyResult?.error) ||
+      (!imageResult?.ok && imageResult?.error) ||
+      "AI enhancement did not produce an update.";
+    await recordListingActivity({
+      userId: user.id,
+      source: "AI_OPTIMIZATION",
+      improveMainImage: user.improveMainImage,
+      improveListingContent: user.improveListingContent,
+      items: [{
+        title: listing.title,
+        listingId: listing.id,
+        ebayListingId,
+        amazonUrl: listing.product.supplierUrl,
+        sourcePriceCents: listing.product.costCents,
+        listingPriceCents: listing.priceCents,
+        ok: false,
+        error,
+        imageError: imageResult && !imageResult.ok ? imageResult.error : null,
+      }],
+    });
     return {
       ebayListingId,
       ok: false,
-      error:
-        (!copyResult?.ok && copyResult?.error) ||
-        (!imageResult?.ok && imageResult?.error) ||
-        "AI enhancement did not produce an update.",
+      error,
     };
   }
 
@@ -267,10 +319,28 @@ export async function enhanceEbayListing(
       },
     });
   } catch (error) {
+    const message = error instanceof Error ? error.message.slice(0, 300) : "eBay update failed.";
+    await recordListingActivity({
+      userId: user.id,
+      source: "AI_OPTIMIZATION",
+      improveMainImage: user.improveMainImage,
+      improveListingContent: user.improveListingContent,
+      items: [{
+        title: title ?? listing.title,
+        listingId: listing.id,
+        ebayListingId,
+        amazonUrl: listing.product.supplierUrl,
+        sourcePriceCents: listing.product.costCents,
+        listingPriceCents: listing.priceCents,
+        ok: false,
+        error: message,
+        imageEnhanced: !!imageUrls,
+      }],
+    });
     return {
       ebayListingId,
       ok: false,
-      error: error instanceof Error ? error.message.slice(0, 300) : "eBay update failed.",
+      error: message,
     };
   }
   revalidate();
@@ -278,6 +348,23 @@ export async function enhanceEbayListing(
     copyResult && !copyResult.ok ? `Copy: ${copyResult.error}` : null,
     imageResult && !imageResult.ok ? `Image: ${imageResult.error}` : null,
   ].filter((item): item is string => !!item);
+  await recordListingActivity({
+    userId: user.id,
+    source: "AI_OPTIMIZATION",
+    improveMainImage: user.improveMainImage,
+    improveListingContent: user.improveListingContent,
+    items: [{
+      title: title ?? listing.title,
+      listingId: listing.id,
+      ebayListingId,
+      amazonUrl: listing.product.supplierUrl,
+      sourcePriceCents: listing.product.costCents,
+      listingPriceCents: listing.priceCents,
+      ok: true,
+      imageEnhanced: !!imageUrls,
+      imageError: imageResult && !imageResult.ok ? imageResult.error : null,
+    }],
+  });
   return {
     ebayListingId,
     ok: true,
@@ -295,12 +382,33 @@ async function endEbayListingForUser(
   ebayListingId: string,
   endedReason: "MANUAL" | "SOURCE_UNAVAILABLE" = "MANUAL",
 ): Promise<EbayListingResult> {
+  const listing = await db.listing.findFirst({
+    where: { userId, ebayListingId },
+    include: { product: true },
+  });
   const client = await getEbayClientForUser(userId);
   try {
     await client.endListing(ebayListingId);
   } catch (e) {
     if (e instanceof EbayApiError) {
-      if (!isAlreadyEndedEbayError(e.message)) return { error: e.message };
+      if (!isAlreadyEndedEbayError(e.message)) {
+        await recordListingActivity({
+          userId,
+          source: endedReason === "SOURCE_UNAVAILABLE" ? "LISTING_SYNC" : "LISTING_END",
+          trigger: endedReason === "SOURCE_UNAVAILABLE" ? "AUTOMATIC" : "MANUAL",
+          items: [{
+            title: listing?.title ?? `eBay listing ${ebayListingId}`,
+            listingId: listing?.id,
+            ebayListingId,
+            amazonUrl: listing?.product.supplierUrl,
+            sourcePriceCents: listing?.product.costCents,
+            listingPriceCents: listing?.priceCents,
+            ok: false,
+            error: e.message,
+          }],
+        });
+        return { error: e.message };
+      }
     } else {
       throw e;
     }
@@ -316,6 +424,20 @@ async function endEbayListingForUser(
       update: {},
     }),
   ]);
+  await recordListingActivity({
+    userId,
+    source: endedReason === "SOURCE_UNAVAILABLE" ? "LISTING_SYNC" : "LISTING_END",
+    trigger: endedReason === "SOURCE_UNAVAILABLE" ? "AUTOMATIC" : "MANUAL",
+    items: [{
+      title: listing?.title ?? `eBay listing ${ebayListingId}`,
+      listingId: listing?.id,
+      ebayListingId,
+      amazonUrl: listing?.product.supplierUrl,
+      sourcePriceCents: listing?.product.costCents,
+      listingPriceCents: listing?.priceCents,
+      ok: true,
+    }],
+  });
   return {};
 }
 
@@ -477,6 +599,34 @@ export async function cleanupEbayListings(
       });
     }
   }
+  const activityListings = await db.listing.findMany({
+    where: {
+      userId: user.id,
+      ebayListingId: { in: results.map((result) => result.ebayListingId) },
+    },
+    include: { product: true },
+  });
+  const activityByEbayId = new Map(
+    activityListings.map((listing) => [listing.ebayListingId, listing]),
+  );
+  await recordListingActivity({
+    userId: user.id,
+    source: "PRICE_OPTIMIZATION",
+    items: results.map((result) => {
+      const listing = activityByEbayId.get(result.ebayListingId);
+      return {
+        title: listing?.title ?? `eBay listing ${result.ebayListingId}`,
+        listingId: listing?.id,
+        ebayListingId: result.ebayListingId,
+        amazonUrl: result.amazonUrl ?? listing?.product.supplierUrl,
+        sourcePriceCents: result.amazonPriceCents ?? listing?.product.costCents,
+        listingPriceCents:
+          result.newPriceCents ?? result.suggestedPriceCents ?? listing?.priceCents,
+        ok: result.action !== "error",
+        error: result.error,
+      };
+    }),
+  });
   revalidate();
   return results;
 }
@@ -673,6 +823,21 @@ export async function cleanupListingSourcesBatch(): Promise<SourceCleanupBatchRe
     const published = await publishListingForUser(user.id, recoverable.id, {
       recoverSourceUnavailable: true,
     });
+    await recordListingActivity({
+      userId: user.id,
+      source: "LISTING_SYNC",
+      trigger: "AUTOMATIC",
+      items: [{
+        title: recoverable.title,
+        listingId: recoverable.id,
+        ebayListingId: published.ok ? published.ebayListingId : recoverable.ebayListingId,
+        amazonUrl: recoverable.product.supplierUrl,
+        sourcePriceCents: recoverable.product.costCents,
+        listingPriceCents: priceCents,
+        ok: published.ok,
+        error: published.ok ? null : published.error,
+      }],
+    });
     return published.ok ? { ebayListingId: published.ebayListingId } : { error: published.error };
   }
 
@@ -752,8 +917,25 @@ export async function cleanupListingSourcesBatch(): Promise<SourceCleanupBatchRe
           }
           continue;
         }
-        if (exactCurrent.asin === listing.product.supplierProductId) counts.kept++;
-        else counts.replaced++;
+        if (exactCurrent.asin === listing.product.supplierProductId) {
+          counts.kept++;
+        } else {
+          await recordListingActivity({
+            userId: user.id,
+            source: "LISTING_SYNC",
+            trigger: "AUTOMATIC",
+            items: [{
+              title: listing.title,
+              listingId: listing.id,
+              ebayListingId: listing.ebayListingId,
+              amazonUrl: exactCurrent.url,
+              sourcePriceCents: exactCurrent.priceCents,
+              listingPriceCents: listing.priceCents,
+              ok: true,
+            }],
+          });
+          counts.replaced++;
+        }
         continue;
       }
 
@@ -860,6 +1042,20 @@ export async function cleanupListingSourcesBatch(): Promise<SourceCleanupBatchRe
           }
           continue;
         }
+        await recordListingActivity({
+          userId: user.id,
+          source: "LISTING_SYNC",
+          trigger: "AUTOMATIC",
+          items: [{
+            title: listing.title,
+            listingId: listing.id,
+            ebayListingId: listing.ebayListingId,
+            amazonUrl: candidate.url,
+            sourcePriceCents: candidate.priceCents,
+            listingPriceCents: listing.priceCents,
+            ok: true,
+          }],
+        });
         counts.replaced++;
         continue;
       }

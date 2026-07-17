@@ -8,6 +8,7 @@ import { EbayApiError } from "@/lib/ebay/client";
 import { generateListing } from "@/lib/listings/generate";
 import { parseImageUrls } from "@/lib/types";
 import { publishListingForUser } from "@/lib/listings/publish";
+import { recordListingActivity } from "@/lib/listings/activity-history";
 
 export type BulkResult = { done: number; failed: number; error?: string };
 
@@ -77,6 +78,12 @@ export async function publishListings(listingIds: string[]): Promise<BulkResult>
   let done = 0;
   let failed = 0;
   let firstError: string | undefined;
+  const listings = await db.listing.findMany({
+    where: { id: { in: listingIds }, userId: user.id },
+    include: { product: true },
+  });
+  const byId = new Map(listings.map((listing) => [listing.id, listing]));
+  const activity: Parameters<typeof recordListingActivity>[0]["items"] = [];
 
   for (const listingId of listingIds) {
     const result = await publishListingForUser(user.id, listingId);
@@ -85,7 +92,20 @@ export async function publishListings(listingIds: string[]): Promise<BulkResult>
       failed++;
       firstError ??= result.error;
     }
+    const listing = byId.get(listingId);
+    activity.push({
+      title: listing?.title ?? `Listing ${listingId}`,
+      listingId,
+      ebayListingId: result.ok ? result.ebayListingId : listing?.ebayListingId,
+      amazonUrl: listing?.product.supplierUrl,
+      sourcePriceCents: listing?.product.costCents,
+      listingPriceCents: listing?.priceCents,
+      ok: result.ok,
+      error: result.ok ? null : result.error,
+    });
   }
+
+  await recordListingActivity({ userId: user.id, source: "LISTING_PUBLISH", items: activity });
 
   revalidate();
   return { done, failed, error: firstError };
@@ -96,6 +116,7 @@ export async function endListings(listingIds: string[]): Promise<BulkResult> {
   const user = await requireUser();
   const listings = await db.listing.findMany({
     where: { id: { in: listingIds }, userId: user.id, status: "ACTIVE" },
+    include: { product: true },
   });
   const client = await getEbayClientForUser(user.id);
   let done = 0;
@@ -107,6 +128,19 @@ export async function endListings(listingIds: string[]): Promise<BulkResult> {
     });
     done++;
   }
+  await recordListingActivity({
+    userId: user.id,
+    source: "LISTING_END",
+    items: listings.map((listing) => ({
+      title: listing.title,
+      listingId: listing.id,
+      ebayListingId: listing.ebayListingId,
+      amazonUrl: listing.product.supplierUrl,
+      sourcePriceCents: listing.product.costCents,
+      listingPriceCents: listing.priceCents,
+      ok: true,
+    })),
+  });
   revalidate();
   return { done, failed: listings.length - done };
 }
@@ -135,6 +169,7 @@ export async function updateListing(
   }
   const listing = await db.listing.findFirst({
     where: { id: listingId, userId: user.id, status: { in: ["DRAFT", "ACTIVE"] } },
+    include: { product: true },
   });
   if (!listing) return { done: 0, failed: 1, error: "Listing not found" };
 
@@ -143,11 +178,40 @@ export async function updateListing(
       const client = await getEbayClientForUser(user.id);
       await client.updateListing(listing.ebayListingId, update);
     } catch (e) {
-      if (e instanceof EbayApiError) return { done: 0, failed: 1, error: e.message };
+      if (e instanceof EbayApiError) {
+        await recordListingActivity({
+          userId: user.id,
+          source: "LISTING_EDIT",
+          items: [{
+            title: listing.title,
+            listingId: listing.id,
+            ebayListingId: listing.ebayListingId,
+            amazonUrl: listing.product.supplierUrl,
+            sourcePriceCents: listing.product.costCents,
+            listingPriceCents: update.priceCents ?? listing.priceCents,
+            ok: false,
+            error: e.message,
+          }],
+        });
+        return { done: 0, failed: 1, error: e.message };
+      }
       throw e;
     }
   }
   await db.listing.update({ where: { id: listing.id }, data: update });
+  await recordListingActivity({
+    userId: user.id,
+    source: "LISTING_EDIT",
+    items: [{
+      title: listing.title,
+      listingId: listing.id,
+      ebayListingId: listing.ebayListingId,
+      amazonUrl: listing.product.supplierUrl,
+      sourcePriceCents: listing.product.costCents,
+      listingPriceCents: update.priceCents ?? listing.priceCents,
+      ok: true,
+    }],
+  });
   revalidate();
   return { done: 1, failed: 0 };
 }

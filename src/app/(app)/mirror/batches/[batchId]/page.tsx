@@ -3,7 +3,7 @@ import { getMirrorBatch } from "@/lib/actions/mirror-batches";
 import { PageHeader } from "@/components/ui";
 import { BatchProgress } from "./batch-progress";
 
-export const metadata = { title: "Publishing batch — Sellfinity" };
+export const metadata = { title: "Listing activity — Sellfinity" };
 
 export default async function MirrorBatchPage({
   params,
@@ -17,8 +17,8 @@ export default async function MirrorBatchPage({
   return (
     <>
       <PageHeader
-        title="eBay publishing status"
-        subtitle="Live item-by-item progress. This batch remains in your permanent mirroring history."
+        title="eBay listing activity"
+        subtitle="Item-level progress and results retained in your permanent publishing history."
       />
       <BatchProgress initial={batch} />
     </>

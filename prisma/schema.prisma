@@ -55,7 +55,8 @@ model User {
 model MirrorBatch {
   id             String    @id @default(cuid())
   userId         String
-  // URL_BULK | ARBITRAGE
+  // URL_BULK | ARBITRAGE | LISTING_PUBLISH | LISTING_EDIT |
+  // PRICE_OPTIMIZATION | AI_OPTIMIZATION | LISTING_END | LISTING_SYNC
   source         String
   // MANUAL | AUTOMATIC
   trigger        String    @default("MANUAL")

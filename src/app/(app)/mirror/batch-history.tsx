@@ -1,5 +1,6 @@
 import Link from "next/link";
 import type { MirrorBatchHistoryRow } from "@/lib/actions/mirror-batches";
+import { batchSourceMeta } from "@/lib/mirror/batch-labels";
 import { Badge, Card } from "@/components/ui";
 
 export function BatchHistory({ batches }: { batches: MirrorBatchHistoryRow[] }) {
@@ -8,7 +9,7 @@ export function BatchHistory({ batches }: { batches: MirrorBatchHistoryRow[] }) 
       <div className="border-b border-slate-200 px-5 py-4">
         <h2 className="font-semibold text-slate-900">Publishing batch history</h2>
         <p className="mt-1 text-sm text-slate-500">
-          Every direct eBay publishing run and its item-level results.
+          Every eBay publish, edit, optimization, ending, and sync result—including single items.
         </p>
       </div>
       <table className="w-full text-sm">
@@ -17,7 +18,7 @@ export function BatchHistory({ batches }: { batches: MirrorBatchHistoryRow[] }) 
             <th className="px-4 py-3">Started</th>
             <th className="px-4 py-3">Source</th>
             <th className="px-4 py-3 text-right">Items</th>
-            <th className="px-4 py-3 text-right">Published</th>
+            <th className="px-4 py-3 text-right">Succeeded</th>
             <th className="px-4 py-3 text-right">Success</th>
             <th className="px-4 py-3">Status</th>
             <th className="px-4 py-3">Email</th>
@@ -26,6 +27,7 @@ export function BatchHistory({ batches }: { batches: MirrorBatchHistoryRow[] }) 
         </thead>
         <tbody>
           {batches.map((batch) => {
+            const sourceMeta = batchSourceMeta(batch.source);
             const successPct = batch.totalCount
               ? Math.round((batch.succeededCount / batch.totalCount) * 100)
               : 0;
@@ -35,13 +37,16 @@ export function BatchHistory({ batches }: { batches: MirrorBatchHistoryRow[] }) 
                   {new Date(batch.createdAt).toLocaleString()}
                 </td>
                 <td className="px-4 py-3">
-                  <div>{batch.source === "ARBITRAGE" ? "Arbitrage Finder" : "Amazon URLs"}</div>
+                  <div className="font-medium text-slate-900">{sourceMeta.label}</div>
                   <div className="mt-1">
                     <Badge tone={batch.trigger === "AUTOMATIC" ? "indigo" : "slate"}>
                       {batch.trigger === "AUTOMATIC" ? "automatic" : "manual"}
                     </Badge>
                     {batch.improveMainImage && (
                       <span className="ml-2 text-xs font-medium text-violet-700">✨ AI images</span>
+                    )}
+                    {batch.improveListingContent && (
+                      <span className="ml-2 text-xs font-medium text-indigo-700">AI copy</span>
                     )}
                   </div>
                 </td>
@@ -66,7 +71,9 @@ export function BatchHistory({ batches }: { batches: MirrorBatchHistoryRow[] }) 
                           : "slate"
                     }
                   >
-                    {batch.emailStatus === "SENT"
+                    {batch.emailStatus === "NOT_APPLICABLE"
+                      ? "—"
+                      : batch.emailStatus === "SENT"
                       ? "sent"
                       : batch.emailStatus === "FAILED"
                         ? "not sent"

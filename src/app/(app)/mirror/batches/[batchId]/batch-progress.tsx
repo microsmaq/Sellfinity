@@ -8,6 +8,7 @@ import {
 } from "@/lib/actions/mirror-batches";
 import { formatCents } from "@/lib/money";
 import { Badge, Card } from "@/components/ui";
+import { batchSourceMeta } from "@/lib/mirror/batch-labels";
 
 function statusTone(status: string): "green" | "red" | "indigo" | "slate" {
   if (status === "SUCCEEDED") return "green";
@@ -70,6 +71,8 @@ export function BatchProgress({ initial }: { initial: MirrorBatchView }) {
   const successPct = batch.totalCount
     ? Math.round((batch.succeededCount / batch.totalCount) * 100)
     : 0;
+  const sourceMeta = batchSourceMeta(batch.source);
+  const isActivity = sourceMeta.activity;
 
   return (
     <div className="space-y-5">
@@ -78,7 +81,7 @@ export function BatchProgress({ initial }: { initial: MirrorBatchView }) {
           <div>
             <p className="text-sm font-medium text-slate-600">
               {batch.trigger === "AUTOMATIC" ? "Automatic " : "Manual "}
-              {batch.source === "ARBITRAGE" ? "Arbitrage Finder batch" : "Amazon URL batch"}
+              {sourceMeta.label}
             </p>
             {batch.improveMainImage && (
               <p className="mt-1 text-sm font-medium text-violet-700">
@@ -87,8 +90,12 @@ export function BatchProgress({ initial }: { initial: MirrorBatchView }) {
             )}
             <h2 className="mt-1 text-xl font-semibold text-slate-900">
               {batch.status === "COMPLETED"
-                ? "Publishing complete"
-                : "Publishing directly to eBay…"}
+                ? isActivity
+                  ? `${sourceMeta.result} successfully`
+                  : "Publishing complete"
+                : isActivity
+                  ? "Updating eBay listing…"
+                  : "Publishing directly to eBay…"}
             </h2>
           </div>
           <Badge tone={batch.status === "COMPLETED" ? "green" : "indigo"}>
@@ -121,7 +128,7 @@ export function BatchProgress({ initial }: { initial: MirrorBatchView }) {
             <p className="mt-1 text-2xl font-semibold text-red-800 tabular-nums">{batch.failedCount}</p>
           </div>
           <div className="rounded-lg bg-indigo-50 p-3">
-            <p className="text-xs uppercase tracking-wide text-indigo-700">Listed successfully</p>
+            <p className="text-xs uppercase tracking-wide text-indigo-700">Success rate</p>
             <p className="mt-1 text-2xl font-semibold text-indigo-800 tabular-nums">{successPct}%</p>
           </div>
         </div>
@@ -134,7 +141,9 @@ export function BatchProgress({ initial }: { initial: MirrorBatchView }) {
         {batch.status === "COMPLETED" && (
           <div className="mt-4 space-y-3">
             <p className={`text-sm ${batch.emailStatus === "SENT" ? "text-emerald-700" : batch.emailStatus === "FAILED" ? "text-amber-700" : "text-slate-600"}`}>
-              {batch.emailStatus === "SENT"
+              {batch.emailStatus === "NOT_APPLICABLE"
+                ? "This activity is saved in your permanent history."
+                : batch.emailStatus === "SENT"
                 ? "A publishing summary was emailed to you."
                 : batch.emailStatus === "FAILED"
                   ? "The batch completed, but the email summary could not be sent. The result is saved in batch history."
@@ -158,8 +167,8 @@ export function BatchProgress({ initial }: { initial: MirrorBatchView }) {
             <tr className="border-b border-slate-200 text-left text-xs uppercase tracking-wide text-slate-500">
               <th className="px-4 py-3">#</th>
               <th className="px-4 py-3">Product</th>
-              <th className="px-4 py-3 text-right">Amazon source</th>
-              <th className="px-4 py-3 text-right">eBay list price</th>
+              <th className="px-4 py-3 text-right">Source cost</th>
+              <th className="px-4 py-3 text-right">Listing price</th>
               <th className="px-4 py-3">Status</th>
               {batch.improveMainImage && <th className="px-4 py-3">Main image</th>}
               <th className="px-4 py-3">Result</th>
@@ -171,14 +180,16 @@ export function BatchProgress({ initial }: { initial: MirrorBatchView }) {
                 <td className="px-4 py-3 text-slate-500 tabular-nums">{item.position + 1}</td>
                 <td className="max-w-md px-4 py-3">
                   <p className="font-medium text-slate-900">{item.title ?? "Waiting to research…"}</p>
-                  <a
-                    href={item.inputUrl}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="mt-1 block max-w-sm truncate text-xs text-indigo-600 hover:underline"
-                  >
-                    Amazon source ↗
-                  </a>
+                  {item.inputUrl.startsWith("http") && (
+                    <a
+                      href={item.inputUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="mt-1 block max-w-sm truncate text-xs text-indigo-600 hover:underline"
+                    >
+                      {item.inputUrl.includes("amazon.") ? "Amazon source ↗" : "Related listing ↗"}
+                    </a>
+                  )}
                 </td>
                 <td className="px-4 py-3 text-right tabular-nums">
                   {item.sourcePriceCents === null ? "—" : formatCents(item.sourcePriceCents)}
@@ -210,7 +221,9 @@ export function BatchProgress({ initial }: { initial: MirrorBatchView }) {
                   </td>
                 )}
                 <td className="max-w-md px-4 py-3">
-                  {item.ebayListingId ? (
+                  {item.status === "FAILED" && item.error ? (
+                    <span className="text-red-700">{item.error}</span>
+                  ) : item.ebayListingId ? (
                     <a
                       href={`https://www.ebay.com/itm/${item.ebayListingId}`}
                       target="_blank"
@@ -219,10 +232,10 @@ export function BatchProgress({ initial }: { initial: MirrorBatchView }) {
                     >
                       View eBay listing ↗
                     </a>
-                  ) : item.error ? (
-                    <span className="text-red-700">{item.error}</span>
                   ) : item.status === "PROCESSING" ? (
-                    <span className="text-indigo-700">Creating and publishing…</span>
+                    <span className="text-indigo-700">
+                      {isActivity ? "Updating listing…" : "Creating and publishing…"}
+                    </span>
                   ) : (
                     <span className="text-slate-400">Pending</span>
                   )}
