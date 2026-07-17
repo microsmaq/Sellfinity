@@ -379,8 +379,21 @@ export function EbayListingsTable({
       let copyEnhanced = 0;
       let imagesRetained = 0;
       let copyRetained = 0;
+      const failureReasons = new Set<string>();
       for (let index = 0; index < ids.length; index++) {
-        const result = await enhanceEbayListing(ids[index]);
+        let result: Awaited<ReturnType<typeof enhanceEbayListing>>;
+        try {
+          result = await enhanceEbayListing(ids[index]);
+        } catch (error) {
+          const message = error instanceof Error && error.message
+            ? error.message
+            : "The enhancement request was interrupted before it finished.";
+          result = {
+            ebayListingId: ids[index],
+            ok: false,
+            error: message,
+          };
+        }
         if (result.ok) {
           enhanced++;
           if (result.imageEnhanced) imagesEnhanced++;
@@ -405,6 +418,7 @@ export function EbayListingsTable({
           });
         } else {
           failed++;
+          failureReasons.add(result.error ?? "Enhancement failed");
         }
         setBulkProgress({
           kind: "enhance",
@@ -419,7 +433,7 @@ export function EbayListingsTable({
         });
       }
       setNotice({
-        text: `AI enhancement complete: ${enhanced} listings updated · ${imagesEnhanced} images generated · ${copyEnhanced} titles/descriptions optimized${imagesRetained ? ` · ${imagesRetained} image generations failed` : ""}${copyRetained ? ` · ${copyRetained} original descriptions retained` : ""}${failed ? ` · ${failed} failed or had no tracked Amazon source` : ""}.`,
+        text: `AI enhancement complete: ${enhanced} listings updated · ${imagesEnhanced} images generated · ${copyEnhanced} titles/descriptions optimized${imagesRetained ? ` · ${imagesRetained} image generations failed` : ""}${copyRetained ? ` · ${copyRetained} original descriptions retained` : ""}${failed ? ` · ${failed} failed or had no tracked Amazon source` : ""}.${failureReasons.size ? ` ${[...failureReasons][0]}` : ""}`,
         error: failed > 0,
       });
     });

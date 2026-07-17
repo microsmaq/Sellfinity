@@ -4,6 +4,7 @@ import { PageHeader } from "@/components/ui";
 import { BatchProgress } from "./batch-progress";
 
 export const metadata = { title: "Listing activity — Sellfinity" };
+export const maxDuration = 300;
 
 export default async function MirrorBatchPage({
   params,

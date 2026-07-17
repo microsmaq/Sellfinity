@@ -12,8 +12,10 @@ import { backfillRetainedArbitrageResearchForUser } from "@/lib/arbitrage/publis
 
 export const metadata = { title: "Listings — Sellfinity" };
 
-// Fetching the live eBay listing set can take a few seconds.
-export const maxDuration = 60;
+// GPT Image 2 edits can legitimately take longer than one minute. Listing
+// server actions inherit this route's limit, so leave enough time for the
+// provider response, image storage, and the final eBay update.
+export const maxDuration = 300;
 
 export default async function ListingsPage() {
   const user = await requireUser();

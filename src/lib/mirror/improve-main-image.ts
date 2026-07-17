@@ -153,7 +153,9 @@ export async function improveMainListingImage(
       method: "POST",
       headers: { Authorization: `Bearer ${openAiKey}` },
       body: form,
-      signal: AbortSignal.timeout(240_000),
+      // Keep a buffer inside the five-minute route limit for database storage
+      // and the subsequent eBay listing update.
+      signal: AbortSignal.timeout(210_000),
     });
     const payload = (await response.json().catch(() => null)) as
       | { data?: Array<{ b64_json?: string; media_type?: string }>; error?: { message?: string } }
