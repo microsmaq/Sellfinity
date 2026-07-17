@@ -14,7 +14,7 @@ describe("parseTradingItem", () => {
     <SellingStatus><CurrentPrice currencyID="USD">12.99</CurrentPrice></SellingStatus>
     <QuantityAvailable>4</QuantityAvailable>
     <PictureDetails><GalleryURL>https://i.ebayimg.com/thumbs/g/abc/s-l140.jpg</GalleryURL></PictureDetails>
-    <ListingDetails><ViewItemURL>https://www.ebay.com/itm/110123456789</ViewItemURL></ListingDetails>
+    <ListingDetails><StartTime>2026-07-04T12:30:00.000Z</StartTime><ViewItemURL>https://www.ebay.com/itm/110123456789</ViewItemURL></ListingDetails>
   </Item>`;
 
   it("parses id, title (unescaped), price, quantity, urls", () => {
@@ -25,6 +25,7 @@ describe("parseTradingItem", () => {
     expect(parsed.quantity).toBe(4);
     expect(parsed.url).toBe("https://www.ebay.com/itm/110123456789");
     expect(parsed.imageUrl).toContain("i.ebayimg.com");
+    expect(parsed.listingDate?.toISOString()).toBe("2026-07-04T12:30:00.000Z");
   });
 
   it("returns null for blocks missing essentials", () => {
@@ -37,6 +38,7 @@ describe("parseTradingItem", () => {
     expect(parsed.quantity).toBeNull();
     expect(parsed.imageUrl).toBeNull();
     expect(parsed.url).toBe("https://www.ebay.com/itm/2");
+    expect(parsed.listingDate).toBeNull();
   });
 });
 

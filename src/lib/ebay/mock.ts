@@ -121,6 +121,7 @@ export class MockEbayClient implements EbayClient {
       url: `https://sandbox.ebay.com/itm/${l.ebayListingId}`,
       imageUrl: (JSON.parse(l.imageUrlsJson) as string[])[0] ?? null,
       quantity: l.quantity,
+      listingDate: l.publishedAt,
     }));
   }
 

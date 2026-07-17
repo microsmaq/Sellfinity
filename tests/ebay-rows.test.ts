@@ -25,6 +25,7 @@ function local(
     sourceMatchReason: "Strong product identity evidence.",
     sourceMatchMethod: "RULES",
     imageUrlsJson: "[]",
+    publishedAt: new Date("2026-06-15T10:00:00.000Z"),
     product: {
       sku: `SKU-${id}`,
       costCents: overrides.costCents ?? 800,
@@ -48,6 +49,18 @@ describe("buildEbayRows", () => {
   it("marks untracked listings as unmatched", () => {
     const rows = buildEbayRows([remote("9")], []);
     expect(rows[0].match).toBeNull();
+  });
+
+  it("uses eBay's listing date and falls back to the tracked publication date", () => {
+    const ebayDated = remote("1");
+    ebayDated.listingDate = new Date("2026-07-01T08:00:00.000Z");
+    const rows = buildEbayRows([ebayDated, remote("2")], [local("1"), local("2")]);
+    expect(rows.find((row) => row.ebayListingId === "1")?.listingDate).toBe(
+      "2026-07-01T08:00:00.000Z",
+    );
+    expect(rows.find((row) => row.ebayListingId === "2")?.listingDate).toBe(
+      "2026-06-15T10:00:00.000Z",
+    );
   });
 
   it("does not show stale profitability before exact-variant verification", () => {

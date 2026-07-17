@@ -20,6 +20,7 @@ describe("Excel exports", () => {
       {
         title: "Milk Frother",
         ebayListingId: "123456789",
+        listingDate: "2026-07-04T12:30:00.000Z",
         ebayUrl: "https://www.ebay.com/itm/123456789",
         ebayPriceCents: 2499,
         amazonUrl: "https://www.amazon.com/dp/B0TEST",
@@ -39,9 +40,10 @@ describe("Excel exports", () => {
     ]);
     const workbook = await load(file.base64);
     const sheet = workbook.getWorksheet("Listings")!;
-    expect(sheet.getCell("C2").value).toBe(24.99);
-    expect(sheet.getCell("F2").value).toBe(0.27);
-    expect(sheet.getCell("P2").value).toEqual({
+    expect(sheet.getCell("C2").value).toEqual(new Date("2026-07-04T12:30:00.000Z"));
+    expect(sheet.getCell("D2").value).toBe(24.99);
+    expect(sheet.getCell("G2").value).toBe(0.27);
+    expect(sheet.getCell("Q2").value).toEqual({
       text: "Open on eBay",
       hyperlink: "https://www.ebay.com/itm/123456789",
     });

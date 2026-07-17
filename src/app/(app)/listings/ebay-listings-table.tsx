@@ -31,6 +31,7 @@ export type EbayRow = {
   url: string;
   imageUrl: string | null;
   quantity: number | null;
+  listingDate: string | null;
   market: {
     estimatedSales30d: number;
     competitorCount: number;
@@ -60,6 +61,7 @@ export type EbayRow = {
 type ListingSortKey =
   | "title"
   | "price"
+  | "listingDate"
   | "amazonPrice"
   | "profit"
   | "margin"
@@ -68,9 +70,38 @@ type ListingSortKey =
   | "recommendedPrice"
   | "averagePrice"
   | "suggestedPrice"
-  | "matchConfidence";
+  | "matchConfidence"
+  | "competitiveHealth";
 
 const PRICE_CLEANUP_BATCH_SIZE = 4;
+
+function competitiveHealthSortValue(row: EbayRow): number {
+  const health = assessListingHealth(row);
+  const rank = {
+    SOURCE_ISSUE: 1,
+    UNPROFITABLE: 2,
+    THIN_MARGIN: 3,
+    MARKET_DATA_NEEDED: 4,
+    ABOVE_MARKET: 5,
+    COMPETITIVE: 6,
+  }[health.status];
+  const qualityWithinStatus =
+    health.status === "ABOVE_MARKET"
+      ? -(health.priceDifferencePct ?? 0) * 100
+      : health.marginPct ?? health.profitCents ?? 0;
+  return rank * 1_000_000 + qualityWithinStatus;
+}
+
+function formatListingDate(value: string | null): string {
+  if (!value) return "—";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "—";
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  }).format(date);
+}
 
 type ListingSyncProgress = {
   stage: "preparing" | "sources" | "market" | "complete";
@@ -273,6 +304,7 @@ export function EbayListingsTable({
       switch (sortKey) {
         case "title": return row.title.toLowerCase();
         case "price": return row.priceCents;
+        case "listingDate": return row.listingDate ? Date.parse(row.listingDate) : null;
         case "amazonPrice": return row.match?.amazonPriceCents ?? null;
         case "profit": return row.match?.profitCents ?? null;
         case "margin": return row.match?.marginPct ?? null;
@@ -282,6 +314,7 @@ export function EbayListingsTable({
         case "averagePrice": return row.market?.averageCompetitorPriceCents ?? null;
         case "suggestedPrice": return row.suggestedPriceCents;
         case "matchConfidence": return row.sourceAssessment?.confidence ?? null;
+        case "competitiveHealth": return competitiveHealthSortValue(row);
       }
     };
     return [...filteredRows].sort((left, right) => {
@@ -653,6 +686,7 @@ export function EbayListingsTable({
         sortedRows.map((row) => ({
           title: row.title,
           ebayListingId: row.ebayListingId,
+          listingDate: row.listingDate,
           ebayUrl: row.url,
           ebayPriceCents: row.priceCents,
           amazonUrl: row.match?.amazonUrl ?? null,
@@ -826,6 +860,7 @@ export function EbayListingsTable({
                   Listing {sortKey === "title" ? (sortDescending ? "↓" : "↑") : ""}
                 </button>
               </th>
+              <ListingSortHeader label="Listing date" value="listingDate" active={sortKey === "listingDate"} descending={sortDescending} onSort={sortBy} />
               <ListingSortHeader label="My price" value="price" active={sortKey === "price"} descending={sortDescending} onSort={sortBy} />
               <ListingSortHeader label="Amazon price" value="amazonPrice" active={sortKey === "amazonPrice"} descending={sortDescending} onSort={sortBy} />
               <ListingSortHeader label="Profit / Margin" value="margin" active={sortKey === "margin"} descending={sortDescending} onSort={sortBy} />
@@ -835,7 +870,7 @@ export function EbayListingsTable({
               <ListingSortHeader label="Avg. comp price" value="averagePrice" active={sortKey === "averagePrice"} descending={sortDescending} onSort={sortBy} />
               <ListingSortHeader label="AI suggested price" value="suggestedPrice" active={sortKey === "suggestedPrice"} descending={sortDescending} onSort={sortBy} />
               <ListingSortHeader label="Match confidence" value="matchConfidence" active={sortKey === "matchConfidence"} descending={sortDescending} onSort={sortBy} />
-              <th className="px-4 py-3 text-right">Competitive health</th>
+              <ListingSortHeader label="Competitive health" value="competitiveHealth" active={sortKey === "competitiveHealth"} descending={sortDescending} onSort={sortBy} />
               <th className="px-4 py-3">Status</th>
               <th className="px-4 py-3" />
             </tr>
@@ -888,6 +923,12 @@ export function EbayListingsTable({
                         </p>
                       </div>
                     </div>
+                  </td>
+                  <td
+                    className="whitespace-nowrap px-4 py-3 text-right text-slate-600"
+                    title={r.listingDate ? new Date(r.listingDate).toLocaleString("en-US") : "Listing date unavailable"}
+                  >
+                    {formatListingDate(r.listingDate)}
                   </td>
                   <td className="px-4 py-3 text-right">
                     <RepriceCell
@@ -1139,7 +1180,7 @@ export function EbayListingsTable({
             })}
             {filteredRows.length === 0 && !fetchError && (
               <tr>
-                <td colSpan={14} className="px-4 py-12 text-center text-slate-500">
+                <td colSpan={15} className="px-4 py-12 text-center text-slate-500">
                   {attentionOnly
                     ? "No active listings currently need attention."
                     : "No active listings found on your eBay account."}

@@ -43,6 +43,8 @@ export type RemoteListing = {
   url: string;
   imageUrl: string | null;
   quantity: number | null; // null when eBay doesn't expose it
+  /** When the listing first went live, if exposed by eBay. */
+  listingDate?: Date | null;
 };
 
 export class EbayApiError extends Error {}

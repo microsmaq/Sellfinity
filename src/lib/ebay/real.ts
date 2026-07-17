@@ -62,6 +62,8 @@ export function parseTradingItem(block: string): RemoteListing | null {
   if (!ebayListingId || !title || !price) return null;
   const quantityRaw =
     xmlField(block, "QuantityAvailable") ?? xmlField(block, "Quantity");
+  const startTimeRaw = xmlField(block, "StartTime");
+  const startTime = startTimeRaw ? new Date(startTimeRaw) : null;
   return {
     ebayListingId,
     // Trading XML escapes entities; unescape the common ones.
@@ -70,6 +72,7 @@ export function parseTradingItem(block: string): RemoteListing | null {
     url: xmlField(block, "ViewItemURL") ?? `https://www.ebay.com/itm/${ebayListingId}`,
     imageUrl: xmlField(block, "GalleryURL"),
     quantity: quantityRaw !== null ? parseInt(quantityRaw, 10) : null,
+    listingDate: startTime && !Number.isNaN(startTime.getTime()) ? startTime : null,
   };
 }
 

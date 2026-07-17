@@ -15,6 +15,7 @@ export type LocalListingFacts = {
   sourceMatchReason: string | null;
   sourceMatchMethod: string | null;
   imageUrlsJson: string;
+  publishedAt: Date | null;
   product: {
     sku: string;
     costCents: number;
@@ -66,6 +67,7 @@ export function buildEbayRows(
         url: r.url,
         imageUrl: r.imageUrl,
         quantity: r.quantity,
+        listingDate: r.listingDate?.toISOString() ?? null,
         market: marketMetrics.get(r.ebayListingId) ?? null,
         suggestedPriceCents: null,
         match: null,
@@ -81,6 +83,8 @@ export function buildEbayRows(
         url: r.url,
         imageUrl: r.imageUrl ?? firstImage(localListing.imageUrlsJson),
         quantity: r.quantity,
+        listingDate:
+          r.listingDate?.toISOString() ?? localListing.publishedAt?.toISOString() ?? null,
         market: marketMetrics.get(r.ebayListingId) ?? null,
         suggestedPriceCents: null,
         match: null,
@@ -110,6 +114,8 @@ export function buildEbayRows(
       url: r.url,
       imageUrl: r.imageUrl ?? firstImage(localListing.imageUrlsJson),
       quantity: r.quantity,
+      listingDate:
+        r.listingDate?.toISOString() ?? localListing.publishedAt?.toISOString() ?? null,
       market,
       suggestedPriceCents: aiSuggestedListingPriceCents(
         localListing.product.costCents,
