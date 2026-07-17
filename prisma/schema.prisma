@@ -244,8 +244,8 @@ model Listing {
   sourceMatchCheckedAt  DateTime?
   publishedAt           DateTime?
   endedAt               DateTime?
-  // MANUAL | SOURCE_UNAVAILABLE | EBAY_ENDED. Only SOURCE_UNAVAILABLE
-  // listings are eligible for automatic recovery during listing-health sync.
+  // MANUAL | SOURCE_UNAVAILABLE | EBAY_ENDED. Smart Sync can recover MANUAL
+  // and SOURCE_UNAVAILABLE listings after re-verifying source and margin.
   endedReason           String?
   createdAt             DateTime  @default(now())
   updatedAt             DateTime  @updatedAt

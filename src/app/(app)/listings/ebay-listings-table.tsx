@@ -155,7 +155,7 @@ function SmartSyncStatus({ progress }: { progress: ListingSyncProgress }) {
           : "Smart inventory sync complete";
   const subtitle =
     progress.stage === "sources" && progress.recoveryQueued > 0
-      ? `${progress.recoveryQueued} previously unavailable listing${progress.recoveryQueued === 1 ? " is" : "s are"} also being checked for recovery.`
+      ? `${progress.recoveryQueued} ended listing${progress.recoveryQueued === 1 ? " is" : "s are"} also being checked for recovery.`
       : progress.stage === "complete"
         ? "Your refreshed listings and recovered products are ready."
         : "This page can remain open while Sellfinity works through each item.";
@@ -447,7 +447,7 @@ export function EbayListingsTable({
   function syncListingHealth() {
     if (
       !confirm(
-        "Sellfinity will verify tracked eBay listings whose Amazon check is stale, reuse recent paid-provider results, look for an approved replacement when needed, and refresh competitor pricing. Listings previously delisted by this sync because their source was unavailable are retried at most once per day and safely relisted when a profitable equivalent source is found. Manually ended listings are never relisted. If no fulfillable equivalent Amazon variant can be found, an active eBay listing will be ended so you cannot receive an order you cannot fulfill. Temporary provider failures remain active for review.\n\nContinue?",
+        "Smart Sync will check sources and market prices. Ended listings may be relisted when a profitable source is available. Continue?",
       )
     ) {
       return;
@@ -546,7 +546,7 @@ export function EbayListingsTable({
         }));
       }
       setNotice({
-        text: `Smart listing sync complete: ${totals.kept} sources verified, ${started.freshSkipped} recent Amazon checks reused, ${totals.replaced} replaced, ${totals.relisted} recovered and relisted, ${totals.ended} delisted without a fulfillable source, ${totals.stillUnavailable} recovery candidates remain unavailable, and ${marketUpdated} competitor prices refreshed${totals.review ? `, ${totals.review} need review` : ""}${marketErrors ? `, ${marketErrors} market lookups failed` : ""}.`,
+        text: `Smart Sync complete: ${totals.kept} verified, ${totals.replaced} sources updated, ${totals.relisted} relisted, ${totals.ended} ended, and ${marketUpdated} market prices refreshed${totals.review || marketErrors ? `. ${totals.review + marketErrors} need review` : ""}.`,
         error: totals.review > 0 || marketErrors > 0,
       });
       setSyncProgress((current) => current && ({ ...current, stage: "complete", completed: current.total }));

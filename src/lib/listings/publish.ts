@@ -15,21 +15,30 @@ export type PublishOneResult =
 export async function publishListingForUser(
   userId: string,
   listingId: string,
-  options: { recoverSourceUnavailable?: boolean } = {},
+  options: {
+    recoverSourceUnavailable?: boolean;
+    recoverEndedReasons?: Array<"SOURCE_UNAVAILABLE" | "MANUAL">;
+  } = {},
 ): Promise<PublishOneResult> {
   const connection = await db.ebayConnection.findUnique({ where: { userId } });
   if (!connection || connection.status === "DISCONNECTED") {
     return { ok: false, error: "Connect your eBay account in Settings before publishing." };
   }
 
-  const allowedStatus = options.recoverSourceUnavailable ? ["DRAFT", "ENDED"] : ["DRAFT"];
+  const recoveryReasons = options.recoverEndedReasons ??
+    (options.recoverSourceUnavailable ? ["SOURCE_UNAVAILABLE" as const] : []);
+  const recoveringEnded = recoveryReasons.length > 0;
+  const allowedStatus = recoveringEnded ? ["DRAFT", "ENDED"] : ["DRAFT"];
   const draft = await db.listing.findFirst({
     where: {
       id: listingId,
       userId,
       status: { in: allowedStatus },
-      ...(options.recoverSourceUnavailable && {
-        OR: [{ status: "DRAFT" }, { status: "ENDED", endedReason: "SOURCE_UNAVAILABLE" }],
+      ...(recoveringEnded && {
+        OR: [
+          { status: "DRAFT" },
+          { status: "ENDED", endedReason: { in: recoveryReasons } },
+        ],
       }),
     },
     include: { product: true },

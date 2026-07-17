@@ -124,7 +124,7 @@ export async function endListings(listingIds: string[]): Promise<BulkResult> {
     if (listing.ebayListingId) await client.endListing(listing.ebayListingId);
     await db.listing.update({
       where: { id: listing.id },
-      data: { status: "ENDED", endedAt: new Date() },
+      data: { status: "ENDED", endedAt: new Date(), endedReason: "MANUAL" },
     });
     done++;
   }

@@ -33,6 +33,7 @@ import { improveMainListingImage } from "@/lib/mirror/improve-main-image";
 import { improveListingContent } from "@/lib/mirror/improve-listing-content";
 import { generateMirrorDescription } from "@/lib/mirror/seo";
 import { recordListingActivity } from "@/lib/listings/activity-history";
+import { SMART_SYNC_RECOVERABLE_END_REASONS } from "@/lib/listings/smart-sync-policy";
 
 export type EbayListingResult = { error?: string };
 
@@ -677,10 +678,16 @@ export async function startListingHealthSync(): Promise<{
     where: {
       userId: user.id,
       status: "ENDED",
-      endedReason: "SOURCE_UNAVAILABLE",
+      endedReason: { in: [...SMART_SYNC_RECOVERABLE_END_REASONS] },
       OR: [
-        { sourceMatchCheckedAt: null },
-        { sourceMatchCheckedAt: { lt: recoveryCutoff } },
+        { endedReason: "MANUAL" },
+        {
+          endedReason: "SOURCE_UNAVAILABLE",
+          OR: [
+            { sourceMatchCheckedAt: null },
+            { sourceMatchCheckedAt: { lt: recoveryCutoff } },
+          ],
+        },
       ],
     },
     data: {
@@ -720,7 +727,7 @@ export async function cleanupListingSourcesBatch(): Promise<SourceCleanupBatchRe
       userId: user.id,
       OR: [
         { status: "ACTIVE", ebayListingId: { not: null } },
-        { status: "ENDED", endedReason: "SOURCE_UNAVAILABLE" },
+        { status: "ENDED", endedReason: { in: [...SMART_SYNC_RECOVERABLE_END_REASONS] } },
       ],
       sourceMatchVerdict: "PROCESSING",
       sourceMatchCheckedAt: { lt: new Date(Date.now() - 3 * 60 * 1000) },
@@ -732,7 +739,7 @@ export async function cleanupListingSourcesBatch(): Promise<SourceCleanupBatchRe
       userId: user.id,
       OR: [
         { status: "ACTIVE", ebayListingId: { not: null } },
-        { status: "ENDED", endedReason: "SOURCE_UNAVAILABLE" },
+        { status: "ENDED", endedReason: { in: [...SMART_SYNC_RECOVERABLE_END_REASONS] } },
       ],
       sourceMatchVerdict: "UNVERIFIED",
     },
@@ -748,7 +755,7 @@ export async function cleanupListingSourcesBatch(): Promise<SourceCleanupBatchRe
         userId: user.id,
         OR: [
           { status: "ACTIVE", ebayListingId: { not: null } },
-          { status: "ENDED", endedReason: "SOURCE_UNAVAILABLE" },
+          { status: "ENDED", endedReason: { in: [...SMART_SYNC_RECOVERABLE_END_REASONS] } },
         ],
         sourceMatchVerdict: "UNVERIFIED",
       },
@@ -780,7 +787,7 @@ export async function cleanupListingSourcesBatch(): Promise<SourceCleanupBatchRe
         id: listingId,
         userId: user.id,
         status: "ENDED",
-        endedReason: "SOURCE_UNAVAILABLE",
+        endedReason: { in: [...SMART_SYNC_RECOVERABLE_END_REASONS] },
       },
       include: { product: true },
     });
@@ -821,7 +828,7 @@ export async function cleanupListingSourcesBatch(): Promise<SourceCleanupBatchRe
       },
     });
     const published = await publishListingForUser(user.id, recoverable.id, {
-      recoverSourceUnavailable: true,
+      recoverEndedReasons: [...SMART_SYNC_RECOVERABLE_END_REASONS],
     });
     await recordListingActivity({
       userId: user.id,
@@ -1064,6 +1071,9 @@ export async function cleanupListingSourcesBatch(): Promise<SourceCleanupBatchRe
         await db.listing.update({
           where: { id: listing.id },
           data: {
+            // A manually ended listing gets one immediate recovery attempt.
+            // If no source exists, future retries use the normal daily limit.
+            endedReason: "SOURCE_UNAVAILABLE",
             sourceMatchVerdict: "REJECTED",
             sourceMatchConfidence: current.confidence,
             sourceMatchReason: "Still unavailable: no fulfillable equivalent Amazon variant was found.",
@@ -1132,7 +1142,7 @@ export async function cleanupListingSourcesBatch(): Promise<SourceCleanupBatchRe
       userId: user.id,
       OR: [
         { status: "ACTIVE", ebayListingId: { not: null } },
-        { status: "ENDED", endedReason: "SOURCE_UNAVAILABLE" },
+        { status: "ENDED", endedReason: { in: [...SMART_SYNC_RECOVERABLE_END_REASONS] } },
       ],
       sourceMatchVerdict: { in: ["UNVERIFIED", "PROCESSING"] },
     },
