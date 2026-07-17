@@ -13,6 +13,10 @@ import {
   AUTO_PUBLISH_MIN_MARGIN_PCT,
   AUTO_PUBLISH_MIN_MATCH_CONFIDENCE,
 } from "@/lib/arbitrage/auto-publish";
+import {
+  attachArbitrageResearchToListing,
+  retainPublishedArbitrageResearch,
+} from "@/lib/arbitrage/publish-handoff";
 
 const MAX_BATCH_ITEMS = 50;
 const STALE_PROCESSING_MS = 6 * 60 * 1000;
@@ -435,7 +439,7 @@ async function processNextMirrorBatchItemForUser(
   const staleBefore = new Date(Date.now() - STALE_PROCESSING_MS);
   const staleItems = await db.mirrorBatchItem.findMany({
     where: { batchId, status: "PROCESSING", startedAt: { lt: staleBefore } },
-    select: { id: true, listingId: true },
+    select: { id: true, listingId: true, sourceReferenceId: true },
   });
   for (const stale of staleItems) {
     const listing = stale.listingId
@@ -445,6 +449,18 @@ async function processNextMirrorBatchItemForUser(
         })
       : null;
     if (listing?.status === "ACTIVE" && listing.ebayListingId) {
+      if (stale.sourceReferenceId && stale.listingId) {
+        try {
+          await retainPublishedArbitrageResearch(
+            userId,
+            stale.listingId,
+            listing.ebayListingId,
+            stale.sourceReferenceId,
+          );
+        } catch (error) {
+          console.error("Could not retain stale Arbitrage publish research", error);
+        }
+      }
       await completeItem(batchId, stale.id, "SUCCEEDED", {
         ebayListingId: listing.ebayListingId,
       });
@@ -492,6 +508,13 @@ async function processNextMirrorBatchItemForUser(
         return loadBatch(userId, batchId);
       }
       listingId = outcome.listingId;
+      if (next.sourceReferenceId) {
+        await attachArbitrageResearchToListing(
+          userId,
+          listingId,
+          next.sourceReferenceId,
+        );
+      }
       await db.mirrorBatchItem.update({
         where: { id: next.id },
         data: {
@@ -509,6 +532,20 @@ async function processNextMirrorBatchItemForUser(
 
     const published = await publishListingForUser(userId, listingId);
     if (published.ok) {
+      if (next.sourceReferenceId) {
+        try {
+          await retainPublishedArbitrageResearch(
+            userId,
+            listingId,
+            published.ebayListingId,
+            next.sourceReferenceId,
+          );
+        } catch (error) {
+          // Publishing succeeded and must never be reported as failed because
+          // a secondary market-cache write had a transient problem.
+          console.error("Could not retain Arbitrage publish research", error);
+        }
+      }
       await completeItem(batchId, next.id, "SUCCEEDED", {
         ebayListingId: published.ebayListingId,
       });

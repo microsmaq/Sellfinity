@@ -26,4 +26,23 @@ describe("aggregateListingMarketMetrics", () => {
   it("returns no metrics when no comparable research exists", () => {
     expect(aggregateListingMarketMetrics([]).size).toBe(0);
   });
+
+  it("prefers the retained discovery market over a one-row fallback", () => {
+    const metrics = aggregateListingMarketMetrics([
+      {
+        asin: "B0RETAINED",
+        ebayPriceCents: 3999,
+        salesEst: 42,
+        competitorCount: 18,
+        avgCompPriceCents: 4299,
+        bestSellingPriceCents: 3899,
+      },
+    ]).get("B0RETAINED");
+    expect(metrics).toEqual({
+      estimatedSales30d: 42,
+      competitorCount: 18,
+      averageCompetitorPriceCents: 4299,
+      bestSellingPriceCents: 3899,
+    });
+  });
 });

@@ -20,6 +20,7 @@ export { estimatedSales30d } from "./demand";
 import { estimatedSales30d } from "./demand";
 import { assessProductMatchRules } from "./product-match";
 import { balancedCategoryKeywords } from "./discovery-policy";
+import { researchEbayMarket } from "@/lib/ebay/market";
 
 const BROWSE_PAGE_SIZE = 40;
 /** How deep to paginate each keyword's Browse results. */
@@ -212,6 +213,22 @@ async function amazonMatch(
   if (assessment.verdict === "REJECTED") return null;
 
   const margin = estimateMargin(candidate.priceCents, source.priceCents, 0);
+  let market: Awaited<ReturnType<typeof researchEbayMarket>> = null;
+  try {
+    market = await researchEbayMarket(candidate.title, candidate.itemId);
+  } catch {
+    // Discovery remains usable during a temporary eBay research failure. The
+    // publisher will retry and always seeds a conservative retained snapshot.
+  }
+  const fallbackSales = estimatedSales30d(candidate.itemId, candidate.priceCents);
+  const marketMetrics = market?.metrics ?? {
+    estimatedSales30d: fallbackSales,
+    // The discovery candidate itself is a proven live comp. This conservative
+    // baseline prevents blank market cells until a broader lookup succeeds.
+    competitorCount: 1,
+    averageCompetitorPriceCents: candidate.priceCents,
+    bestSellingPriceCents: candidate.priceCents,
+  };
 
   return {
     category: candidate.category,
@@ -219,7 +236,7 @@ async function amazonMatch(
       itemId: candidate.itemId,
       title: candidate.title,
       priceCents: candidate.priceCents,
-      salesLast30d: estimatedSales30d(candidate.itemId, candidate.priceCents),
+      salesLast30d: marketMetrics.estimatedSales30d,
       url: candidate.url,
       imageUrl: candidate.imageUrl,
     },
@@ -231,6 +248,7 @@ async function amazonMatch(
     },
     margin,
     match: assessment,
+    market: marketMetrics,
   };
 }
 

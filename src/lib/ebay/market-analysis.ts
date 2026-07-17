@@ -45,8 +45,15 @@ export function summarizeBrowseMarket(
   ownEbayListingId: string,
   sourceTitle = "",
 ): ListingMarketMetrics | null {
+  const ownNumericId = ownEbayListingId.includes("|")
+    ? ownEbayListingId.split("|")[1]
+    : ownEbayListingId;
   const pricedCandidates = items.flatMap((item) => {
-    if (!item.itemId || item.itemId.includes(`|${ownEbayListingId}|`)) return [];
+    if (
+      !item.itemId ||
+      item.itemId === ownEbayListingId ||
+      item.itemId.includes(`|${ownNumericId}|`)
+    ) return [];
     const priceCents = Math.round(parseFloat(item.price?.value ?? "0") * 100);
     return priceCents > 0
       ? [

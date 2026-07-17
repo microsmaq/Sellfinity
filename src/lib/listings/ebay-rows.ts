@@ -76,6 +76,10 @@ export function buildEbayRows(
       continue;
     }
     if (!["MATCH", "LIKELY"].includes(localListing.sourceMatchVerdict)) {
+      const market =
+        marketMetrics.get(r.ebayListingId) ??
+        marketMetrics.get(localListing.product.sku) ??
+        null;
       rows.push({
         ebayListingId: r.ebayListingId,
         title: r.title,
@@ -85,7 +89,7 @@ export function buildEbayRows(
         quantity: r.quantity,
         listingDate:
           r.listingDate?.toISOString() ?? localListing.publishedAt?.toISOString() ?? null,
-        market: marketMetrics.get(r.ebayListingId) ?? null,
+        market,
         suggestedPriceCents: null,
         match: null,
         sourceAssessment: {

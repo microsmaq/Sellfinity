@@ -67,4 +67,14 @@ describe("MockArbitrageScanner", () => {
     const state = amazonStateForDay(o.amazon.asin, 20000);
     expect(state?.costCents).toBe(o.amazon.priceCents);
   });
+
+  it("populates retained demand and competition research for every new item", async () => {
+    const opportunities = await scanner.findOpportunities(20);
+    for (const opportunity of opportunities) {
+      expect(opportunity.market?.estimatedSales30d).toBeGreaterThan(0);
+      expect(opportunity.market?.competitorCount).toBeGreaterThan(0);
+      expect(opportunity.market?.averageCompetitorPriceCents).toBeGreaterThan(0);
+      expect(opportunity.market?.bestSellingPriceCents).toBeGreaterThan(0);
+    }
+  });
 });

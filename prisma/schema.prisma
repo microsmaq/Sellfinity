@@ -322,6 +322,9 @@ model ArbitrageItem {
   salesEst          Int
   competitorCount   Int?
   avgCompPriceCents Int?
+  // Lower-quartile competitive eBay price retained from discovery and copied
+  // to the seller's listing market snapshot after publication.
+  bestSellingPriceCents Int?
   matchVerdict      String                @default("UNVERIFIED")
   matchConfidence   Int                   @default(0)
   matchReason       String?

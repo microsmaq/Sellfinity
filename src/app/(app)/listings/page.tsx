@@ -8,6 +8,7 @@ import { parseImageUrls } from "@/lib/types";
 import { PageHeader, Badge } from "@/components/ui";
 import { ListingsView, type ListingRow, type UnlistedRow } from "./listings-view";
 import type { EbayRow } from "./ebay-listings-table";
+import { backfillRetainedArbitrageResearchForUser } from "@/lib/arbitrage/publish-handoff";
 
 export const metadata = { title: "Listings — Sellfinity" };
 
@@ -16,6 +17,10 @@ export const maxDuration = 60;
 
 export default async function ListingsPage() {
   const user = await requireUser();
+
+  // One-time, provider-free repair for Arbitrage listings published before
+  // scan research was copied into their listing records.
+  await backfillRetainedArbitrageResearchForUser(user.id);
 
   const [products, listings, connection, suppressions, cachedMarketMetrics] = await Promise.all([
     db.product.findMany({

@@ -73,6 +73,10 @@ export class MockArbitrageScanner implements ArbitrageScanner {
       if (margin.estimatedProfitCents <= 0) continue;
 
       const itemId = `110${String(600_000_000 + Math.floor(rand() * 99_999_999))}`;
+      const competitorCount = 4 + Math.floor(rand() * 45);
+      const averageCompetitorPriceCents = Math.round(
+        ebayPriceCents * (0.94 + rand() * 0.18),
+      );
       opportunities.push({
         category: product.category,
         ebay: {
@@ -90,6 +94,12 @@ export class MockArbitrageScanner implements ArbitrageScanner {
           url: `https://www.amazon.com/dp/${asin}`,
         },
         margin,
+        market: {
+          estimatedSales30d: 10 + Math.floor(rand() * 140),
+          competitorCount,
+          averageCompetitorPriceCents,
+          bestSellingPriceCents: Math.round(averageCompetitorPriceCents * 0.94),
+        },
       });
     }
 

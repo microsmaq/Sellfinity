@@ -6,6 +6,7 @@
 
 import type { MarginEstimate } from "@/lib/fees";
 import type { ProductMatchAssessment } from "./product-match";
+import type { ListingMarketMetrics } from "@/lib/listings/market-metrics";
 
 export type ArbitrageOpportunity = {
   category: string;
@@ -27,6 +28,8 @@ export type ArbitrageOpportunity = {
   };
   /** Selling at the eBay price, buying at the Amazon price, net of eBay fees. */
   margin: MarginEstimate;
+  /** Comparable eBay market snapshot captured during discovery. */
+  market?: ListingMarketMetrics;
   /** Product-identity evidence. Plausible but unresolved pairs use REVIEW. */
   match?: ProductMatchAssessment;
 };

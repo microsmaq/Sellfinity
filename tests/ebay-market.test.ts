@@ -49,4 +49,17 @@ describe("eBay market research", () => {
   it("returns null without priced competitors", () => {
     expect(summarizeBrowseMarket(1, [], "OWN")).toBeNull();
   });
+
+  it("excludes a discovery comp when its own ID is already a Browse composite", () => {
+    const result = summarizeBrowseMarket(
+      2,
+      [
+        { itemId: "v1|OWN123|0", title: "Wireless Milk Frother", price: { value: "99.99" } },
+        { itemId: "v1|COMP1|0", title: "Wireless Milk Frother", price: { value: "19.99" } },
+      ],
+      "v1|OWN123|0",
+      "Wireless Milk Frother",
+    );
+    expect(result?.averageCompetitorPriceCents).toBe(1999);
+  });
 });
