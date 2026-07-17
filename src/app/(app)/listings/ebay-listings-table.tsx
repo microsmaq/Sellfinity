@@ -355,13 +355,19 @@ export function EbayListingsTable({
     startTransition(async () => {
       let enhanced = 0;
       let failed = 0;
-      let warnings = 0;
+      let imagesEnhanced = 0;
+      let copyEnhanced = 0;
+      let imagesRetained = 0;
+      let copyRetained = 0;
       for (let index = 0; index < ids.length; index++) {
         setBulkProgress(`AI enhancing… ${index + 1}/${ids.length}`);
         const result = await enhanceEbayListing(ids[index]);
         if (result.ok) {
           enhanced++;
-          if (result.warning) warnings++;
+          if (result.imageEnhanced) imagesEnhanced++;
+          else if (result.imageWarning) imagesRetained++;
+          if (result.contentEnhanced) copyEnhanced++;
+          else if (result.contentWarning) copyRetained++;
           setRows((current) =>
             current.map((row) =>
               row.ebayListingId === result.ebayListingId
@@ -384,7 +390,7 @@ export function EbayListingsTable({
       }
       setBulkProgress(null);
       setNotice({
-        text: `AI enhancement complete: ${enhanced} updated${warnings ? `, ${warnings} used a safe partial enhancement` : ""}${failed ? `, ${failed} failed or had no tracked Amazon source` : ""}.`,
+        text: `AI enhancement complete: ${enhanced} listings updated · ${imagesEnhanced} images visibly enhanced · ${copyEnhanced} titles/descriptions optimized${imagesRetained ? ` · ${imagesRetained} original images retained after quality checks` : ""}${copyRetained ? ` · ${copyRetained} original descriptions retained` : ""}${failed ? ` · ${failed} failed or had no tracked Amazon source` : ""}.`,
         error: failed > 0,
       });
     });

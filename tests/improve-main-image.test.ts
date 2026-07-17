@@ -14,6 +14,8 @@ describe("AI listing hero image prompt", () => {
     expect(prompt).toContain("pixel-faithful");
     expect(prompt).toContain("Absolutely no text");
     expect(prompt).toContain("pure white #FFFFFF background");
+    expect(prompt).toContain("immediately and materially different");
+    expect(prompt).toContain("at least three clearly visible creative improvements");
     expect(prompt).toContain("exactly the same product, quantity, variant, color, and accessories");
   });
 

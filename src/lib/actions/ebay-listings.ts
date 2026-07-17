@@ -208,6 +208,8 @@ export type EnhanceListingResult = {
   imageUrl?: string | null;
   contentEnhanced?: boolean;
   imageEnhanced?: boolean;
+  imageWarning?: string;
+  contentWarning?: string;
   warning?: string;
   error?: string;
 };
@@ -373,6 +375,10 @@ export async function enhanceEbayListing(
     imageUrl: imageUrls?.[0] ?? firstImage(listing.imageUrlsJson),
     contentEnhanced: !!title,
     imageEnhanced: !!imageUrls,
+    imageWarning:
+      imageResult && !imageResult.ok ? imageResult.error : undefined,
+    contentWarning:
+      copyResult && !copyResult.ok ? copyResult.error : undefined,
     warning: warnings.join(" ") || undefined,
   };
 }

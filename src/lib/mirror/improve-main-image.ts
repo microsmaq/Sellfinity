@@ -41,17 +41,20 @@ async function inspectImageSafety(
   apiKey: string,
   sourceImage: string,
   generatedImage?: string,
-): Promise<{ approved: boolean; reason: string } | null> {
+): Promise<{ approved: boolean; materiallyDifferent?: boolean; reason: string } | null> {
   const isComparison = !!generatedImage;
   const prompt = isComparison
-    ? `Act as a strict ecommerce image authenticity inspector. Compare the original supplier image with the proposed edited image. Approve only if the exact product identity, shape, proportions, construction, material, color, pattern, quantity, accessories, controls, ports, logos, brand names, model numbers, printed text, labels, and packaging are unchanged. Reject any unreadable, misspelled, replaced, invented, blurred, or distorted text/branding, any changed component, or any uncertain detail. Cosmetic lighting, background, crop, and shadow changes alone are acceptable.`
+    ? `Act as a strict ecommerce image authenticity and creative-quality inspector. Compare the original supplier image with the proposed edited image. Set approved=true only when BOTH conditions pass: (1) the exact product identity, shape, proportions, construction, material, color, pattern, quantity, accessories, controls, ports, logos, brand names, model numbers, printed text, labels, and packaging are unchanged; and (2) the new hero image is immediately and materially different from the supplier photo through at least two substantive improvements such as composition, product scale/crop, safe perspective, accessory spacing, studio lighting, depth, or ground shadow. Set materiallyDifferent=false and reject a near-copy, simple background cleanup, tiny crop, mild exposure adjustment, or other change a shopper would barely notice. Always reject unreadable, misspelled, replaced, invented, blurred, or distorted text/branding, any changed component, or any uncertain product detail.`
     : `Act as a strict ecommerce image-editing risk inspector. Determine whether a generative edit can safely preserve this product. Reject editing if the product or packaging shows any visible brand name, logo, model number, printed words, labels, measurement markings, display text, safety text, or other identity-critical fine detail. Also reject if the exact quantity, pattern, transparent/reflective construction, or small components could be easily altered. When uncertain, reject. An original supplier image is better than a polished but inaccurate image.`;
   const schema = {
     type: "object",
     additionalProperties: false,
-    required: ["approved", "reason"],
+    required: isComparison
+      ? ["approved", "materiallyDifferent", "reason"]
+      : ["approved", "reason"],
     properties: {
       approved: { type: "boolean" },
+      ...(isComparison && { materiallyDifferent: { type: "boolean" } }),
       reason: { type: "string" },
     },
   };
@@ -91,9 +94,19 @@ async function inspectImageSafety(
     if (!response.ok) return null;
     const text = responseText(await response.json());
     if (!text) return null;
-    const parsed = JSON.parse(text) as { approved?: unknown; reason?: unknown };
-    return typeof parsed.approved === "boolean" && typeof parsed.reason === "string"
-      ? { approved: parsed.approved, reason: parsed.reason.slice(0, 300) }
+    const parsed = JSON.parse(text) as {
+      approved?: unknown;
+      materiallyDifferent?: unknown;
+      reason?: unknown;
+    };
+    return typeof parsed.approved === "boolean" &&
+      typeof parsed.reason === "string" &&
+      (!isComparison || typeof parsed.materiallyDifferent === "boolean")
+      ? {
+          approved: parsed.approved,
+          ...(isComparison && { materiallyDifferent: parsed.materiallyDifferent as boolean }),
+          reason: parsed.reason.slice(0, 300),
+        }
       : null;
   } catch {
     return null;
@@ -130,8 +143,10 @@ NON-NEGOTIABLE PRODUCT ACCURACY
 - Rearrange separate accessories only when every component and its quantity are completely unambiguous; otherwise preserve their arrangement.
 
 PREMIUM CREATIVE DIRECTION
-- Present the product as luxury commercial studio photography, clearly differentiated through lighting, crop, depth, spacing, and visual hierarchy rather than changing the item.
-- Use the most flattering truthful perspective: a subtle premium three-quarter view or slight 10-20 degree elevation when safe. Never distort perspective.
+- The result MUST be immediately and materially different from the supplier photo while preserving the exact product. A simple white-background cleanup, tiny crop, or mild exposure change is not an enhancement.
+- Make at least three clearly visible creative improvements chosen from: stronger premium composition, meaningfully tighter product scale/crop, safe viewpoint adjustment, improved accessory spacing, richer studio lighting, stronger depth separation, and a refined realistic ground shadow.
+- Present the product as luxury commercial studio photography, clearly differentiated through composition, lighting, crop, depth, spacing, and visual hierarchy rather than changing the item.
+- Use the most flattering truthful perspective: a noticeable premium three-quarter view or 10-20 degree elevation only when the supplied pixels support it. Never invent unseen geometry or distort perspective.
 - Make the product and all included components occupy approximately 88-92% of a square frame without clipping anything.
 - Use a pure white #FFFFFF background, clean edge separation, a soft realistic ground shadow, crisp detail, rich but natural blacks, clean whites, controlled highlights, and premium softbox lighting.
 - Improve clarity, contrast, texture rendering, and perceived production quality without oversaturation or artificial sharpening halos.
@@ -276,10 +291,14 @@ export async function improveMainListingImage(
         error: "Original retained because the generated-image identity check was unavailable.",
       };
     }
-    if (!identityCheck.approved) {
+    if (!identityCheck.approved || !identityCheck.materiallyDifferent) {
       return {
         ok: false,
-        error: `Generated image rejected; original retained: ${identityCheck.reason}`,
+        error: `Generated image rejected; original retained: ${
+          identityCheck.materiallyDifferent === false
+            ? `the edit was not visually different enough. ${identityCheck.reason}`
+            : identityCheck.reason
+        }`,
       };
     }
     const stored = await db.generatedListingImage.create({
