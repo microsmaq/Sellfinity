@@ -103,7 +103,7 @@ export async function retainPublishedArbitrageResearch(
  * guessing. No external provider calls or paid credits are used. */
 export async function backfillRetainedArbitrageResearchForUser(
   userId: string,
-  limit = 100,
+  limit = 500,
 ): Promise<number> {
   const batchItems = await db.mirrorBatchItem.findMany({
     where: {
