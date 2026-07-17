@@ -17,6 +17,10 @@ import {
   attachArbitrageResearchToListing,
   retainPublishedArbitrageResearch,
 } from "@/lib/arbitrage/publish-handoff";
+import {
+  HIDDEN_PUBLISHING_HISTORY_SOURCES,
+  publishingHistoryPagination,
+} from "@/lib/mirror/history-pagination";
 
 const MAX_BATCH_ITEMS = 50;
 const STALE_PROCESSING_MS = 6 * 60 * 1000;
@@ -55,6 +59,14 @@ export type MirrorBatchView = {
 };
 
 export type MirrorBatchHistoryRow = Omit<MirrorBatchView, "items">;
+
+export type MirrorBatchHistoryPage = {
+  rows: MirrorBatchHistoryRow[];
+  total: number;
+  page: number;
+  pageSize: number;
+  pageCount: number;
+};
 
 function toView(batch: {
   id: string;
@@ -312,15 +324,27 @@ export async function getMirrorBatch(batchId: string): Promise<MirrorBatchView |
 }
 
 export async function listMirrorBatchHistory(
-  limit = 25,
-): Promise<MirrorBatchHistoryRow[]> {
+  requestedPage = 1,
+  requestedPageSize = 25,
+): Promise<MirrorBatchHistoryPage> {
   const user = await requireUser();
+  const where = {
+    userId: user.id,
+    source: { notIn: [...HIDDEN_PUBLISHING_HISTORY_SOURCES] },
+  };
+  const total = await db.mirrorBatch.count({ where });
+  const { page, pageSize, pageCount, skip } = publishingHistoryPagination(
+    total,
+    requestedPage,
+    requestedPageSize,
+  );
   const batches = await db.mirrorBatch.findMany({
-    where: { userId: user.id },
-    orderBy: { createdAt: "desc" },
-    take: Math.min(100, Math.max(1, limit)),
+    where,
+    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+    skip,
+    take: pageSize,
   });
-  return batches.map((batch) => ({
+  const rows = batches.map((batch) => ({
     id: batch.id,
     source: batch.source,
     trigger: batch.trigger,
@@ -337,6 +361,7 @@ export async function listMirrorBatchHistory(
     emailSentAt: batch.emailSentAt?.toISOString() ?? null,
     emailError: batch.emailError,
   }));
+  return { rows, total, page, pageSize, pageCount };
 }
 
 async function sendCompletionNotification(batchId: string): Promise<void> {

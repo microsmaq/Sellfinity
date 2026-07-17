@@ -600,34 +600,6 @@ export async function cleanupEbayListings(
       });
     }
   }
-  const activityListings = await db.listing.findMany({
-    where: {
-      userId: user.id,
-      ebayListingId: { in: results.map((result) => result.ebayListingId) },
-    },
-    include: { product: true },
-  });
-  const activityByEbayId = new Map(
-    activityListings.map((listing) => [listing.ebayListingId, listing]),
-  );
-  await recordListingActivity({
-    userId: user.id,
-    source: "PRICE_OPTIMIZATION",
-    items: results.map((result) => {
-      const listing = activityByEbayId.get(result.ebayListingId);
-      return {
-        title: listing?.title ?? `eBay listing ${result.ebayListingId}`,
-        listingId: listing?.id,
-        ebayListingId: result.ebayListingId,
-        amazonUrl: result.amazonUrl ?? listing?.product.supplierUrl,
-        sourcePriceCents: result.amazonPriceCents ?? listing?.product.costCents,
-        listingPriceCents:
-          result.newPriceCents ?? result.suggestedPriceCents ?? listing?.priceCents,
-        ok: result.action !== "error",
-        error: result.error,
-      };
-    }),
-  });
   revalidate();
   return results;
 }

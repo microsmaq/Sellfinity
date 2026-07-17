@@ -1,17 +1,20 @@
 import Link from "next/link";
-import type { MirrorBatchHistoryRow } from "@/lib/actions/mirror-batches";
+import type { MirrorBatchHistoryPage } from "@/lib/actions/mirror-batches";
 import { batchSourceMeta } from "@/lib/mirror/batch-labels";
 import { Badge, Card } from "@/components/ui";
 
-export function BatchHistory({ batches }: { batches: MirrorBatchHistoryRow[] }) {
+export function BatchHistory({ history }: { history: MirrorBatchHistoryPage }) {
+  const { rows: batches, page, pageCount, total } = history;
   return (
-    <Card className="overflow-x-auto">
+    <div id="publishing-history">
+    <Card className="overflow-hidden">
       <div className="border-b border-slate-200 px-5 py-4">
         <h2 className="font-semibold text-slate-900">Publishing batch history</h2>
         <p className="mt-1 text-sm text-slate-500">
           Every eBay publish, edit, optimization, ending, and sync result—including single items.
         </p>
       </div>
+      <div className="overflow-x-auto">
       <table className="w-full text-sm">
         <thead>
           <tr className="border-b border-slate-200 text-left text-xs uppercase tracking-wide text-slate-500">
@@ -97,6 +100,41 @@ export function BatchHistory({ batches }: { batches: MirrorBatchHistoryRow[] }) 
           )}
         </tbody>
       </table>
+      </div>
+      {total > 0 && (
+        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 px-5 py-4 text-sm">
+          <span className="text-slate-500">
+            Page {page} of {pageCount} · {total} historical record{total === 1 ? "" : "s"}
+          </span>
+          <div className="flex items-center gap-2">
+            {page > 1 ? (
+              <Link
+                href={`/mirror?historyPage=${page - 1}#publishing-history`}
+                className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 font-medium text-slate-700 hover:bg-slate-50"
+              >
+                ← Previous
+              </Link>
+            ) : (
+              <span className="cursor-not-allowed rounded-lg border border-slate-200 px-3 py-1.5 text-slate-300">
+                ← Previous
+              </span>
+            )}
+            {page < pageCount ? (
+              <Link
+                href={`/mirror?historyPage=${page + 1}#publishing-history`}
+                className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 font-medium text-slate-700 hover:bg-slate-50"
+              >
+                Next →
+              </Link>
+            ) : (
+              <span className="cursor-not-allowed rounded-lg border border-slate-200 px-3 py-1.5 text-slate-300">
+                Next →
+              </span>
+            )}
+          </div>
+        </div>
+      )}
     </Card>
+    </div>
   );
 }

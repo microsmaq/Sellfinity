@@ -7,11 +7,20 @@ import { listMirrorBatchHistory } from "@/lib/actions/mirror-batches";
 
 export const metadata = { title: "Amazon mirroring — Sellfinity" };
 
-export default async function MirrorPage() {
+export default async function MirrorPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ historyPage?: string }>;
+}) {
   const user = await requireUser();
-  const [connection, batches] = await Promise.all([
+  const params = await searchParams;
+  const requestedHistoryPage = Number.parseInt(params.historyPage ?? "1", 10);
+  const [connection, history] = await Promise.all([
     db.ebayConnection.findUnique({ where: { userId: user.id } }),
-    listMirrorBatchHistory(25),
+    listMirrorBatchHistory(
+      Number.isFinite(requestedHistoryPage) ? requestedHistoryPage : 1,
+      25,
+    ),
   ]);
   const ebayConnected = !!connection && connection.status !== "DISCONNECTED";
 
@@ -28,7 +37,7 @@ export default async function MirrorPage() {
       />
       <div className="space-y-6">
         <MirrorForm ebayConnected={ebayConnected} />
-        <BatchHistory batches={batches} />
+        <BatchHistory history={history} />
       </div>
     </>
   );
