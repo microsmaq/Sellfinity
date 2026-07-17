@@ -36,6 +36,7 @@ export type MirrorBatchView = {
   source: string;
   trigger: string;
   improveMainImage: boolean;
+  improveListingContent: boolean;
   status: string;
   totalCount: number;
   succeededCount: number;
@@ -56,6 +57,7 @@ function toView(batch: {
   source: string;
   trigger: string;
   improveMainImage: boolean;
+  improveListingContent: boolean;
   status: string;
   totalCount: number;
   succeededCount: number;
@@ -104,6 +106,7 @@ async function createBatch(
   items: Array<{ inputUrl: string; sourceReferenceId?: string }>,
   trigger: "MANUAL" | "AUTOMATIC" = "MANUAL",
   improveMainImage = false,
+  improveListingContent = false,
 ): Promise<{ batchId?: string; error?: string }> {
   const connection = await db.ebayConnection.findUnique({ where: { userId } });
   if (!connection || connection.status === "DISCONNECTED") {
@@ -117,6 +120,7 @@ async function createBatch(
       source,
       trigger,
       improveMainImage,
+      improveListingContent,
       totalCount: items.length,
       items: {
         create: items.map((item, position) => ({
@@ -144,6 +148,7 @@ export async function createUrlMirrorBatch(
     urls.map((inputUrl) => ({ inputUrl })),
     "MANUAL",
     user.improveMainImage,
+    user.improveListingContent,
   );
 }
 
@@ -167,7 +172,14 @@ export async function createArbitrageMirrorBatch(
       inputUrl: row.amazonUrl,
       sourceReferenceId: row.ebayItemId,
     }));
-  return createBatch(user.id, "ARBITRAGE", items, "MANUAL", user.improveMainImage);
+  return createBatch(
+    user.id,
+    "ARBITRAGE",
+    items,
+    "MANUAL",
+    user.improveMainImage,
+    user.improveListingContent,
+  );
 }
 
 export async function setImproveMainImagePreference(enabled: boolean): Promise<void> {
@@ -178,6 +190,18 @@ export async function setImproveMainImagePreference(enabled: boolean): Promise<v
   });
   revalidatePath("/mirror");
   revalidatePath("/arbitrage");
+  revalidatePath("/settings");
+}
+
+export async function setImproveListingContentPreference(enabled: boolean): Promise<void> {
+  const user = await requireUser();
+  await db.user.update({
+    where: { id: user.id },
+    data: { improveListingContent: enabled },
+  });
+  revalidatePath("/mirror");
+  revalidatePath("/arbitrage");
+  revalidatePath("/listings");
   revalidatePath("/settings");
 }
 
@@ -195,7 +219,11 @@ async function createQualifiedArbitrageMirrorBatchForUser(
 ): Promise<QualifiedArbitrageBatchResult> {
   const user = await db.user.findUnique({
     where: { id: userId },
-    select: { autoPublishArbitrage: true, improveMainImage: true },
+    select: {
+      autoPublishArbitrage: true,
+      improveMainImage: true,
+      improveListingContent: true,
+    },
   });
   if (!user?.autoPublishArbitrage) {
     return { eligibleCount: 0, error: "Automatic publishing is turned off." };
@@ -264,6 +292,7 @@ async function createQualifiedArbitrageMirrorBatchForUser(
     })),
     "AUTOMATIC",
     user.improveMainImage,
+    user.improveListingContent,
   );
   return { ...result, eligibleCount: uniqueRows.length };
 }
@@ -292,6 +321,7 @@ export async function listMirrorBatchHistory(
     source: batch.source,
     trigger: batch.trigger,
     improveMainImage: batch.improveMainImage,
+    improveListingContent: batch.improveListingContent,
     status: batch.status,
     totalCount: batch.totalCount,
     succeededCount: batch.succeededCount,
@@ -389,7 +419,12 @@ async function processNextMirrorBatchItemForUser(
 ): Promise<MirrorBatchView | null> {
   const batch = await db.mirrorBatch.findFirst({
     where: { id: batchId, userId },
-    select: { id: true, status: true, improveMainImage: true },
+    select: {
+      id: true,
+      status: true,
+      improveMainImage: true,
+      improveListingContent: true,
+    },
   });
   if (!batch) return null;
   if (batch.status === "COMPLETED") {
@@ -448,6 +483,7 @@ async function processNextMirrorBatchItemForUser(
       const outcome = await mirrorUrl(userId, next.inputUrl, undefined, {
         sourceMarkupPct: 30,
         improveMainImage: batch.improveMainImage,
+        improveListingContent: batch.improveListingContent,
       });
       if (!outcome.ok || !outcome.listingId) {
         await completeItem(batchId, next.id, "FAILED", {

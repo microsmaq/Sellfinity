@@ -4,6 +4,7 @@ import { useMemo, useState, useTransition } from "react";
 import {
   cleanupEbayListings,
   cleanupListingSourcesBatch,
+  enhanceEbayListing,
   endEbayListing,
   exportEbayListings,
   matchEbayListing,
@@ -240,9 +241,13 @@ function RepriceCell({
 export function EbayListingsTable({
   rows: initialRows,
   fetchError,
+  improveMainImage,
+  improveListingContent,
 }: {
   rows: EbayRow[];
   fetchError: string | null;
+  improveMainImage: boolean;
+  improveListingContent: boolean;
 }) {
   const [rows, setRows] = useState(initialRows);
   const [pending, startTransition] = useTransition();
@@ -255,6 +260,7 @@ export function EbayListingsTable({
   const [pageSize, setPageSize] = useState(25);
   const [page, setPage] = useState(1);
   const [attentionOnly, setAttentionOnly] = useState(false);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
 
   const problems = rows.filter(listingNeedsAttention).length;
   const filteredRows = useMemo(
@@ -296,6 +302,60 @@ export function EbayListingsTable({
     (currentPage - 1) * pageSize,
     currentPage * pageSize,
   );
+  const visibleIds = visibleRows.map((row) => row.ebayListingId);
+  const allVisibleSelected =
+    visibleIds.length > 0 && visibleIds.every((id) => selected.has(id));
+
+  function toggleSelected(id: string) {
+    setSelected((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function enhanceSelected() {
+    const ids = [...selected];
+    if (ids.length === 0) return;
+    setNotice(null);
+    startTransition(async () => {
+      let enhanced = 0;
+      let failed = 0;
+      let warnings = 0;
+      for (let index = 0; index < ids.length; index++) {
+        setBulkProgress(`AI enhancing… ${index + 1}/${ids.length}`);
+        const result = await enhanceEbayListing(ids[index]);
+        if (result.ok) {
+          enhanced++;
+          if (result.warning) warnings++;
+          setRows((current) =>
+            current.map((row) =>
+              row.ebayListingId === result.ebayListingId
+                ? {
+                    ...row,
+                    title: result.title ?? row.title,
+                    imageUrl: result.imageUrl ?? row.imageUrl,
+                  }
+                : row,
+            ),
+          );
+          setSelected((current) => {
+            const next = new Set(current);
+            next.delete(result.ebayListingId);
+            return next;
+          });
+        } else {
+          failed++;
+        }
+      }
+      setBulkProgress(null);
+      setNotice({
+        text: `AI enhancement complete: ${enhanced} updated${warnings ? `, ${warnings} used a safe partial enhancement` : ""}${failed ? `, ${failed} failed or had no tracked Amazon source` : ""}.`,
+        error: failed > 0,
+      });
+    });
+  }
 
   function sortBy(next: ListingSortKey) {
     if (next === sortKey) setSortDescending((current) => !current);
@@ -689,6 +749,21 @@ export function EbayListingsTable({
         <Button size="sm" variant="secondary" disabled={pending} onClick={exportExcel}>
           Export Excel
         </Button>
+        <Button
+          size="sm"
+          disabled={pending || selected.size === 0 || (!improveMainImage && !improveListingContent)}
+          onClick={enhanceSelected}
+          title={
+            !improveMainImage && !improveListingContent
+              ? "Enable an AI listing enhancement preference in Settings first"
+              : "Apply your Settings preferences to selected listings"
+          }
+          className="border-0 bg-gradient-to-r from-violet-600 to-fuchsia-600 text-white shadow-sm hover:from-violet-500 hover:to-fuchsia-500"
+        >
+          ✨ {bulkProgress?.startsWith("AI enhancing")
+            ? bulkProgress
+            : `AI enhance selected (${selected.size})`}
+        </Button>
         <select
           value={pageSize}
           onChange={(event) => {
@@ -732,6 +807,21 @@ export function EbayListingsTable({
           <thead>
             <tr className="border-b border-slate-200 text-left text-xs uppercase tracking-wide text-slate-500">
               <th className="px-4 py-3">
+                <input
+                  type="checkbox"
+                  checked={allVisibleSelected}
+                  onChange={() =>
+                    setSelected((current) => {
+                      const next = new Set(current);
+                      if (allVisibleSelected) visibleIds.forEach((id) => next.delete(id));
+                      else visibleIds.forEach((id) => next.add(id));
+                      return next;
+                    })
+                  }
+                  aria-label="Select all listings on this page"
+                />
+              </th>
+              <th className="px-4 py-3">
                 <button onClick={() => sortBy("title")} className="hover:text-slate-900">
                   Listing {sortKey === "title" ? (sortDescending ? "↓" : "↑") : ""}
                 </button>
@@ -762,6 +852,14 @@ export function EbayListingsTable({
                     problem && "bg-red-50/40",
                   )}
                 >
+                  <td className="px-4 py-3">
+                    <input
+                      type="checkbox"
+                      checked={selected.has(r.ebayListingId)}
+                      onChange={() => toggleSelected(r.ebayListingId)}
+                      aria-label={`Select ${r.title}`}
+                    />
+                  </td>
                   <td className="max-w-md px-4 py-3">
                     <div className="flex items-center gap-3">
                       {r.imageUrl ? (
@@ -1041,7 +1139,7 @@ export function EbayListingsTable({
             })}
             {filteredRows.length === 0 && !fetchError && (
               <tr>
-                <td colSpan={13} className="px-4 py-12 text-center text-slate-500">
+                <td colSpan={14} className="px-4 py-12 text-center text-slate-500">
                   {attentionOnly
                     ? "No active listings currently need attention."
                     : "No active listings found on your eBay account."}

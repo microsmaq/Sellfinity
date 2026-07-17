@@ -149,6 +149,8 @@ export default async function ListingsPage() {
         ebayConnected={ebayConnected}
         ebayRows={ebayRows}
         ebayFetchError={ebayFetchError}
+        improveMainImage={user.improveMainImage}
+        improveListingContent={user.improveListingContent}
       />
     </>
   );

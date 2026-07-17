@@ -30,6 +30,9 @@ model User {
   // Apply AI hero-image enhancement to Amazon mirroring and every Arbitrage
   // Finder publishing path, including automatic batches.
   improveMainImage     Boolean   @default(false)
+  // Rewrite Amazon source copy into factual, eBay-search-optimized titles and
+  // descriptions while retaining Sellfinity's standard HTML template.
+  improveListingContent Boolean  @default(false)
   createdAt            DateTime  @default(now())
 
   sessions                Session[]
@@ -59,6 +62,8 @@ model MirrorBatch {
   // When enabled, the Amazon main photo is edited into an eBay-compliant
   // studio hero image before the listing is published.
   improveMainImage Boolean @default(false)
+  // Snapshot the copy preference so an in-flight batch behaves consistently.
+  improveListingContent Boolean @default(false)
   // PENDING | RUNNING | COMPLETED
   status         String    @default("PENDING")
   totalCount     Int

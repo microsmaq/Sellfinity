@@ -38,6 +38,15 @@ function decodeTradingXml(value: string): string {
     .replace(/&apos;/g, "'");
 }
 
+function escapeTradingXml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&apos;");
+}
+
 /** Recover the immutable Inventory SKU that eBay attached to a listing. */
 export function inventorySkuFromTradingItem(xml: string): string | null {
   const sku = xmlField(xml, "SKU");
@@ -436,29 +445,82 @@ ${innerXml}
         update.quantity !== undefined
           ? `<Quantity>${update.quantity}</Quantity>`
           : "",
+        update.title !== undefined
+          ? `<Title>${escapeTradingXml(update.title)}</Title>`
+          : "",
+        update.description !== undefined
+          ? `<Description>${escapeTradingXml(fitEbayDescription(update.description))}</Description>`
+          : "",
+        update.imageUrls !== undefined
+          ? `<PictureDetails>${update.imageUrls
+              .slice(0, 12)
+              .map((url) => `<PictureURL>${escapeTradingXml(url)}</PictureURL>`)
+              .join("")}</PictureDetails>`
+          : "",
       ].join("");
       await this.tradingRequest("ReviseFixedPriceItem", `<Item>${fields}</Item>`);
       return;
     }
-    await this.request("POST", "/sell/inventory/v1/bulk_update_price_quantity", {
-      requests: [
+    if (
+      update.title !== undefined ||
+      update.description !== undefined ||
+      update.imageUrls !== undefined
+    ) {
+      type InventoryItemRecord = {
+        product?: Record<string, unknown>;
+        condition?: string;
+        conditionDescription?: string;
+        availability?: Record<string, unknown>;
+        packageWeightAndSize?: Record<string, unknown>;
+      };
+      const current = await this.request<InventoryItemRecord>(
+        "GET",
+        `/sell/inventory/v1/inventory_item/${encodeURIComponent(offer.sku)}`,
+      );
+      await this.request(
+        "PUT",
+        `/sell/inventory/v1/inventory_item/${encodeURIComponent(offer.sku)}`,
         {
-          sku: offer.sku,
-          ...(update.quantity !== undefined && {
-            shipToLocationAvailability: { quantity: update.quantity },
+          product: {
+            ...(current.product ?? {}),
+            ...(update.title !== undefined && { title: update.title }),
+            ...(update.description !== undefined && {
+              description: fitEbayDescription(update.description),
+            }),
+            ...(update.imageUrls !== undefined && { imageUrls: update.imageUrls.slice(0, 12) }),
+          },
+          ...(current.condition && { condition: current.condition }),
+          ...(current.conditionDescription && {
+            conditionDescription: current.conditionDescription,
           }),
-          offers: [
-            {
-              offerId: offer.offerId,
-              ...(update.quantity !== undefined && { availableQuantity: update.quantity }),
-              ...(update.priceCents !== undefined && {
-                price: { value: (update.priceCents / 100).toFixed(2), currency: "USD" },
-              }),
-            },
-          ],
+          ...(current.availability && { availability: current.availability }),
+          ...(current.packageWeightAndSize && {
+            packageWeightAndSize: current.packageWeightAndSize,
+          }),
         },
-      ],
-    });
+      );
+    }
+    if (update.priceCents !== undefined || update.quantity !== undefined) {
+      await this.request("POST", "/sell/inventory/v1/bulk_update_price_quantity", {
+        requests: [
+          {
+            sku: offer.sku,
+            ...(update.quantity !== undefined && {
+              shipToLocationAvailability: { quantity: update.quantity },
+            }),
+            offers: [
+              {
+                offerId: offer.offerId,
+                ...(update.quantity !== undefined && { availableQuantity: update.quantity }),
+                ...(update.priceCents !== undefined && {
+                  price: { value: (update.priceCents / 100).toFixed(2), currency: "USD" },
+                }),
+              },
+            ],
+          },
+        ],
+      });
+    }
   }
 
   async endListing(ebayListingId: string): Promise<void> {

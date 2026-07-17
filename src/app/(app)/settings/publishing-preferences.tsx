@@ -2,7 +2,10 @@
 
 import { useState, useTransition } from "react";
 import { setArbitrageAutoPublish } from "@/lib/actions/arbitrage";
-import { setImproveMainImagePreference } from "@/lib/actions/mirror-batches";
+import {
+  setImproveListingContentPreference,
+  setImproveMainImagePreference,
+} from "@/lib/actions/mirror-batches";
 import {
   AUTO_PUBLISH_MIN_MARGIN_PCT,
   AUTO_PUBLISH_MIN_MATCH_CONFIDENCE,
@@ -38,14 +41,18 @@ function PreferenceToggle({
 export function PublishingPreferences({
   initialAutoPublish,
   initialImproveMainImage,
+  initialImproveListingContent,
 }: {
   initialAutoPublish: boolean;
   initialImproveMainImage: boolean;
+  initialImproveListingContent: boolean;
 }) {
   const [autoPublish, setAutoPublish] = useState(initialAutoPublish);
   const [improveMainImage, setImproveMainImage] = useState(initialImproveMainImage);
+  const [improveListingContent, setImproveListingContent] = useState(initialImproveListingContent);
   const [savingAutoPublish, startAutoPublishSave] = useTransition();
   const [savingImage, startImageSave] = useTransition();
+  const [savingContent, startContentSave] = useTransition();
   const [message, setMessage] = useState<{ text: string; error: boolean } | null>(null);
 
   function updateAutoPublish(enabled: boolean) {
@@ -84,6 +91,26 @@ export function PublishingPreferences({
       } catch {
         setImproveMainImage(previous);
         setMessage({ text: "Could not save the AI image preference.", error: true });
+      }
+    });
+  }
+
+  function updateContentImprovement(enabled: boolean) {
+    const previous = improveListingContent;
+    setImproveListingContent(enabled);
+    setMessage(null);
+    startContentSave(async () => {
+      try {
+        await setImproveListingContentPreference(enabled);
+        setMessage({
+          text: enabled
+            ? "AI title and description enhancement is enabled for new mirroring and selected existing listings."
+            : "AI copy enhancement is disabled. New mirrored listings will retain the Amazon source copy inside the Sellfinity HTML template.",
+          error: false,
+        });
+      } catch {
+        setImproveListingContent(previous);
+        setMessage({ text: "Could not save the AI copy preference.", error: true });
       }
     });
   }
@@ -154,6 +181,32 @@ export function PublishingPreferences({
             disabled={savingImage}
             onChange={updateImageImprovement}
             label="AI-enhance main listing images"
+          />
+        </div>
+
+        <div className="flex items-start justify-between gap-6 px-6 py-5">
+          <div className="max-w-xl">
+            <div className="flex flex-wrap items-center gap-2">
+              <h3 className="text-sm font-semibold text-slate-900">AI-optimize titles &amp; descriptions</h3>
+              <span className={cx(
+                "rounded-full px-2 py-0.5 text-xs font-medium",
+                improveListingContent ? "bg-blue-50 text-blue-700" : "bg-slate-100 text-slate-600",
+              )}>
+                {improveListingContent ? "Enabled" : "Disabled"}
+              </span>
+            </div>
+            <p className="mt-2 text-sm leading-6 text-slate-600">
+              For Amazon Mirroring, Arbitrage Finder publishing, and the Listings bulk enhancer, AI creates factual, eBay-search-optimized titles and product copy from the exact Amazon source variant.
+            </p>
+            <p className="mt-2 text-xs leading-5 text-slate-500">
+              Sellfinity always retains the current blue HTML design, shipping, returns, and store footer. When disabled, the Amazon title and product details are retained and placed into that same template without AI rewriting.
+            </p>
+          </div>
+          <PreferenceToggle
+            checked={improveListingContent}
+            disabled={savingContent}
+            onChange={updateContentImprovement}
+            label="AI-optimize titles and descriptions"
           />
         </div>
       </div>

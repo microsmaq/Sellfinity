@@ -355,7 +355,11 @@ export async function mirrorOpportunity(
     user.id,
     `https://www.amazon.com/dp/${asin}`,
     getScraper(),
-    { marketPriceCents: ebayPriceCents },
+    {
+      marketPriceCents: ebayPriceCents,
+      improveMainImage: user.improveMainImage,
+      improveListingContent: user.improveListingContent,
+    },
   );
   revalidatePath("/arbitrage");
   revalidatePath("/listings");
@@ -382,7 +386,11 @@ export async function mirrorOpportunities(
       user.id,
       `https://www.amazon.com/dp/${item.asin}`,
       getScraper(),
-      { marketPriceCents: item.ebayPriceCents },
+      {
+        marketPriceCents: item.ebayPriceCents,
+        improveMainImage: user.improveMainImage,
+        improveListingContent: user.improveListingContent,
+      },
     );
     if (outcome.ok) mirroredAsins.push(item.asin);
     else {

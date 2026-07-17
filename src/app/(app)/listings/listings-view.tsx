@@ -115,12 +115,16 @@ export function ListingsView({
   ebayConnected,
   ebayRows,
   ebayFetchError,
+  improveMainImage,
+  improveListingContent,
 }: {
   unlisted: UnlistedRow[];
   listings: ListingRow[];
   ebayConnected: boolean;
   ebayRows: EbayRow[];
   ebayFetchError: string | null;
+  improveMainImage: boolean;
+  improveListingContent: boolean;
 }) {
   const [tab, setTab] = useState<Tab>(ebayConnected ? "ebay" : "unlisted");
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -260,7 +264,12 @@ export function ListingsView({
       )}
 
       {tab === "ebay" ? (
-        <EbayListingsTable rows={ebayRows} fetchError={ebayFetchError} />
+        <EbayListingsTable
+          rows={ebayRows}
+          fetchError={ebayFetchError}
+          improveMainImage={improveMainImage}
+          improveListingContent={improveListingContent}
+        />
       ) : (
       <Card className="overflow-x-auto">
         {tab === "unlisted" ? (

@@ -32,7 +32,10 @@ export async function mirrorUrls(
 
   const outcomes: MirrorOutcome[] = [];
   for (const url of urls) {
-    outcomes.push(await mirrorUrl(user.id, url));
+    outcomes.push(await mirrorUrl(user.id, url, undefined, {
+      improveMainImage: user.improveMainImage,
+      improveListingContent: user.improveListingContent,
+    }));
   }
 
   let publish: BulkResult | undefined;

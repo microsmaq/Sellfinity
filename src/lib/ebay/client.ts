@@ -15,6 +15,9 @@ export type CreateListingInput = {
 export type ListingUpdate = {
   priceCents?: number;
   quantity?: number;
+  title?: string;
+  description?: string;
+  imageUrls?: string[];
 };
 
 /** An order as returned by eBay (Fulfillment API shape, simplified). */
@@ -47,7 +50,7 @@ export class EbayApiError extends Error {}
 export interface EbayClient {
   /** Publish a listing; returns the live eBay listing id. */
   createListing(input: CreateListingInput): Promise<{ ebayListingId: string }>;
-  /** Revise price/quantity on a live listing. */
+  /** Revise mutable fields on a live listing. */
   updateListing(ebayListingId: string, update: ListingUpdate): Promise<void>;
   /** End a live listing. */
   endListing(ebayListingId: string): Promise<void>;

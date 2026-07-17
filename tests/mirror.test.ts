@@ -5,7 +5,11 @@ import {
   amazonStateForDay,
   productForAsin,
 } from "@/lib/mirror/mock-amazon";
-import { generateMirrorDescription, generateSeoTitle } from "@/lib/mirror/seo";
+import {
+  generateMirrorDescription,
+  generateSeoTitle,
+  generateSourceTitle,
+} from "@/lib/mirror/seo";
 import { EBAY_DESCRIPTION_MAX, fitEbayDescription } from "@/lib/ebay/description";
 import { parseUrlLines } from "@/lib/mirror/pipeline";
 import { EBAY_TITLE_MAX } from "@/lib/listings/generate";
@@ -93,6 +97,19 @@ describe("generateSeoTitle", () => {
 
   it("collapses whitespace", () => {
     expect(generateSeoTitle({ title: "A   B\t C" })).toContain("A B C");
+  });
+});
+
+describe("generateSourceTitle", () => {
+  it("retains source wording without adding an SEO suffix", () => {
+    expect(generateSourceTitle({ title: "  Exact Amazon Product   Title  " })).toBe(
+      "Exact Amazon Product Title",
+    );
+  });
+
+  it("respects eBay's 80-character title limit", () => {
+    expect(generateSourceTitle({ title: "Long source product title ".repeat(8) }).length)
+      .toBeLessThanOrEqual(EBAY_TITLE_MAX);
   });
 });
 

@@ -8,11 +8,12 @@ import type { ProductPageScraper } from "./scraper";
 import { extractAsin } from "./scraper";
 
 const AMAZON_SUPPLIER_NAME = "Amazon";
-import { generateMirrorDescription, generateSeoTitle } from "./seo";
+import { generateMirrorDescription, generateSourceTitle } from "./seo";
 import { LISTING_QUANTITY_CAP } from "@/lib/listings/generate";
 import { suggestPriceCents } from "@/lib/sourcing/scoring";
 import { serializeImageUrls } from "@/lib/types";
 import { improveMainListingImage } from "./improve-main-image";
+import { improveListingContent } from "./improve-listing-content";
 
 /** Typical eBay resale premium over the Amazon buy price for dropshipped
  * items; the suggested price undercuts this market estimate. */
@@ -56,6 +57,9 @@ export async function mirrorUrl(
      * studio image. Original supplier photos remain available as secondary
      * listing images and on the source Product record. */
     improveMainImage?: boolean;
+    /** Rewrite source facts into eBay SEO copy; the standard HTML layout is
+     * retained whether this is enabled or disabled. */
+    improveListingContent?: boolean;
   } = {},
 ): Promise<MirrorOutcome> {
   const inputAsin = extractAsin(url);
@@ -95,8 +99,16 @@ export async function mirrorUrl(
         });
   const supplierStock = scraped.inStock ? NOMINAL_IN_STOCK : 0;
 
-  const title = generateSeoTitle(scraped);
-  const description = generateMirrorDescription(scraped);
+  const contentImprovement = opts.improveListingContent
+    ? await improveListingContent(scraped)
+    : null;
+  const listingCopy = contentImprovement?.ok
+    ? { ...scraped, ...contentImprovement.content }
+    : scraped;
+  const title = contentImprovement?.ok
+    ? contentImprovement.content.title
+    : generateSourceTitle(scraped);
+  const description = generateMirrorDescription(listingCopy);
   const imageImprovement = opts.improveMainImage
     ? await improveMainListingImage({
         userId,

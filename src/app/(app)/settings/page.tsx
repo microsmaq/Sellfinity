@@ -65,6 +65,7 @@ export default async function SettingsPage({
         <PublishingPreferences
           initialAutoPublish={user.autoPublishArbitrage}
           initialImproveMainImage={user.improveMainImage}
+          initialImproveListingContent={user.improveListingContent}
         />
 
         {callback && (

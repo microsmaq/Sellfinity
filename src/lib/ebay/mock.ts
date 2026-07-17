@@ -93,6 +93,15 @@ export class MockEbayClient implements EbayClient {
     if (update.quantity !== undefined && update.quantity < 0) {
       throw new EbayApiError("Quantity cannot be negative");
     }
+    if (update.title !== undefined && (update.title.length === 0 || update.title.length > 80)) {
+      throw new EbayApiError("Title must be between 1 and 80 characters");
+    }
+    if (update.description !== undefined && (update.description.length === 0 || update.description.length > 4000)) {
+      throw new EbayApiError("Description must be between 1 and 4000 characters");
+    }
+    if (update.imageUrls !== undefined && update.imageUrls.length === 0) {
+      throw new EbayApiError("At least one image is required");
+    }
     // Real client would call eBay here; sandbox accepts silently.
   }
 

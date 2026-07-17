@@ -27,8 +27,11 @@ import {
 } from "@/lib/arbitrage/product-match";
 import { findAmazonMatches } from "@/lib/mirror/match";
 import { resolveExactAmazonVariant } from "@/lib/mirror/variant";
-import { serializeImageUrls } from "@/lib/types";
+import { parseImageUrls, serializeImageUrls } from "@/lib/types";
 import { publishListingForUser } from "@/lib/listings/publish";
+import { improveMainListingImage } from "@/lib/mirror/improve-main-image";
+import { improveListingContent } from "@/lib/mirror/improve-listing-content";
+import { generateMirrorDescription } from "@/lib/mirror/seo";
 
 export type EbayListingResult = { error?: string };
 
@@ -161,6 +164,129 @@ export async function repriceEbayListing(
   });
   revalidate();
   return {};
+}
+
+export type EnhanceListingResult = {
+  ebayListingId: string;
+  ok: boolean;
+  title?: string;
+  imageUrl?: string | null;
+  contentEnhanced?: boolean;
+  imageEnhanced?: boolean;
+  warning?: string;
+  error?: string;
+};
+
+function sourceBullets(description: string): string[] {
+  return description
+    .split(/\r?\n|(?<=[.!?])\s+/)
+    .map((part) => part.replace(/<[^>]*>/g, "").replace(/\s+/g, " ").trim())
+    .filter((part) => part.length >= 12)
+    .slice(0, 8);
+}
+
+/** Enhance one tracked live listing. The browser calls this once per selected
+ * row so long-running image edits have durable per-item progress. */
+export async function enhanceEbayListing(
+  ebayListingId: string,
+): Promise<EnhanceListingResult> {
+  const user = await requireUser();
+  if (!user.improveMainImage && !user.improveListingContent) {
+    return {
+      ebayListingId,
+      ok: false,
+      error: "Enable AI image enhancement and/or AI title & description optimization in Settings first.",
+    };
+  }
+  const listing = await db.listing.findFirst({
+    where: { userId: user.id, ebayListingId, status: "ACTIVE" },
+    include: { product: true },
+  });
+  if (!listing) {
+    return {
+      ebayListingId,
+      ok: false,
+      error: "This eBay listing does not have a tracked Amazon source in Sellfinity.",
+    };
+  }
+
+  const sourceImages = parseImageUrls(listing.product.imageUrlsJson);
+  const source = {
+    title: listing.product.title,
+    brand: "",
+    bulletPoints: sourceBullets(listing.product.description),
+    description: listing.product.description,
+    category: listing.product.category,
+    imageUrls: sourceImages,
+  };
+  const [copyResult, imageResult] = await Promise.all([
+    user.improveListingContent
+      ? improveListingContent(source)
+      : Promise.resolve(null),
+    user.improveMainImage
+      ? improveMainListingImage({
+          userId: user.id,
+          sourceImageUrl: sourceImages[0],
+          title: source.title,
+          category: source.category,
+          bulletPoints: source.bulletPoints,
+        })
+      : Promise.resolve(null),
+  ]);
+
+  const improvedSource = copyResult?.ok
+    ? { ...source, ...copyResult.content }
+    : source;
+  const title = copyResult?.ok ? copyResult.content.title : undefined;
+  const description = copyResult?.ok
+    ? generateMirrorDescription(improvedSource)
+    : undefined;
+  const imageUrls = imageResult?.ok
+    ? [imageResult.imageUrl, ...sourceImages].slice(0, 12)
+    : undefined;
+  if (!title && !imageUrls) {
+    return {
+      ebayListingId,
+      ok: false,
+      error:
+        (!copyResult?.ok && copyResult?.error) ||
+        (!imageResult?.ok && imageResult?.error) ||
+        "AI enhancement did not produce an update.",
+    };
+  }
+
+  try {
+    const client = await getEbayClientForUser(user.id);
+    await client.updateListing(ebayListingId, { title, description, imageUrls });
+    await db.listing.update({
+      where: { id: listing.id },
+      data: {
+        ...(title && { title }),
+        ...(description && { description }),
+        ...(imageUrls && { imageUrlsJson: serializeImageUrls(imageUrls) }),
+      },
+    });
+  } catch (error) {
+    return {
+      ebayListingId,
+      ok: false,
+      error: error instanceof Error ? error.message.slice(0, 300) : "eBay update failed.",
+    };
+  }
+  revalidate();
+  const warnings = [
+    copyResult && !copyResult.ok ? `Copy: ${copyResult.error}` : null,
+    imageResult && !imageResult.ok ? `Image: ${imageResult.error}` : null,
+  ].filter((item): item is string => !!item);
+  return {
+    ebayListingId,
+    ok: true,
+    title: title ?? listing.title,
+    imageUrl: imageUrls?.[0] ?? firstImage(listing.imageUrlsJson),
+    contentEnhanced: !!title,
+    imageEnhanced: !!imageUrls,
+    warning: warnings.join(" ") || undefined,
+  };
 }
 
 /** End a live eBay listing (any origin). */

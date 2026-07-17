@@ -54,6 +54,11 @@ export function generateSeoTitle(scraped: { title: string; brand?: string }): st
   return truncateAtWord(base, EBAY_TITLE_MAX);
 }
 
+/** Amazon source title with only whitespace/noise cleanup and eBay's hard cap. */
+export function generateSourceTitle(scraped: { title: string }): string {
+  return truncateAtWord(scraped.title.replace(/\s+/g, " ").trim(), EBAY_TITLE_MAX);
+}
+
 function safeImages(urls: string[]): string[] {
   return [...new Set(urls)]
     .filter((url) => {
