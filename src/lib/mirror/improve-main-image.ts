@@ -3,7 +3,6 @@ import { db } from "@/lib/db";
 const OPENAI_IMAGE_ENDPOINT = "https://api.openai.com/v1/images/edits";
 const MAX_SOURCE_IMAGE_BYTES = 20 * 1024 * 1024;
 const MAX_GENERATED_IMAGE_BYTES = 20 * 1024 * 1024;
-const IMAGE_QA_MODEL = "gpt-5.6-sol";
 
 type ImproveMainImageInput = {
   userId: string;
@@ -17,102 +16,6 @@ export type ImproveMainImageResult =
   | { ok: true; imageUrl: string }
   | { ok: false; error: string };
 
-function responseText(payload: unknown): string | null {
-  if (!payload || typeof payload !== "object") return null;
-  const data = payload as {
-    output_text?: unknown;
-    output?: Array<{ content?: Array<{ text?: unknown }> }>;
-  };
-  if (typeof data.output_text === "string") return data.output_text;
-  const parts = data.output
-    ?.flatMap((item) => item.content ?? [])
-    .map((part) => part.text)
-    .filter((part): part is string => typeof part === "string");
-  return parts?.length ? parts.join("") : null;
-}
-
-function blobDataUrl(blob: Blob): Promise<string> {
-  return blob.arrayBuffer().then(
-    (buffer) => `data:${blob.type};base64,${Buffer.from(buffer).toString("base64")}`,
-  );
-}
-
-async function inspectImageSafety(
-  apiKey: string,
-  sourceImage: string,
-  generatedImage?: string,
-): Promise<{ approved: boolean; materiallyDifferent?: boolean; reason: string } | null> {
-  const isComparison = !!generatedImage;
-  const prompt = isComparison
-    ? `Act as a strict ecommerce image authenticity and creative-quality inspector. Compare the original supplier image with the proposed edited image. Set approved=true only when BOTH conditions pass: (1) the exact product identity, shape, proportions, construction, material, color, pattern, quantity, accessories, controls, ports, logos, brand names, model numbers, printed text, labels, and packaging are unchanged; and (2) the new hero image is immediately and materially different from the supplier photo through at least two substantive improvements such as composition, product scale/crop, safe perspective, accessory spacing, studio lighting, depth, or ground shadow. Set materiallyDifferent=false and reject a near-copy, simple background cleanup, tiny crop, mild exposure adjustment, or other change a shopper would barely notice. Always reject unreadable, misspelled, replaced, invented, blurred, or distorted text/branding, any changed component, or any uncertain product detail.`
-    : `Act as a strict ecommerce image-editing risk inspector. Determine whether a generative edit can safely preserve this product. Reject editing if the product or packaging shows any visible brand name, logo, model number, printed words, labels, measurement markings, display text, safety text, or other identity-critical fine detail. Also reject if the exact quantity, pattern, transparent/reflective construction, or small components could be easily altered. When uncertain, reject. An original supplier image is better than a polished but inaccurate image.`;
-  const schema = {
-    type: "object",
-    additionalProperties: false,
-    required: isComparison
-      ? ["approved", "materiallyDifferent", "reason"]
-      : ["approved", "reason"],
-    properties: {
-      approved: { type: "boolean" },
-      ...(isComparison && { materiallyDifferent: { type: "boolean" } }),
-      reason: { type: "string" },
-    },
-  };
-  try {
-    const response = await fetch("https://api.openai.com/v1/responses", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: process.env.OPENAI_IMAGE_QA_MODEL?.trim() || IMAGE_QA_MODEL,
-        input: [
-          {
-            role: "user",
-            content: [
-              { type: "input_text", text: prompt },
-              { type: "input_image", image_url: sourceImage, detail: "high" },
-              ...(generatedImage
-                ? [{ type: "input_image", image_url: generatedImage, detail: "high" }]
-                : []),
-            ],
-          },
-        ],
-        text: {
-          format: {
-            type: "json_schema",
-            name: isComparison ? "image_identity_check" : "image_edit_risk_check",
-            strict: true,
-            schema,
-          },
-        },
-        max_output_tokens: 250,
-      }),
-      signal: AbortSignal.timeout(60_000),
-    });
-    if (!response.ok) return null;
-    const text = responseText(await response.json());
-    if (!text) return null;
-    const parsed = JSON.parse(text) as {
-      approved?: unknown;
-      materiallyDifferent?: unknown;
-      reason?: unknown;
-    };
-    return typeof parsed.approved === "boolean" &&
-      typeof parsed.reason === "string" &&
-      (!isComparison || typeof parsed.materiallyDifferent === "boolean")
-      ? {
-          approved: parsed.approved,
-          ...(isComparison && { materiallyDifferent: parsed.materiallyDifferent as boolean }),
-          reason: parsed.reason.slice(0, 300),
-        }
-      : null;
-  } catch {
-    return null;
-  }
-}
-
 export function buildHeroImagePrompt(input: {
   title: string;
   category: string;
@@ -125,39 +28,43 @@ export function buildHeroImagePrompt(input: {
     .join("; ")
     .slice(0, 1_500);
 
-  return `You are an award-winning ecommerce creative director, senior commercial product photographer, and conversion-rate optimization specialist.
+  return `You are an award-winning commercial product photographer specializing in high-converting eCommerce product photography.
 
-Create one premium, high-converting eBay hero image by EDITING the supplied product photograph. The uploaded image is the only visual source of truth. The result must remain a truthful photograph of the exact product a buyer receives.
+Your goal is to create a premium eBay-compliant hero image that looks significantly better than the original supplier image while remaining completely truthful to the product.
 
 PRODUCT CONTEXT
 Title: ${input.title.slice(0, 500)}
 Category: ${input.category.slice(0, 200)}
 Verified supplier details: ${verifiedDetails || "No additional verified details supplied."}
 
-NON-NEGOTIABLE PRODUCT ACCURACY
-- Preserve the exact product identity, shape, proportions, dimensions, construction, materials, colors, surface patterns, branding, logos, quantity, accessories, controls, ports, fasteners, and functional parts.
-- Do not invent, remove, replace, duplicate, enlarge, shrink, recolor, relabel, or redesign any product or included component.
-- Every existing logo, brand name, model number, word, label, display, symbol, and measurement marking must remain pixel-faithful, correctly spelled, readable, and in the exact original position. Never redraw text from imagination.
-- Do not hide flaws or alter the apparent condition.
-- If a new perspective cannot be rendered with complete geometric accuracy from the reference, keep a close, truthful perspective instead of guessing unseen details.
-- Rearrange separate accessories only when every component and its quantity are completely unambiguous; otherwise preserve their arrangement.
+PRIMARY OBJECTIVE
+Create an image that immediately stands out through superior photography, composition and merchandising. Do not rely on marketing graphics. The product itself should attract the click.
 
-PREMIUM CREATIVE DIRECTION
-- The result MUST be immediately and materially different from the supplier photo while preserving the exact product. A simple white-background cleanup, tiny crop, or mild exposure change is not an enhancement.
-- Make at least three clearly visible creative improvements chosen from: stronger premium composition, meaningfully tighter product scale/crop, safe viewpoint adjustment, improved accessory spacing, richer studio lighting, stronger depth separation, and a refined realistic ground shadow.
-- Present the product as luxury commercial studio photography, clearly differentiated through composition, lighting, crop, depth, spacing, and visual hierarchy rather than changing the item.
-- Use the most flattering truthful perspective: a noticeable premium three-quarter view or 10-20 degree elevation only when the supplied pixels support it. Never invent unseen geometry or distort perspective.
-- Make the product and all included components occupy approximately 88-92% of a square frame without clipping anything.
-- Use a pure white #FFFFFF background, clean edge separation, a soft realistic ground shadow, crisp detail, rich but natural blacks, clean whites, controlled highlights, and premium softbox lighting.
-- Improve clarity, contrast, texture rendering, and perceived production quality without oversaturation or artificial sharpening halos.
+PRODUCT ACCURACY
+The uploaded image is the source of truth. Never modify shape, size, materials, colors, logos, branding, included accessories, quantity, or construction. Everything must accurately represent what the buyer receives.
 
-EBAY IMAGE COMPLIANCE
-- Absolutely no text, captions, badges, feature icons, marketing claims, prices, shipping claims, guarantees, seller claims, calls to action, borders, frames, watermarks, added logos, or decorative artwork.
-- Do not add props, packaging, people, hands, scenery, environmental backgrounds, or objects not present in the supplier image.
-- Output one square 1024x1024 opaque JPEG-style hero image with no transparency.
+EBAY COMPLIANT STYLE
+Produce a clean marketplace hero image. Avoid promotional graphics. Do not add sale banners, discount graphics, price graphics, coupon graphics, fake review stars, promotional text, "Best Seller", "Limited Time", "Free Shipping", "Money Back Guarantee", "USA Seller", watermarks, company websites, or QR codes. The product should be the hero.
 
-FINAL SELF-CHECK
-Before returning the image, verify that a buyer comparing it with the supplier reference would receive exactly the same product, quantity, variant, color, and accessories. If any edit creates uncertainty, favor product truth over creative differentiation.`;
+DIFFERENTIATE FROM SUPPLIER PHOTOS
+Assume hundreds of sellers use the same supplier image. Create an image that looks professionally photographed instead of copied. Differentiate using a better camera angle, perspective, composition, lighting, arrangement, spacing, depth, and visual hierarchy. Never differentiate by altering the product.
+
+CAMERA ANGLE
+Never keep the exact same angle as the supplier photo. Always improve it. Use a premium 3/4 front angle, slight left or right rotation, slight elevated or low angle, or another dynamic but realistic perspective. Maintain accurate proportions with no distortion.
+
+PRODUCT ARRANGEMENT
+Professionally merchandise the product. If multiple accessories are included, you may rearrange them, group similar items, fan them outward, create balanced spacing, rotate pieces, open carrying cases, display contents neatly, stack naturally, or partially overlap accessories when appropriate. Keep every included item visible whenever possible.
+
+LIGHTING AND BACKGROUND
+Use luxury commercial softbox lighting, high dynamic range, rich contrast, beautiful reflections, deep blacks, pure whites, and professional product photography. Use a pure white #FFFFFF background, soft natural shadow, and optional subtle reflection. No scenery or unrelated props.
+
+PRODUCT SIZE AND QUALITY
+The product should occupy approximately 90% of the frame with little empty space. Make it ultra-sharp, magazine-quality, photorealistic, extremely detailed, and suitable for premium retail. Improve clarity, contrast, texture, material realism, and dynamic range without oversaturation.
+
+FINAL QUALITY CHECK
+Before finishing, ask: "Would this image receive more clicks than the supplier image purely because it looks professionally photographed?" If not, improve camera angle, perspective, composition, arrangement, and lighting without changing the actual product.
+
+Output one square 1024x1024 opaque hero image.`;
 }
 
 function isAllowedSupplierImageUrl(rawUrl: string): boolean {
@@ -219,7 +126,7 @@ export async function improveMainListingImage(
   if (!openAiKey) {
     return {
       ok: false,
-      error: "OpenAI is required for quality-controlled GPT Image 2 editing.",
+      error: "OpenAI is required for GPT Image 2 editing.",
     };
   }
   if (!input.sourceImageUrl) {
@@ -231,20 +138,6 @@ export async function improveMainListingImage(
 
   try {
     const sourceImage = await downloadSourceImage(input.sourceImageUrl);
-    const sourceDataUrl = await blobDataUrl(sourceImage);
-    const preflight = await inspectImageSafety(openAiKey, sourceDataUrl);
-    if (!preflight) {
-      return {
-        ok: false,
-        error: "Original retained because the image safety inspection was unavailable.",
-      };
-    }
-    if (!preflight.approved) {
-      return {
-        ok: false,
-        error: `Original retained to protect product text and identity: ${preflight.reason}`,
-      };
-    }
     const extension = sourceImage.type === "image/png" ? "png" : sourceImage.type === "image/webp" ? "webp" : "jpg";
     const form = new FormData();
     form.append("model", process.env.OPENAI_IMAGE_MODEL?.trim() || "gpt-image-2");
@@ -278,28 +171,6 @@ export async function improveMainListingImage(
     const mimeType = payload?.data?.[0]?.media_type || "image/jpeg";
     if (!new Set(["image/jpeg", "image/png", "image/webp"]).has(mimeType)) {
       throw new Error("The image provider returned an unsupported image format.");
-    }
-    const generatedDataUrl = `data:${mimeType};base64,${base64}`;
-    const identityCheck = await inspectImageSafety(
-      openAiKey,
-      sourceDataUrl,
-      generatedDataUrl,
-    );
-    if (!identityCheck) {
-      return {
-        ok: false,
-        error: "Original retained because the generated-image identity check was unavailable.",
-      };
-    }
-    if (!identityCheck.approved || !identityCheck.materiallyDifferent) {
-      return {
-        ok: false,
-        error: `Generated image rejected; original retained: ${
-          identityCheck.materiallyDifferent === false
-            ? `the edit was not visually different enough. ${identityCheck.reason}`
-            : identityCheck.reason
-        }`,
-      };
     }
     const stored = await db.generatedListingImage.create({
       data: { userId: input.userId, mimeType, data: bytes },

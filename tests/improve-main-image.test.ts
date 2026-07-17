@@ -10,13 +10,12 @@ describe("AI listing hero image prompt", () => {
     });
 
     expect(prompt).toContain("Two lamps included");
-    expect(prompt).toContain("exact product identity");
-    expect(prompt).toContain("pixel-faithful");
-    expect(prompt).toContain("Absolutely no text");
+    expect(prompt).toContain("uploaded image is the source of truth");
+    expect(prompt).toContain("Never modify shape, size, materials, colors, logos, branding");
+    expect(prompt).toContain("Never keep the exact same angle");
     expect(prompt).toContain("pure white #FFFFFF background");
-    expect(prompt).toContain("immediately and materially different");
-    expect(prompt).toContain("at least three clearly visible creative improvements");
-    expect(prompt).toContain("exactly the same product, quantity, variant, color, and accessories");
+    expect(prompt).toContain("approximately 90% of the frame");
+    expect(prompt).toContain("Would this image receive more clicks");
   });
 
   it("limits untrusted supplier detail text included in the prompt", () => {

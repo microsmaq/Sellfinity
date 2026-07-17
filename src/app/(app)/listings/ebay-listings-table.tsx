@@ -390,7 +390,7 @@ export function EbayListingsTable({
       }
       setBulkProgress(null);
       setNotice({
-        text: `AI enhancement complete: ${enhanced} listings updated · ${imagesEnhanced} images visibly enhanced · ${copyEnhanced} titles/descriptions optimized${imagesRetained ? ` · ${imagesRetained} original images retained after quality checks` : ""}${copyRetained ? ` · ${copyRetained} original descriptions retained` : ""}${failed ? ` · ${failed} failed or had no tracked Amazon source` : ""}.`,
+        text: `AI enhancement complete: ${enhanced} listings updated · ${imagesEnhanced} images generated · ${copyEnhanced} titles/descriptions optimized${imagesRetained ? ` · ${imagesRetained} image generations failed` : ""}${copyRetained ? ` · ${copyRetained} original descriptions retained` : ""}${failed ? ` · ${failed} failed or had no tracked Amazon source` : ""}.`,
         error: failed > 0,
       });
     });
