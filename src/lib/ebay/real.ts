@@ -81,6 +81,35 @@ type InventoryOfferSummary = {
   listing?: { listingId?: string };
 };
 
+const EBAY_GET_MAX_ATTEMPTS = 3;
+
+/** eBay occasionally returns its generic 25001 system error for otherwise
+ * valid reads. Retrying reads is safe; writes are deliberately never retried
+ * here because some eBay write endpoints are not idempotent. */
+export function shouldRetryEbayRequest(method: string, status: number): boolean {
+  return method.toUpperCase() === "GET" && (status === 429 || status >= 500);
+}
+
+/** Honor a short Retry-After response when supplied, otherwise use a small
+ * exponential backoff. The cap keeps one transient eBay failure from holding
+ * a server action open for too long. */
+export function ebayRetryDelayMs(
+  retryAfter: string | null,
+  failedAttempt: number,
+): number {
+  if (retryAfter) {
+    const seconds = Number(retryAfter);
+    if (Number.isFinite(seconds) && seconds >= 0) {
+      return Math.min(seconds * 1_000, 5_000);
+    }
+    const dateMs = Date.parse(retryAfter);
+    if (!Number.isNaN(dateMs)) {
+      return Math.min(Math.max(dateMs - Date.now(), 0), 5_000);
+    }
+  }
+  return Math.min(400 * 2 ** Math.max(failedAttempt - 1, 0), 2_000);
+}
+
 /** Select only the Inventory offer actually published as this eBay listing.
  * A listing's locally assigned Amazon product/SKU can change after source
  * repair, so taking the first offer for that SKU can target another listing. */
@@ -114,26 +143,42 @@ export class RealEbayClient implements EbayClient {
       auth === "app"
         ? await appAccessToken(this.config)
         : await freshAccessToken(this.config, this.userId);
-    const res = await fetch(`${this.config.apiHost}${path}`, {
-      method,
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-        "Content-Language": "en-US",
-        Accept: "application/json",
-        "Accept-Language": "en-US",
-      },
-      body: body === undefined ? undefined : JSON.stringify(body),
-    });
-    if (!res.ok) {
+    const maxAttempts = method.toUpperCase() === "GET" ? EBAY_GET_MAX_ATTEMPTS : 1;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      const res = await fetch(`${this.config.apiHost}${path}`, {
+        method,
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+          "Content-Language": "en-US",
+          Accept: "application/json",
+          "Accept-Language": "en-US",
+        },
+        body: body === undefined ? undefined : JSON.stringify(body),
+      });
+      if (!res.ok) {
+        const text = await res.text();
+        if (shouldRetryEbayRequest(method, res.status) && attempt < maxAttempts) {
+          await new Promise((resolve) =>
+            setTimeout(resolve, ebayRetryDelayMs(res.headers.get("retry-after"), attempt)),
+          );
+          continue;
+        }
+        const retryNote =
+          shouldRetryEbayRequest(method, res.status) && maxAttempts > 1
+            ? ` after ${maxAttempts} attempts`
+            : "";
+        throw new EbayApiError(
+          `eBay ${method} ${path} failed (${res.status})${retryNote}: ${text.slice(0, 500)}`,
+        );
+      }
+      if (res.status === 204 || res.headers.get("content-length") === "0") {
+        return undefined as T;
+      }
       const text = await res.text();
-      throw new EbayApiError(`eBay ${method} ${path} failed (${res.status}): ${text.slice(0, 500)}`);
+      return (text ? JSON.parse(text) : undefined) as T;
     }
-    if (res.status === 204 || res.headers.get("content-length") === "0") {
-      return undefined as T;
-    }
-    const text = await res.text();
-    return (text ? JSON.parse(text) : undefined) as T;
+    throw new EbayApiError(`eBay ${method} ${path} failed after ${maxAttempts} attempts`);
   }
 
   /** Swallows "already exists" errors so bootstrap calls are idempotent. */

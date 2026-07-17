@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  ebayRetryDelayMs,
   inventoryOfferForListing,
   inventorySkuFromTradingItem,
   parseTradingItem,
+  shouldRetryEbayRequest,
 } from "@/lib/ebay/real";
 import { isAlreadyEndedEbayError } from "@/lib/ebay/errors";
 import { findAmazonMatch } from "@/lib/mirror/match";
@@ -81,6 +83,24 @@ describe("inventorySkuFromTradingItem", () => {
 
   it("returns null when the listing has no Inventory SKU", () => {
     expect(inventorySkuFromTradingItem("<Item><ItemID>123</ItemID></Item>")).toBeNull();
+  });
+});
+
+describe("eBay read retries", () => {
+  it("retries transient read failures but never retries writes", () => {
+    expect(shouldRetryEbayRequest("GET", 500)).toBe(true);
+    expect(shouldRetryEbayRequest("GET", 503)).toBe(true);
+    expect(shouldRetryEbayRequest("GET", 429)).toBe(true);
+    expect(shouldRetryEbayRequest("GET", 400)).toBe(false);
+    expect(shouldRetryEbayRequest("POST", 500)).toBe(false);
+    expect(shouldRetryEbayRequest("PUT", 503)).toBe(false);
+  });
+
+  it("uses bounded backoff and respects short Retry-After values", () => {
+    expect(ebayRetryDelayMs(null, 1)).toBe(400);
+    expect(ebayRetryDelayMs(null, 2)).toBe(800);
+    expect(ebayRetryDelayMs("2", 1)).toBe(2_000);
+    expect(ebayRetryDelayMs("60", 1)).toBe(5_000);
   });
 });
 
