@@ -19,41 +19,7 @@ import type { ScanReport } from "./scan-types";
 export { estimatedSales30d } from "./demand";
 import { estimatedSales30d } from "./demand";
 import { assessProductMatchRules } from "./product-match";
-
-// Category keyword rotation. Each keyword yields one Browse page of
-// candidates; scans walk this list in a day-dependent order for variety.
-const CATEGORY_KEYWORDS: { category: string; keyword: string }[] = [
-  { category: "Home & Kitchen", keyword: "kitchen gadgets" },
-  { category: "Home & Kitchen", keyword: "coffee accessories" },
-  { category: "Home & Kitchen", keyword: "air fryer accessories" },
-  { category: "Home & Kitchen", keyword: "kitchen organization" },
-  { category: "Home & Kitchen", keyword: "baking tools" },
-  { category: "Pet Supplies", keyword: "dog grooming kit" },
-  { category: "Pet Supplies", keyword: "cat toys interactive" },
-  { category: "Pet Supplies", keyword: "dog training supplies" },
-  { category: "Pet Supplies", keyword: "pet travel accessories" },
-  { category: "Fitness & Outdoors", keyword: "home workout equipment" },
-  { category: "Fitness & Outdoors", keyword: "camping accessories" },
-  { category: "Fitness & Outdoors", keyword: "resistance bands set" },
-  { category: "Fitness & Outdoors", keyword: "hiking gear" },
-  { category: "Fitness & Outdoors", keyword: "yoga accessories" },
-  { category: "Electronics", keyword: "phone accessories" },
-  { category: "Electronics", keyword: "bluetooth speaker portable" },
-  { category: "Electronics", keyword: "wireless charger stand" },
-  { category: "Electronics", keyword: "car accessories electronics" },
-  { category: "Electronics", keyword: "led strip lights" },
-  { category: "Garden & Tools", keyword: "garden tools set" },
-  { category: "Garden & Tools", keyword: "solar outdoor lights" },
-  { category: "Garden & Tools", keyword: "plant care tools" },
-  { category: "Garden & Tools", keyword: "outdoor patio decor" },
-  { category: "Toys & Games", keyword: "kids educational toys" },
-  { category: "Toys & Games", keyword: "sensory toys" },
-  { category: "Toys & Games", keyword: "building blocks toys" },
-  { category: "Toys & Games", keyword: "party games kids" },
-  { category: "Home Improvement", keyword: "bathroom organizer" },
-  { category: "Home Improvement", keyword: "wall mounted shelf" },
-  { category: "Beauty & Health", keyword: "massage tools" },
-];
+import { balancedCategoryKeywords } from "./discovery-policy";
 
 const BROWSE_PAGE_SIZE = 40;
 /** How deep to paginate each keyword's Browse results. */
@@ -280,7 +246,9 @@ export async function realScanMore(opts: {
 } = {}): Promise<ScanReport> {
   const target = opts.target ?? 50;
   const deadline = Date.now() + (opts.timeBudgetMs ?? 22_000);
-  const cursorKey = `arbitrage:source-cursor3:${currentDayNumber()}`;
+  const dayNumber = currentDayNumber();
+  const discoveryRotation = balancedCategoryKeywords(dayNumber);
+  const cursorKey = `arbitrage:source-cursor4:${dayNumber}`;
   const cursor = await loadJson<ScanCursor>(cursorKey, EMPTY_CURSOR);
   cursor.failures ??= {};
   const examinedList = await loadJson<string[]>("arbitrage:examined", []);
@@ -298,27 +266,30 @@ export async function realScanMore(opts: {
 
   while (added < target && !cursor.exhausted && Date.now() < deadline) {
     if (cursor.pending.length === 0) {
-      if (cursor.keywordIdx >= CATEGORY_KEYWORDS.length) {
+      if (
+        discoveryRotation.length === 0 ||
+        cursor.pageOffset > MAX_PAGES_PER_KEYWORD
+      ) {
         cursor.exhausted = true;
         break;
       }
       // Source-first discovery: one paid Amazon search page yields many
       // source products, then eBay/local rules narrow them for free.
-      const idx =
-        (cursor.keywordIdx + currentDayNumber()) % CATEGORY_KEYWORDS.length;
-      const { keyword, category } = CATEGORY_KEYWORDS[idx];
+      const { keyword, category } = discoveryRotation[cursor.keywordIdx];
       let candidates: EbayCandidate[];
       try {
         const sources = await findAmazonCatalogProducts(
           keyword,
           cursor.pageOffset,
           "arbitrage_catalog_search",
+          { bestSellersOnly: true },
         );
         candidates = await ebayCandidatesForAmazonSources(sources, category);
-        if (sources.length === 0 || cursor.pageOffset >= MAX_PAGES_PER_KEYWORD) {
-          cursor.keywordIdx++;
-          cursor.pageOffset = 1;
-        } else {
+        // Move to a different category after every source page. Only after a
+        // complete round do we look one page deeper in each bestseller list.
+        cursor.keywordIdx++;
+        if (cursor.keywordIdx >= discoveryRotation.length) {
+          cursor.keywordIdx = 0;
           cursor.pageOffset++;
         }
       } catch {

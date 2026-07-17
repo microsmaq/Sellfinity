@@ -83,6 +83,7 @@ export async function findAmazonCatalogProducts(
   searchTerm: string,
   page = 1,
   workflow = "amazon_catalog_discovery",
+  options: { bestSellersOnly?: boolean } = {},
 ): Promise<AmazonMatch[]> {
   if (!process.env.RAINFOREST_API_KEY) {
     const match = mockMatch(searchTerm);
@@ -94,7 +95,15 @@ export async function findAmazonCatalogProducts(
     request_info?: { success?: boolean };
     search_results?: RainforestSearchResult[];
   }>(
-    { type: "search", search_term: normalized, page: String(Math.max(1, page)) },
+    {
+      type: "search",
+      search_term: normalized,
+      page: String(Math.max(1, page)),
+      ...(options.bestSellersOnly && {
+        sort_by: "bestseller_rankings",
+        exclude_sponsored: "true",
+      }),
+    },
     { workflow },
   );
   if (data.request_info?.success === false || !Array.isArray(data.search_results)) {

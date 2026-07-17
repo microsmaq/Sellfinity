@@ -59,6 +59,28 @@ describe("Amazon replacement-source search safety", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it("can restrict discovery to Amazon bestseller-ranked organic results", async () => {
+    process.env.RAINFOREST_API_KEY = "test";
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({ request_info: { success: true }, search_results: [] }),
+        { status: 200 },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await findAmazonCatalogProducts(
+      "garden tools",
+      1,
+      "arbitrage_catalog_search",
+      { bestSellersOnly: true },
+    );
+
+    const requestUrl = String(fetchMock.mock.calls[0][0]);
+    expect(requestUrl).toContain("sort_by=bestseller_rankings");
+    expect(requestUrl).toContain("exclude_sponsored=true");
+  });
+
   it("throws on an incomplete provider response instead of treating it as no match", async () => {
     process.env.RAINFOREST_API_KEY = "test";
     vi.stubGlobal(
