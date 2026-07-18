@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { buildHeroImagePrompt } from "@/lib/mirror/improve-main-image";
 
 describe("AI listing hero image prompt", () => {
-  it("prioritizes exact product truth and eBay image compliance", () => {
+  it("requires a visibly distinct commercial reshoot while preserving product truth", () => {
     const prompt = buildHeroImagePrompt({
       title: "Blue two-pack rechargeable lamps",
       category: "Home & Garden",
@@ -10,12 +10,17 @@ describe("AI listing hero image prompt", () => {
     });
 
     expect(prompt).toContain("Two lamps included");
+    expect(prompt).toContain("COMPLETELY NEW premium studio photograph");
+    expect(prompt).toContain("not an edited supplier image");
+    expect(prompt).toContain("MANDATORY VISIBLE TRANSFORMATION");
+    expect(prompt).toContain("ALL of these clearly visible changes");
     expect(prompt).toContain("uploaded image is the source of truth");
-    expect(prompt).toContain("Never modify shape, size, materials, colors, logos, branding");
-    expect(prompt).toContain("Never keep the exact same angle");
+    expect(prompt).toContain("Preserve the exact product identity");
+    expect(prompt).toContain("noticeably different but realistic camera viewpoint");
+    expect(prompt).toContain("Do not return a near-copy");
     expect(prompt).toContain("pure white #FFFFFF background");
-    expect(prompt).toContain("approximately 90% of the frame");
-    expect(prompt).toContain("Would this image receive more clicks");
+    expect(prompt).toContain("88-92% of the square frame");
+    expect(prompt).toContain("substantially different, professionally reshot hero image");
   });
 
   it("limits untrusted supplier detail text included in the prompt", () => {
