@@ -124,7 +124,9 @@ async function enforceBudget(
 ): Promise<void> {
   if (!cacheEnabled() || bypass) return;
   const account = await getRainforestAccountUsage();
-  const reserve = Math.max(0, Number(process.env.RAINFOREST_MIN_CREDIT_RESERVE ?? 50));
+  // Use all available credits by default. Operators can still configure a
+  // reserve explicitly, while the separate daily budget prevents runaway use.
+  const reserve = Math.max(0, Number(process.env.RAINFOREST_MIN_CREDIT_RESERVE ?? 0));
   if (account && account.creditsRemaining <= reserve) {
     await recordUsage(workflow, requestType, "budgetBlocks");
     throw new Error(`Rainforest credit reserve reached (${account.creditsRemaining} remaining).`);
@@ -173,7 +175,7 @@ export async function getRainforestEfficiencySummary() {
     dailyBudget: rainforestDailyBudget(account),
     minimumReserve: Math.max(
       0,
-      Number(process.env.RAINFOREST_MIN_CREDIT_RESERVE ?? 50),
+      Number(process.env.RAINFOREST_MIN_CREDIT_RESERVE ?? 0),
     ),
   };
 }

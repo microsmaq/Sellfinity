@@ -125,7 +125,9 @@ export default async function SettingsPage({
           )}
           {rainforest.dailyBudget && (
             <p className="mt-3 text-xs leading-5 text-slate-500">
-              Paid lookups pause at {rainforest.dailyBudget} per UTC day and preserve at least {rainforest.minimumReserve} account credits. Cached lookups do not count toward this limit.
+              Paid lookups pause at {rainforest.dailyBudget} per UTC day. {rainforest.minimumReserve > 0
+                ? `At least ${rainforest.minimumReserve} account credits are reserved.`
+                : "No account credits are held in reserve."} Cached lookups do not count toward this limit.
             </p>
           )}
         </Card>
