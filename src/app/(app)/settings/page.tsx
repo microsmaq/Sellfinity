@@ -100,7 +100,6 @@ export default async function SettingsPage({
               <dt className="text-xs text-slate-500">Paid requests</dt>
               <dd className="mt-1 text-lg font-semibold text-slate-900">
                 {rainforest.providerRequests}
-                {rainforest.dailyBudget ? ` / ${rainforest.dailyBudget}` : ""}
               </dd>
             </div>
             <div className="rounded-lg bg-cyan-50 p-3">
@@ -120,16 +119,12 @@ export default async function SettingsPage({
           </dl>
           {rainforest.budgetBlocks > 0 && (
             <p className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">
-              {rainforest.budgetBlocks} request{rainforest.budgetBlocks === 1 ? " was" : "s were"} safely paused by the credit budget today.
+              {rainforest.budgetBlocks} request{rainforest.budgetBlocks === 1 ? " was" : "s were"} paused earlier today before overage usage was enabled.
             </p>
           )}
-          {rainforest.dailyBudget && (
-            <p className="mt-3 text-xs leading-5 text-slate-500">
-              Paid lookups pause at {rainforest.dailyBudget} per UTC day. {rainforest.minimumReserve > 0
-                ? `At least ${rainforest.minimumReserve} account credits are reserved.`
-                : "No account credits are held in reserve."} Cached lookups do not count toward this limit.
-            </p>
-          )}
+          <p className="mt-3 text-xs leading-5 text-slate-500">
+            Overage usage is enabled and no credits are held in reserve. Once monthly credits are exhausted, paid lookups are limited to {rainforest.overageDailyLimit} per UTC day and may incur Rainforest overage charges. Cached lookups do not consume additional credits.
+          </p>
         </Card>
       </div>
     </>

@@ -13,13 +13,13 @@ const ACCOUNT_API = "https://api.rainforestapi.com/account";
 const HOUR = 60 * 60 * 1000;
 const DAY = 24 * HOUR;
 const LEASE_MS = 25_000;
+const OVERAGE_DAILY_REQUEST_LIMIT = 300;
 const inFlight = new Map<string, Promise<unknown>>();
 
 export type RainforestRequestOptions = {
   workflow?: string;
   ttlMs?: number;
   forceFresh?: boolean;
-  bypassDailyBudget?: boolean;
 };
 
 export type RainforestAccountUsage = {
@@ -117,43 +117,6 @@ export async function getRainforestAccountUsage(): Promise<RainforestAccountUsag
   }
 }
 
-async function enforceBudget(
-  workflow: string,
-  requestType: string,
-  bypass: boolean,
-): Promise<void> {
-  if (!cacheEnabled() || bypass) return;
-  const account = await getRainforestAccountUsage();
-  // Use all available credits by default. Operators can still configure a
-  // reserve explicitly, while the separate daily budget prevents runaway use.
-  const reserve = Math.max(0, Number(process.env.RAINFOREST_MIN_CREDIT_RESERVE ?? 0));
-  if (account && account.creditsRemaining <= reserve) {
-    await recordUsage(workflow, requestType, "budgetBlocks");
-    throw new Error(`Rainforest credit reserve reached (${account.creditsRemaining} remaining).`);
-  }
-  const dailyBudget = rainforestDailyBudget(account);
-  if (!dailyBudget) return;
-  const aggregate = await db.rainforestUsageDaily.aggregate({
-    where: { day: todayUtc() },
-    _sum: { providerRequests: true },
-  });
-  if ((aggregate._sum.providerRequests ?? 0) >= dailyBudget) {
-    await recordUsage(workflow, requestType, "budgetBlocks");
-    throw new Error(`Rainforest daily credit budget reached (${dailyBudget}).`);
-  }
-}
-
-function rainforestDailyBudget(
-  account: RainforestAccountUsage | null,
-): number | null {
-  const configured = Number(process.env.RAINFOREST_DAILY_CREDIT_BUDGET ?? "");
-  return Number.isFinite(configured) && configured > 0
-    ? configured
-    : account?.creditsLimit
-      ? Math.max(1, Math.floor((account.creditsLimit / 30) * 0.9))
-      : null;
-}
-
 export async function getRainforestEfficiencySummary() {
   const rows = cacheEnabled()
     ? await db.rainforestUsageDaily.findMany({ where: { day: todayUtc() } })
@@ -172,12 +135,46 @@ export async function getRainforestEfficiencySummary() {
     day: todayUtc(),
     ...totals,
     account,
-    dailyBudget: rainforestDailyBudget(account),
-    minimumReserve: Math.max(
-      0,
-      Number(process.env.RAINFOREST_MIN_CREDIT_RESERVE ?? 0),
-    ),
+    allowOverage: true,
+    overageDailyLimit: OVERAGE_DAILY_REQUEST_LIMIT,
   };
+}
+
+export function shouldBlockRainforestOverage(
+  creditsRemaining: number | null,
+  paidRequestsToday: number,
+): boolean {
+  return (
+    creditsRemaining !== null &&
+    creditsRemaining <= 0 &&
+    paidRequestsToday >= OVERAGE_DAILY_REQUEST_LIMIT
+  );
+}
+
+/** Included credits may be used without an app-imposed reserve. Once the
+ * account reaches overage, retain a bounded daily ceiling as requested. */
+async function enforceOverageDailyLimit(
+  workflow: string,
+  requestType: string,
+): Promise<void> {
+  if (!cacheEnabled()) return;
+  const account = await getRainforestAccountUsage();
+  if (!account || account.creditsRemaining > 0) return;
+  const aggregate = await db.rainforestUsageDaily.aggregate({
+    where: { day: todayUtc() },
+    _sum: { providerRequests: true },
+  });
+  if (
+    shouldBlockRainforestOverage(
+      account.creditsRemaining,
+      aggregate._sum.providerRequests ?? 0,
+    )
+  ) {
+    await recordUsage(workflow, requestType, "budgetBlocks");
+    throw new Error(
+      `Rainforest overage daily limit reached (${OVERAGE_DAILY_REQUEST_LIMIT}).`,
+    );
+  }
 }
 
 /** The slice of Rainforest's type=product response we consume. */
@@ -291,7 +288,7 @@ export async function rainforestRequest<T>(
     }
 
     try {
-      await enforceBudget(workflow, requestType, options.bypassDailyBudget === true);
+      await enforceOverageDailyLimit(workflow, requestType);
       const query = new URLSearchParams({
         api_key: key,
         amazon_domain: "amazon.com",
