@@ -67,10 +67,10 @@ function CatalogRow({
     <tr className="border-t border-slate-100 align-top hover:bg-slate-50/70">
       <td className="sticky left-0 z-10 min-w-[310px] bg-white px-4 py-4 group-hover:bg-slate-50">
         <div className="flex gap-3">
-          {row.amazonImageUrl ? (
+          {row.amazonImageUrl ?? row.ebayImageUrl ? (
             // eslint-disable-next-line @next/next/no-img-element
             <img
-              src={row.amazonImageUrl}
+              src={row.amazonImageUrl ?? row.ebayImageUrl ?? ""}
               alt=""
               className="h-14 w-14 shrink-0 rounded-lg border border-slate-200 object-contain"
             />

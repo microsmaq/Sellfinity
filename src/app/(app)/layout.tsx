@@ -39,7 +39,7 @@ export default async function AppLayout({
           </form>
         </div>
       </aside>
-      <main className="ml-60 flex-1 px-8 py-8">
+      <main className="ml-60 min-w-0 flex-1 px-8 py-8">
         <div className="mx-auto max-w-6xl">{children}</div>
       </main>
     </div>
