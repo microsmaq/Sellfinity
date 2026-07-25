@@ -20,6 +20,9 @@ export type BrowseSummary = {
   itemId?: string;
   title?: string;
   price?: { value?: string };
+  itemWebUrl?: string;
+  image?: { imageUrl?: string };
+  categories?: { categoryName?: string }[];
 };
 
 function titleIsComparable(sourceTitle: string, candidateTitle?: string): boolean {

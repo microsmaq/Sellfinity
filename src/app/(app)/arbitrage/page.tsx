@@ -24,11 +24,12 @@ export default async function ArbitragePage() {
     <>
       <PageHeader
         title="Arbitrage finder"
-        subtitle="The research database: best-selling eBay products with a cheaper Amazon source, margins net of eBay fees. New opportunities are added automatically twice a day — or scan on demand."
+        subtitle="Admin-curated Amazon bestsellers with verified eBay equivalents, competitive market data, and margins net of eBay fees."
       />
       <ArbitrageTable
         initial={initial}
         initialAutoPublish={user.autoPublishArbitrage}
+        canManageData={user.role === "ADMIN"}
       />
     </>
   );

@@ -16,13 +16,18 @@ export default async function AppLayout({
         <Link href="/dashboard" className="mb-6 px-3 text-lg font-semibold">
           Sell<span className="text-indigo-600">finity</span>
         </Link>
-        <SidebarNav />
+        <SidebarNav isAdmin={user.role === "ADMIN"} />
         <div className="mt-auto border-t border-slate-200 pt-4">
           <div className="min-w-0 px-3">
             <p className="truncate text-sm font-medium text-slate-900">
               {user.name}
             </p>
             <p className="truncate text-xs text-slate-500">{user.email}</p>
+            {user.role === "ADMIN" && (
+              <p className="mt-1 text-[10px] font-semibold uppercase tracking-wider text-indigo-600">
+                Administrator
+              </p>
+            )}
           </div>
           <form action={logout} className="mt-3 px-3">
             <button

@@ -3,6 +3,7 @@ import { db } from "@/lib/db";
 import { ebayEnvConfig } from "@/lib/ebay/oauth";
 import type { ArbitrageOpportunity, OpportunityRow } from "./scanner";
 import { suggestedListingPriceCents } from "@/lib/listings/cleanup";
+import { syncAdminCatalogFromOpportunities } from "./admin-catalog";
 
 /** Upsert scanned opportunities into the shared research database.
  * Batched: one lookup + one createMany for new rows, individual updates
@@ -70,6 +71,7 @@ export async function persistOpportunities(
       data: toData(o),
     });
   }
+  await syncAdminCatalogFromOpportunities([...byId.values()]);
   return fresh.length;
 }
 
@@ -128,7 +130,13 @@ export async function listArbitragePage(
   userId: string,
   params: ArbitragePageParams,
 ): Promise<ArbitragePage> {
+  const curated = await db.adminArbitrageProduct.findMany({
+    where: { status: "PUBLISHED", ebayItemId: { not: null } },
+    select: { ebayItemId: true },
+  });
+  const curatedEbayIds = curated.flatMap((item) => item.ebayItemId ?? []);
   const where: Prisma.ArbitrageItemWhereInput = {
+    ebayItemId: { in: curatedEbayIds },
     hiddenBy: { none: { userId } },
     // Similar candidates stay visible for human review. Definite identity
     // conflicts remain excluded; the UI withholds unverified profitability.
@@ -152,6 +160,7 @@ export async function listArbitragePage(
       take: pageSize,
     }),
     db.arbitrageItem.findMany({
+      where: { ebayItemId: { in: curatedEbayIds } },
       distinct: ["category"],
       select: { category: true },
       orderBy: { category: "asc" },

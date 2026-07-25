@@ -112,9 +112,11 @@ function SortHeader({
 export function ArbitrageTable({
   initial,
   initialAutoPublish,
+  canManageData,
 }: {
   initial: ArbitragePage;
   initialAutoPublish: boolean;
+  canManageData: boolean;
 }) {
   const router = useRouter();
   const [data, setData] = useState(initial);
@@ -557,35 +559,39 @@ export function ArbitrageTable({
           {data.total.toLocaleString()} researched
         </p>
         <div className="ml-auto flex items-center gap-2">
-          {scanning ? (
-            <Button variant="secondary" onClick={stopScan}>
-              Stop scan
-            </Button>
-          ) : (
-            <div className="flex items-center gap-2">
-              <select
-                value={scanTarget}
-                onChange={(event) => setScanTarget(Number(event.target.value))}
-                className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
-                aria-label="Number of new items to scan"
-              >
-                <option value={50}>50 items</option>
-                <option value={100}>100 items</option>
-                <option value={200}>200 items</option>
-                <option value={500}>500 items</option>
-                <option value={1000}>1,000 items</option>
-              </select>
-              <Button variant="secondary" onClick={scanNow}>
-                Scan for {scanTarget.toLocaleString()} new items
+          {canManageData && (
+            <>
+              {scanning ? (
+                <Button variant="secondary" onClick={stopScan}>
+                  Stop scan
+                </Button>
+              ) : (
+                <div className="flex items-center gap-2">
+                  <select
+                    value={scanTarget}
+                    onChange={(event) => setScanTarget(Number(event.target.value))}
+                    className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
+                    aria-label="Number of new items to scan"
+                  >
+                    <option value={50}>50 items</option>
+                    <option value={100}>100 items</option>
+                    <option value={200}>200 items</option>
+                    <option value={500}>500 items</option>
+                    <option value={1000}>1,000 items</option>
+                  </select>
+                  <Button variant="secondary" onClick={scanNow}>
+                    Scan for {scanTarget.toLocaleString()} new items
+                  </Button>
+                </div>
+              )}
+              <Button variant="secondary" disabled={researching} onClick={researchPage}>
+                {researching ? "Researching market…" : "Research market data"}
               </Button>
-            </div>
+              <Button variant="secondary" disabled={verifying} onClick={verifyPageMatches}>
+                {verifying ? "Verifying matches…" : "Verify product matches"}
+              </Button>
+            </>
           )}
-          <Button variant="secondary" disabled={researching} onClick={researchPage}>
-            {researching ? "Researching market…" : "Research market data"}
-          </Button>
-          <Button variant="secondary" disabled={verifying} onClick={verifyPageMatches}>
-            {verifying ? "Verifying matches…" : "Verify product matches"}
-          </Button>
           <Button variant="secondary" disabled={pending} onClick={exportExcel}>
             Export Excel
           </Button>

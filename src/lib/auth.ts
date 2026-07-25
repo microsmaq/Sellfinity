@@ -64,3 +64,10 @@ export async function requireUser(): Promise<User> {
   if (!user) redirect("/login");
   return user;
 }
+
+/** For administration pages/actions: never expose catalog controls to sellers. */
+export async function requireAdmin(): Promise<User> {
+  const user = await requireUser();
+  if (user.role !== "ADMIN") redirect("/dashboard");
+  return user;
+}

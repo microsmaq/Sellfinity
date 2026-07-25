@@ -50,7 +50,7 @@ export async function register(
     throw e;
   }
   await createSession(user.id);
-  redirect("/dashboard");
+  redirect(user.role === "ADMIN" ? "/admin/arbitrage" : "/dashboard");
 }
 
 const loginSchema = z.object({
@@ -77,7 +77,7 @@ export async function login(
   }
 
   await createSession(user.id);
-  redirect("/dashboard");
+  redirect(user.role === "ADMIN" ? "/admin/arbitrage" : "/dashboard");
 }
 
 export async function logout(): Promise<void> {

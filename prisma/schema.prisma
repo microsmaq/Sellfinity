@@ -21,6 +21,8 @@ model User {
   email                String    @unique
   passwordHash         String
   name                 String
+  // USER | ADMIN
+  role                 String    @default("USER")
   // FREE | PRO | SCALE
   plan                 String    @default("FREE")
   planRenewsAt         DateTime?
@@ -47,6 +49,45 @@ model User {
   mirrorBatches           MirrorBatch[]
   generatedListingImages GeneratedListingImage[]
   ebayConnection          EbayConnection?
+}
+
+// Amazon-first catalog curated by Sellfinity administrators. User-facing
+// Arbitrage Finder rows are published from this source of truth only after a
+// usable eBay equivalent and market research have been attached.
+model AdminArbitrageProduct {
+  id                         String    @id @default(cuid())
+  asin                       String    @unique
+  amazonTitle                String
+  amazonPriceCents           Int
+  amazonUrl                  String
+  amazonImageUrl             String?
+  category                   String
+  isAmazonBestSeller         Boolean   @default(true)
+  // PENDING | PUBLISHED | NO_MATCH | ARCHIVED
+  status                     String    @default("PENDING")
+  ebayItemId                 String?   @unique
+  ebayTitle                  String?
+  ebayPriceCents             Int?
+  ebayUrl                    String?
+  ebayImageUrl               String?
+  matchVerdict               String    @default("UNVERIFIED")
+  matchConfidence            Int       @default(0)
+  matchReason                String?
+  estimatedSales30d          Int?
+  competitorCount            Int?
+  averageCompetitorPriceCents Int?
+  ebayRecommendedPriceCents  Int?
+  suggestedPriceCents        Int?
+  estimatedProfitCents       Int?
+  marginPct                  Int?
+  lastResearchedAt           DateTime?
+  createdAt                  DateTime  @default(now())
+  updatedAt                  DateTime  @updatedAt
+
+  @@index([status, updatedAt])
+  @@index([category])
+  @@index([matchConfidence])
+  @@index([marginPct])
 }
 
 // A durable direct-to-eBay publishing run. The browser advances one item at a

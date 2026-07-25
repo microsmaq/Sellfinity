@@ -6,18 +6,27 @@ import {
   type BrowseSummary,
 } from "./market-analysis";
 
-export async function researchEbayMarket(
-  title: string,
-  ownEbayListingId: string,
-): Promise<{ query: string; metrics: ListingMarketMetrics } | null> {
+export type EbayProductCandidate = {
+  itemId: string;
+  title: string;
+  priceCents: number;
+  url: string;
+  imageUrl: string;
+  category: string;
+};
+
+async function browseSearch(title: string, limit = 50): Promise<{
+  total: number;
+  items: BrowseSummary[];
+}> {
   const config = ebayEnvConfig();
-  if (!config) return null;
+  if (!config) return { total: 0, items: [] };
   const query = marketSearchQuery(title);
-  if (!query) return null;
+  if (!query) return { total: 0, items: [] };
   const token = await appAccessToken(config);
   const params = new URLSearchParams({
     q: query,
-    limit: "50",
+    limit: String(Math.max(1, Math.min(200, limit))),
     filter: "priceCurrency:USD,buyingOptions:{FIXED_PRICE}",
   });
   const response = await fetch(
@@ -34,9 +43,44 @@ export async function researchEbayMarket(
     total?: number;
     itemSummaries?: BrowseSummary[];
   };
+  return { total: data.total ?? 0, items: data.itemSummaries ?? [] };
+}
+
+/** Candidate listings for attaching an eBay market to an Amazon-first
+ * administrative catalog row. Identity verification is deliberately left to
+ * the caller because title and image evidence both matter. */
+export async function searchEbayProducts(
+  amazonTitle: string,
+  limit = 50,
+): Promise<EbayProductCandidate[]> {
+  const { items } = await browseSearch(amazonTitle, limit);
+  return items.flatMap((item) => {
+    const priceCents = Math.round(Number(item.price?.value ?? 0) * 100);
+    if (!item.itemId || !item.title || priceCents <= 0) return [];
+    const numericId = item.itemId.includes("|")
+      ? item.itemId.split("|")[1]
+      : item.itemId;
+    return [{
+      itemId: item.itemId,
+      title: item.title,
+      priceCents,
+      url: item.itemWebUrl ?? `https://www.ebay.com/itm/${numericId}`,
+      imageUrl: item.image?.imageUrl ?? "",
+      category: item.categories?.[0]?.categoryName ?? "Other",
+    }];
+  });
+}
+
+export async function researchEbayMarket(
+  title: string,
+  ownEbayListingId: string,
+): Promise<{ query: string; metrics: ListingMarketMetrics } | null> {
+  const query = marketSearchQuery(title);
+  if (!query) return null;
+  const data = await browseSearch(title, 50);
   const metrics = summarizeBrowseMarket(
-    data.total ?? 0,
-    data.itemSummaries ?? [],
+    data.total,
+    data.items,
     ownEbayListingId,
     title,
   );

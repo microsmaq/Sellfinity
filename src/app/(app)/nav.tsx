@@ -14,11 +14,18 @@ const links = [
   { href: "/settings", label: "Settings", icon: "⚙️" },
 ];
 
-export function SidebarNav() {
+export function SidebarNav({ isAdmin = false }: { isAdmin?: boolean }) {
   const pathname = usePathname();
+  const visibleLinks = isAdmin
+    ? [
+        ...links.slice(0, 3),
+        { href: "/admin/arbitrage", label: "Arbitrage admin", icon: "🛡️" },
+        ...links.slice(3),
+      ]
+    : links;
   return (
     <nav className="flex flex-col gap-0.5">
-      {links.map((l) => {
+      {visibleLinks.map((l) => {
         const active = pathname === l.href || pathname.startsWith(l.href + "/");
         return (
           <Link
