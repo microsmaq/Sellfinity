@@ -1,8 +1,8 @@
 import { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
 import { estimateMargin } from "@/lib/fees";
-import { aiSuggestedListingPriceCents } from "@/lib/listings/cleanup";
 import type { ArbitrageOpportunity } from "./scanner";
+import { arbitrageSuggestedPriceCents } from "./pricing";
 
 export const ADMIN_CATALOG_PAGE_SIZE = 50;
 
@@ -264,9 +264,9 @@ export async function publishCatalogProductToUsers(id: string): Promise<void> {
     throw new Error("Research an eBay equivalent before publishing this product.");
   }
   const suggested = item.suggestedPriceCents ??
-    aiSuggestedListingPriceCents(
+    arbitrageSuggestedPriceCents(
       item.amazonPriceCents,
-      0,
+      item.ebayPriceCents,
       item.ebayRecommendedPriceCents,
       item.averageCompetitorPriceCents ?? item.ebayPriceCents,
     );
@@ -340,9 +340,9 @@ export async function syncAdminCatalogFromOpportunities(
 ): Promise<void> {
   const byAsin = new Map(opportunities.map((item) => [item.amazon.asin, item]));
   for (const opportunity of byAsin.values()) {
-    const suggested = aiSuggestedListingPriceCents(
+    const suggested = arbitrageSuggestedPriceCents(
       opportunity.amazon.priceCents,
-      0,
+      opportunity.ebay.priceCents,
       opportunity.market?.bestSellingPriceCents,
       opportunity.market?.averageCompetitorPriceCents ?? opportunity.ebay.priceCents,
     );

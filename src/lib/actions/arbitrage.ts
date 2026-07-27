@@ -18,7 +18,7 @@ import { createArbitrageWorkbook } from "@/lib/export/excel";
 import { assessProductMatch } from "@/lib/arbitrage/product-match";
 import { resolveExactAmazonVariant } from "@/lib/mirror/variant";
 import { estimateMargin } from "@/lib/fees";
-import { aiSuggestedListingPriceCents } from "@/lib/listings/cleanup";
+import { arbitrageSuggestedPriceCents } from "@/lib/arbitrage/pricing";
 
 /** One page of the research database (filters/sort/pagination server-side). */
 export async function fetchArbitragePage(
@@ -181,9 +181,9 @@ async function assessAndPersistMatches(
   await db.$transaction(
     assessed.map(({ row, exact, assessment }) => {
       const suggestedPrice = exact
-        ? aiSuggestedListingPriceCents(
+        ? arbitrageSuggestedPriceCents(
             exact.priceCents,
-            0,
+            row.ebayPriceCents,
             row.bestSellingPriceCents,
             row.avgCompPriceCents ?? row.ebayPriceCents,
           )
@@ -334,12 +334,12 @@ export async function researchArbitrageMarket(
       }
       const stored = await db.arbitrageItem.findUnique({
         where: { ebayItemId: item.ebayItemId },
-        select: { amazonPriceCents: true },
+        select: { amazonPriceCents: true, ebayPriceCents: true },
       });
       const suggestedPrice = stored
-        ? aiSuggestedListingPriceCents(
+        ? arbitrageSuggestedPriceCents(
             stored.amazonPriceCents,
-            0,
+            stored.ebayPriceCents,
             result.metrics.bestSellingPriceCents,
             result.metrics.averageCompetitorPriceCents,
           )

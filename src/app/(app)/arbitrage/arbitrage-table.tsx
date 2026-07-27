@@ -22,7 +22,7 @@ import {
 import type { ArbitragePage, ArbitragePageParams } from "@/lib/arbitrage/store";
 import type { OpportunityRow } from "@/lib/arbitrage/scanner";
 import { formatCents } from "@/lib/money";
-import { aiSuggestedListingPriceCents } from "@/lib/listings/cleanup";
+import { arbitrageSuggestedPriceCents } from "@/lib/arbitrage/pricing";
 import { Badge, Button, Card, Input, cx } from "@/components/ui";
 import { PremiumProgress, type PremiumProgressStatus } from "@/components/premium-progress";
 import { downloadBase64File } from "@/lib/download";
@@ -373,9 +373,9 @@ export function ArbitrageTable({
                   ebaySales30d: result.market.estimatedSales30d,
                   competitorCount: result.market.competitorCount,
                   avgCompPriceCents: result.market.averageCompetitorPriceCents,
-                  suggestedListingPriceCents: aiSuggestedListingPriceCents(
+                  suggestedListingPriceCents: arbitrageSuggestedPriceCents(
                     row.amazonPriceCents,
-                    0,
+                    row.ebayPriceCents,
                     result.market.bestSellingPriceCents,
                     result.market.averageCompetitorPriceCents,
                   ),

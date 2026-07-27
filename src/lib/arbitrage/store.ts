@@ -2,9 +2,9 @@ import { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
 import { ebayEnvConfig } from "@/lib/ebay/oauth";
 import type { ArbitrageOpportunity, OpportunityRow } from "./scanner";
-import { aiSuggestedListingPriceCents } from "@/lib/listings/cleanup";
 import { estimateMargin } from "@/lib/fees";
 import { syncAdminCatalogFromOpportunities } from "./admin-catalog";
+import { arbitrageSuggestedPriceCents } from "./pricing";
 
 /** Upsert scanned opportunities into the shared research database.
  * Batched: one lookup + one createMany for new rows, individual updates
@@ -34,9 +34,9 @@ export async function persistOpportunities(
       reason: "The scanner supplied an already paired catalog product.",
       method: "RULES" as const,
     };
-    const suggestedPrice = aiSuggestedListingPriceCents(
+    const suggestedPrice = arbitrageSuggestedPriceCents(
       o.amazon.priceCents,
-      0,
+      o.ebay.priceCents,
       o.market?.bestSellingPriceCents,
       o.market?.averageCompetitorPriceCents ?? o.ebay.priceCents,
     );
@@ -216,9 +216,9 @@ export async function listArbitragePage(
       ebaySales30d: i.salesEst,
       competitorCount: i.competitorCount ?? 1,
       avgCompPriceCents: i.avgCompPriceCents ?? i.ebayPriceCents,
-      suggestedListingPriceCents: aiSuggestedListingPriceCents(
+      suggestedListingPriceCents: arbitrageSuggestedPriceCents(
         i.amazonPriceCents,
-        0,
+        i.ebayPriceCents,
         i.bestSellingPriceCents,
         i.avgCompPriceCents ?? i.ebayPriceCents,
       ),

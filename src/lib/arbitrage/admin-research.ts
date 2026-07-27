@@ -3,7 +3,7 @@ import { searchEbayProducts, researchEbayMarket } from "@/lib/ebay/market";
 import { estimateMargin } from "@/lib/fees";
 import { getScraper } from "@/lib/mirror";
 import { extractAsin } from "@/lib/mirror/scraper";
-import { aiSuggestedListingPriceCents } from "@/lib/listings/cleanup";
+import { arbitrageSuggestedPriceCents } from "./pricing";
 import {
   assessProductMatch,
   assessProductMatchRules,
@@ -163,11 +163,10 @@ export async function researchAdminCatalogProduct(id: string): Promise<void> {
   const metrics = market?.metrics;
   const averagePrice =
     metrics?.averageCompetitorPriceCents ?? best.candidate.priceCents;
-  const recommendedPrice =
-    metrics?.bestSellingPriceCents ?? best.candidate.priceCents;
-  const suggestedPrice = aiSuggestedListingPriceCents(
+  const recommendedPrice = metrics?.bestSellingPriceCents ?? null;
+  const suggestedPrice = arbitrageSuggestedPriceCents(
     source.priceCents,
-    0,
+    best.candidate.priceCents,
     recommendedPrice,
     averagePrice,
   );
