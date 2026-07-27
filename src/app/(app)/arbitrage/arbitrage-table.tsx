@@ -22,7 +22,7 @@ import {
 import type { ArbitragePage, ArbitragePageParams } from "@/lib/arbitrage/store";
 import type { OpportunityRow } from "@/lib/arbitrage/scanner";
 import { formatCents } from "@/lib/money";
-import { suggestedListingPriceCents } from "@/lib/listings/cleanup";
+import { aiSuggestedListingPriceCents } from "@/lib/listings/cleanup";
 import { Badge, Button, Card, Input, cx } from "@/components/ui";
 import { PremiumProgress, type PremiumProgressStatus } from "@/components/premium-progress";
 import { downloadBase64File } from "@/lib/download";
@@ -373,9 +373,10 @@ export function ArbitrageTable({
                   ebaySales30d: result.market.estimatedSales30d,
                   competitorCount: result.market.competitorCount,
                   avgCompPriceCents: result.market.averageCompetitorPriceCents,
-                  suggestedListingPriceCents: suggestedListingPriceCents(
+                  suggestedListingPriceCents: aiSuggestedListingPriceCents(
                     row.amazonPriceCents,
                     0,
+                    result.market.bestSellingPriceCents,
                     result.market.averageCompetitorPriceCents,
                   ),
                 }
@@ -402,6 +403,7 @@ export function ArbitrageTable({
           status: completed === data.rows.length ? "complete" : "running",
         });
       }
+      setData(await fetchArbitragePage(params));
       setNotice({
         text: `Market research complete: ${updated} updated${unavailable ? `, ${unavailable} without comparable results` : ""}${errors ? `, ${errors} failed` : ""}.`,
         error: errors > 0,
@@ -643,8 +645,8 @@ export function ArbitrageTable({
               <SortHeader label="Avg. comp price" sortKey="avgCompPrice" params={params} onSort={onSort} />
               <th className="px-4 py-3 text-right">Suggested price</th>
               <SortHeader label="Amazon price" sortKey="amazonPrice" params={params} onSort={onSort} />
-              <SortHeader label="Profit / unit" sortKey="profit" params={params} onSort={onSort} />
-              <SortHeader label="Margin" sortKey="margin" params={params} onSort={onSort} />
+              <SortHeader label="Profit after ads" sortKey="profit" params={params} onSort={onSort} />
+              <SortHeader label="Margin after ads" sortKey="margin" params={params} onSort={onSort} />
               <SortHeader label="Found" sortKey="newest" params={params} onSort={onSort} />
               <th className="px-4 py-3" />
             </tr>

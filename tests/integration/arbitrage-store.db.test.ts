@@ -43,6 +43,7 @@ beforeAll(() => {
 
 beforeEach(async () => {
   await db.arbitrageItem.deleteMany();
+  await db.adminArbitrageProduct.deleteMany();
   await db.scanCache.deleteMany();
   await db.listing.deleteMany();
   await db.product.deleteMany();
@@ -85,8 +86,9 @@ describe("listArbitragePage", () => {
     expect(page1.total).toBe(30);
     expect(page1.pageCount).toBe(2);
     expect(page1.rows).toHaveLength(25);
-    // profit desc: first row is the highest-profit item (n=29)
-    expect(page1.rows[0].profitCents).toBe(500 + 29 * 100);
+    // Profit is recalculated from the market-anchored suggested price, rather
+    // than trusting the scanner's stale margin snapshot.
+    expect(page1.rows[0].asin).toBe("B0TEST0029");
 
     const page2 = await listArbitragePage(user.id, { ...base, page: 2 });
     expect(page2.rows).toHaveLength(5);

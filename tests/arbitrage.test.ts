@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { MockArbitrageScanner, asinForSlot } from "@/lib/arbitrage/mock-scanner";
 import { amazonStateForDay, productForAsin } from "@/lib/mirror/mock-amazon";
-import { ebayFeeCents } from "@/lib/fees";
+import { EBAY_AD_RATE, ebayFeeCents } from "@/lib/fees";
 
 describe("asinForSlot", () => {
   it("produces valid, deterministic ASINs", () => {
@@ -47,16 +47,17 @@ describe("MockArbitrageScanner", () => {
     }
   });
 
-  it("computes margin net of eBay fees on the eBay sale price", async () => {
+  it("computes margin net of eBay fees and the advertising allowance", async () => {
     const [o] = await scanner.findOpportunities(10);
     const fee = ebayFeeCents({
       quantity: 1,
       salePriceCents: o.ebay.priceCents,
       shippingChargedCents: 0,
     });
-    expect(o.margin.estimatedFeeCents).toBe(fee);
+    const advertising = Math.round(o.ebay.priceCents * EBAY_AD_RATE);
+    expect(o.margin.estimatedFeeCents).toBe(fee + advertising);
     expect(o.margin.estimatedProfitCents).toBe(
-      o.ebay.priceCents - fee - o.amazon.priceCents,
+      o.ebay.priceCents - fee - advertising - o.amazon.priceCents,
     );
   });
 

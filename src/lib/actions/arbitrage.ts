@@ -18,6 +18,7 @@ import { createArbitrageWorkbook } from "@/lib/export/excel";
 import { assessProductMatch } from "@/lib/arbitrage/product-match";
 import { resolveExactAmazonVariant } from "@/lib/mirror/variant";
 import { estimateMargin } from "@/lib/fees";
+import { aiSuggestedListingPriceCents } from "@/lib/listings/cleanup";
 
 /** One page of the research database (filters/sort/pagination server-side). */
 export async function fetchArbitragePage(
@@ -121,6 +122,8 @@ type MatchVerificationRow = {
   amazonPriceCents: number;
   amazonUrl: string;
   ebayPriceCents: number;
+  avgCompPriceCents: number | null;
+  bestSellingPriceCents: number | null;
 };
 
 async function assessAndPersistMatches(
@@ -177,9 +180,18 @@ async function assessAndPersistMatches(
   );
   await db.$transaction(
     assessed.map(({ row, exact, assessment }) => {
-      const margin = exact
-        ? estimateMargin(row.ebayPriceCents, exact.priceCents, 0)
+      const suggestedPrice = exact
+        ? aiSuggestedListingPriceCents(
+            exact.priceCents,
+            0,
+            row.bestSellingPriceCents,
+            row.avgCompPriceCents ?? row.ebayPriceCents,
+          )
         : null;
+      const margin =
+        exact && suggestedPrice
+          ? estimateMargin(suggestedPrice, exact.priceCents, 0)
+          : null;
       return db.arbitrageItem.update({
         where: { ebayItemId: row.ebayItemId },
         data: {
@@ -228,6 +240,8 @@ export async function verifyArbitrageMatches(
       amazonPriceCents: true,
       amazonUrl: true,
       ebayPriceCents: true,
+      avgCompPriceCents: true,
+      bestSellingPriceCents: true,
     },
   });
   const results = await assessAndPersistMatches(rows);
@@ -273,6 +287,8 @@ export async function verifyHistoricalArbitrageMatches(
       amazonPriceCents: true,
       amazonUrl: true,
       ebayPriceCents: true,
+      avgCompPriceCents: true,
+      bestSellingPriceCents: true,
     },
   });
   const results = await assessAndPersistMatches(rows);
@@ -316,14 +332,55 @@ export async function researchArbitrageMarket(
         results.push({ asin: item.asin, ebayItemId: item.ebayItemId, market: null });
         continue;
       }
-      await db.arbitrageItem.updateMany({
-        where: { asin: item.asin, ebayItemId: item.ebayItemId },
-        data: {
-          salesEst: result.metrics.estimatedSales30d,
-          competitorCount: result.metrics.competitorCount,
-          avgCompPriceCents: result.metrics.averageCompetitorPriceCents,
-        },
+      const stored = await db.arbitrageItem.findUnique({
+        where: { ebayItemId: item.ebayItemId },
+        select: { amazonPriceCents: true },
       });
+      const suggestedPrice = stored
+        ? aiSuggestedListingPriceCents(
+            stored.amazonPriceCents,
+            0,
+            result.metrics.bestSellingPriceCents,
+            result.metrics.averageCompetitorPriceCents,
+          )
+        : null;
+      const margin =
+        stored && suggestedPrice
+          ? estimateMargin(suggestedPrice, stored.amazonPriceCents, 0)
+          : null;
+      await db.$transaction([
+        db.arbitrageItem.updateMany({
+          where: { asin: item.asin, ebayItemId: item.ebayItemId },
+          data: {
+            salesEst: result.metrics.estimatedSales30d,
+            competitorCount: result.metrics.competitorCount,
+            avgCompPriceCents: result.metrics.averageCompetitorPriceCents,
+            bestSellingPriceCents: result.metrics.bestSellingPriceCents,
+            ...(margin && {
+              profitCents: margin.estimatedProfitCents,
+              marginPct: Math.round(margin.marginPct),
+              feeCents: margin.estimatedFeeCents,
+            }),
+          },
+        }),
+        db.adminArbitrageProduct.updateMany({
+          where: { asin: item.asin, ebayItemId: item.ebayItemId },
+          data: {
+            estimatedSales30d: result.metrics.estimatedSales30d,
+            competitorCount: result.metrics.competitorCount,
+            averageCompetitorPriceCents:
+              result.metrics.averageCompetitorPriceCents,
+            ebayRecommendedPriceCents:
+              result.metrics.bestSellingPriceCents,
+            ...(suggestedPrice && margin && {
+              suggestedPriceCents: suggestedPrice,
+              estimatedProfitCents: margin.estimatedProfitCents,
+              marginPct: Math.round(margin.marginPct),
+            }),
+            lastResearchedAt: new Date(),
+          },
+        }),
+      ]);
       results.push({
         asin: item.asin,
         ebayItemId: item.ebayItemId,

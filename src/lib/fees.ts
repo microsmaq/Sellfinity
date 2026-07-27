@@ -4,6 +4,8 @@
 
 /** Final value fee: percentage of (item price + shipping charged). */
 export const EBAY_FINAL_VALUE_RATE = 0.1325;
+/** Conservative Promoted Listings allowance used for projected profitability. */
+export const EBAY_AD_RATE = 0.03;
 /** Fixed per-order fee. */
 export const EBAY_PER_ORDER_FEE_CENTS = 30;
 
@@ -48,11 +50,12 @@ export function estimateMargin(
   costCents: number,
   shippingCostCents: number,
 ): MarginEstimate {
-  const estimatedFeeCents = ebayFeeCents({
-    quantity: 1,
-    salePriceCents: marketPriceCents,
-    shippingChargedCents: 0,
-  });
+  const estimatedFeeCents =
+    ebayFeeCents({
+      quantity: 1,
+      salePriceCents: marketPriceCents,
+      shippingChargedCents: 0,
+    }) + Math.round(marketPriceCents * EBAY_AD_RATE);
   const estimatedProfitCents =
     marketPriceCents - estimatedFeeCents - costCents - shippingCostCents;
   const marginPct =

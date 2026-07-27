@@ -2,7 +2,8 @@ import { Prisma } from "@prisma/client";
 import { db } from "@/lib/db";
 import { ebayEnvConfig } from "@/lib/ebay/oauth";
 import type { ArbitrageOpportunity, OpportunityRow } from "./scanner";
-import { suggestedListingPriceCents } from "@/lib/listings/cleanup";
+import { aiSuggestedListingPriceCents } from "@/lib/listings/cleanup";
+import { estimateMargin } from "@/lib/fees";
 import { syncAdminCatalogFromOpportunities } from "./admin-catalog";
 
 /** Upsert scanned opportunities into the shared research database.
@@ -33,6 +34,17 @@ export async function persistOpportunities(
       reason: "The scanner supplied an already paired catalog product.",
       method: "RULES" as const,
     };
+    const suggestedPrice = aiSuggestedListingPriceCents(
+      o.amazon.priceCents,
+      0,
+      o.market?.bestSellingPriceCents,
+      o.market?.averageCompetitorPriceCents ?? o.ebay.priceCents,
+    );
+    const projectedMargin = estimateMargin(
+      suggestedPrice,
+      o.amazon.priceCents,
+      0,
+    );
     return {
       ebayTitle: o.ebay.title,
       ebayPriceCents: o.ebay.priceCents,
@@ -43,9 +55,9 @@ export async function persistOpportunities(
       amazonTitle: o.amazon.title,
       amazonPriceCents: o.amazon.priceCents,
       amazonUrl: o.amazon.url,
-      profitCents: o.margin.estimatedProfitCents,
-      marginPct: Math.round(o.margin.marginPct),
-      feeCents: o.margin.estimatedFeeCents,
+      profitCents: projectedMargin.estimatedProfitCents,
+      marginPct: Math.round(projectedMargin.marginPct),
+      feeCents: projectedMargin.estimatedFeeCents,
       salesEst: o.market?.estimatedSales30d ?? o.ebay.salesLast30d,
       competitorCount: o.market?.competitorCount,
       avgCompPriceCents: o.market?.averageCompetitorPriceCents,
@@ -204,9 +216,10 @@ export async function listArbitragePage(
       ebaySales30d: i.salesEst,
       competitorCount: i.competitorCount ?? 1,
       avgCompPriceCents: i.avgCompPriceCents ?? i.ebayPriceCents,
-      suggestedListingPriceCents: suggestedListingPriceCents(
+      suggestedListingPriceCents: aiSuggestedListingPriceCents(
         i.amazonPriceCents,
         0,
+        i.bestSellingPriceCents,
         i.avgCompPriceCents ?? i.ebayPriceCents,
       ),
       ebayUrl: i.ebayUrl,

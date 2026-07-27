@@ -435,6 +435,7 @@ export function AdminArbitrageManager({
               <h2 className="font-semibold text-slate-900">Product intelligence catalog</h2>
               <p className="mt-0.5 text-xs text-slate-500">
                 Search titles, ASINs, eBay IDs, match explanations, and categories.
+                Profit and margin reserve 3% for advertising.
               </p>
             </div>
             <div className="flex items-center gap-2">
@@ -589,8 +590,8 @@ export function AdminArbitrageManager({
                 <SortHeader label="Suggested price" sortKey="suggestedPrice" filters={filters} href={sortHref("suggestedPrice")} />
                 <SortHeader label="Sales / month" sortKey="sales" filters={filters} href={sortHref("sales")} />
                 <SortHeader label="Competition" sortKey="competition" filters={filters} href={sortHref("competition")} />
-                <SortHeader label="Profit" sortKey="profit" filters={filters} href={sortHref("profit")} />
-                <SortHeader label="Margin" sortKey="margin" filters={filters} href={sortHref("margin")} />
+                <SortHeader label="Profit after ads" sortKey="profit" filters={filters} href={sortHref("profit")} />
+                <SortHeader label="Margin after ads" sortKey="margin" filters={filters} href={sortHref("margin")} />
                 <SortHeader label="Users listed" sortKey="usersListed" filters={filters} href={sortHref("usersListed")} />
                 <SortHeader label="Researched" sortKey="researched" filters={filters} href={sortHref("researched")} align="left" />
                 <th className="sticky right-0 top-0 z-40 bg-slate-50 px-4 py-3 text-left">

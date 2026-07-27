@@ -1,11 +1,15 @@
 // Clean-up classifier: decide per listing whether to leave it, raise its
 // price to a profitability target, or end it. Pure — no I/O.
 
-import { EBAY_FINAL_VALUE_RATE, EBAY_PER_ORDER_FEE_CENTS } from "@/lib/fees";
+import {
+  EBAY_AD_RATE,
+  EBAY_FINAL_VALUE_RATE,
+  EBAY_PER_ORDER_FEE_CENTS,
+} from "@/lib/fees";
 
 /** Assumed eBay Promoted Listings (advertising) rate, applied to the sale
  * price alongside the final value fee when computing true profitability. */
-export const AD_RATE = 0.03;
+export const AD_RATE = EBAY_AD_RATE;
 
 /** Targets: a listing is healthy when it clears either one. */
 export const TARGET_MARGIN = 0.3;
