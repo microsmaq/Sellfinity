@@ -11,8 +11,10 @@ import {
   adminScanBestSellers,
 } from "@/lib/actions/admin-arbitrage";
 import type {
+  AdminCatalogFilters,
   AdminCatalogPage,
   AdminCatalogRow,
+  AdminCatalogSortKey,
   AdminCatalogStatus,
 } from "@/lib/arbitrage/admin-catalog";
 import { formatCents } from "@/lib/money";
@@ -54,6 +56,47 @@ function CellValue({
   );
 }
 
+function SortHeader({
+  label,
+  sortKey,
+  filters,
+  href,
+  align = "right",
+  sticky,
+}: {
+  label: string;
+  sortKey: AdminCatalogSortKey;
+  filters: AdminCatalogFilters;
+  href: string;
+  align?: "left" | "right";
+  sticky?: "left" | "right";
+}) {
+  const active = filters.sortKey === sortKey;
+  return (
+    <th
+      className={cx(
+        "sticky top-0 z-30 bg-slate-50 px-4 py-3",
+        align === "right" ? "text-right" : "text-left",
+        sticky === "left" && "left-0 z-40",
+        sticky === "right" && "right-0 z-40",
+      )}
+    >
+      <Link
+        href={href}
+        className={cx(
+          "inline-flex items-center gap-1 whitespace-nowrap hover:text-indigo-700",
+          active ? "text-indigo-700" : "text-slate-500",
+        )}
+      >
+        {label}
+        <span className="inline-block w-2">
+          {active ? (filters.sortDesc ? "↓" : "↑") : "↕"}
+        </span>
+      </Link>
+    </th>
+  );
+}
+
 function CatalogRow({
   row,
   busy,
@@ -64,30 +107,30 @@ function CatalogRow({
   run: (kind: "research" | "publish" | "archive", id: string) => void;
 }) {
   return (
-    <tr className="border-t border-slate-100 align-top hover:bg-slate-50/70">
-      <td className="sticky left-0 z-10 min-w-[310px] bg-white px-4 py-4 group-hover:bg-slate-50">
+    <tr className="group border-t border-slate-100 align-top hover:bg-slate-50/70">
+      <td className="sticky left-0 z-10 min-w-[390px] bg-white px-5 py-4 group-hover:bg-slate-50">
         <div className="flex gap-3">
           {row.amazonImageUrl ?? row.ebayImageUrl ? (
             // eslint-disable-next-line @next/next/no-img-element
             <img
               src={row.amazonImageUrl ?? row.ebayImageUrl ?? ""}
               alt=""
-              className="h-14 w-14 shrink-0 rounded-lg border border-slate-200 object-contain"
+              className="h-16 w-16 shrink-0 rounded-lg border border-slate-200 bg-white object-contain"
             />
           ) : (
-            <div className="h-14 w-14 shrink-0 rounded-lg bg-slate-100" />
+            <div className="h-16 w-16 shrink-0 rounded-lg bg-slate-100" />
           )}
           <div className="min-w-0">
             <a
               href={row.amazonUrl}
               target="_blank"
               rel="noreferrer"
-              className="line-clamp-2 text-sm font-semibold text-slate-900 hover:text-indigo-600"
+              className="line-clamp-3 text-sm font-semibold leading-5 text-slate-900 hover:text-indigo-600"
             >
               {row.amazonTitle}
             </a>
             <p className="mt-1 text-xs text-slate-500">
-              {row.asin} · {row.category}
+              {row.asin}
             </p>
             <div className="mt-1 flex gap-1.5">
               <Badge tone={statusTone(row.status)}>{row.status.replace("_", " ")}</Badge>
@@ -95,6 +138,9 @@ function CatalogRow({
             </div>
           </div>
         </div>
+      </td>
+      <td className="min-w-[170px] px-4 py-4 text-sm text-slate-700">
+        {row.category}
       </td>
       <td className="whitespace-nowrap px-4 py-4 text-right font-semibold tabular-nums">
         {formatCents(row.amazonPriceCents)}
@@ -114,9 +160,6 @@ function CatalogRow({
               <Badge tone={confidenceTone(row.matchConfidence)}>
                 {row.matchVerdict} {row.matchConfidence}%
               </Badge>
-              <span className="text-xs text-slate-500">
-                {row.ebayPriceCents ? formatCents(row.ebayPriceCents) : "No price"}
-              </span>
             </div>
             {row.matchReason && (
               <p className="mt-1 line-clamp-2 text-xs text-slate-500">{row.matchReason}</p>
@@ -125,6 +168,11 @@ function CatalogRow({
         ) : (
           <span className="text-sm text-slate-400">No equivalent found</span>
         )}
+      </td>
+      <td className="whitespace-nowrap px-4 py-4 text-right font-medium tabular-nums">
+        {row.ebayPriceCents === null
+          ? <span className="text-slate-400">—</span>
+          : formatCents(row.ebayPriceCents)}
       </td>
       <td className="whitespace-nowrap px-4 py-4 text-right">
         {row.averageCompetitorPriceCents === null
@@ -159,7 +207,7 @@ function CatalogRow({
           ? new Date(row.lastResearchedAt).toLocaleDateString()
           : "Not researched"}
       </td>
-      <td className="sticky right-0 min-w-[150px] bg-white px-4 py-4">
+      <td className="sticky right-0 min-w-[150px] bg-white px-4 py-4 group-hover:bg-slate-50">
         <div className="flex flex-col gap-1.5">
           <Button
             size="sm"
@@ -192,18 +240,17 @@ function CatalogRow({
 
 export function AdminArbitrageManager({
   data,
-  query,
-  status,
+  filters,
 }: {
   data: AdminCatalogPage;
-  query: string;
-  status: AdminCatalogStatus;
+  filters: AdminCatalogFilters;
 }) {
   const router = useRouter();
   const [amazonInput, setAmazonInput] = useState("");
   const [busyId, setBusyId] = useState<string | null>(null);
   const [operation, setOperation] = useState<string | null>(null);
   const [notice, setNotice] = useState<{ text: string; error: boolean } | null>(null);
+  const [expanded, setExpanded] = useState(false);
   const [pending, startTransition] = useTransition();
 
   function finish(result: { ok: boolean; message: string }) {
@@ -256,18 +303,53 @@ export function AdminArbitrageManager({
     });
   }
 
-  function search(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const form = new FormData(event.currentTarget);
-    const q = String(form.get("q") ?? "").trim();
-    router.push(`/admin/arbitrage?status=${status}&q=${encodeURIComponent(q)}`);
+  function urlFor(
+    overrides: Partial<Record<
+      | "page"
+      | "q"
+      | "status"
+      | "category"
+      | "match"
+      | "source"
+      | "ebayMatch"
+      | "minMargin"
+      | "minConfidence"
+      | "sort"
+      | "dir"
+      | "pageSize",
+      string | number
+    >> = {},
+  ) {
+    const params = new URLSearchParams({
+      page: "1",
+      q: filters.query,
+      status: filters.status,
+      category: filters.category,
+      match: filters.matchVerdict,
+      source: filters.source,
+      ebayMatch: filters.ebayMatch,
+      minMargin: String(filters.minMargin),
+      minConfidence: String(filters.minConfidence),
+      sort: filters.sortKey,
+      dir: filters.sortDesc ? "desc" : "asc",
+      pageSize: String(filters.pageSize),
+    });
+    for (const [key, value] of Object.entries(overrides)) {
+      params.set(key, String(value));
+    }
+    return `/admin/arbitrage?${params.toString()}`;
   }
 
-  const pageHref = (page: number) =>
-    `/admin/arbitrage?page=${page}&status=${status}&q=${encodeURIComponent(query)}`;
+  function sortHref(sortKey: AdminCatalogSortKey): string {
+    const same = filters.sortKey === sortKey;
+    return urlFor({
+      sort: sortKey,
+      dir: same && filters.sortDesc ? "asc" : "desc",
+    });
+  }
 
   return (
-    <div className="space-y-5">
+    <div className="relative left-1/2 w-[calc(100vw-17rem)] -translate-x-1/2 space-y-5">
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
         <StatCard label="Catalog products" value={data.counts.all.toLocaleString()} />
         <StatCard label="Published to users" value={data.counts.published.toLocaleString()} tone="positive" />
@@ -333,16 +415,145 @@ export function AdminArbitrageManager({
         </div>
       )}
 
-      <Card>
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-4 py-3">
-          <div className="flex flex-wrap gap-1.5">
+      {expanded && <div className="fixed inset-0 z-40 bg-slate-950/35 backdrop-blur-sm" />}
+      <Card
+        className={cx(
+          "min-w-0 overflow-hidden",
+          expanded &&
+            "fixed inset-3 z-50 flex flex-col rounded-2xl border-slate-300 shadow-2xl",
+        )}
+      >
+        <div className="border-b border-slate-200 bg-white px-5 py-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2 className="font-semibold text-slate-900">Product intelligence catalog</h2>
+              <p className="mt-0.5 text-xs text-slate-500">
+                Search titles, ASINs, eBay IDs, match explanations, and categories.
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-slate-500">
+                {data.total.toLocaleString()} results
+              </span>
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => setExpanded((value) => !value)}
+              >
+                {expanded ? "↙ Exit full screen" : "↗ Expand table"}
+              </Button>
+            </div>
+          </div>
+
+          <form action="/admin/arbitrage" method="get" className="mt-4 space-y-3">
+            <input type="hidden" name="status" value={filters.status} />
+            <input type="hidden" name="sort" value={filters.sortKey} />
+            <input type="hidden" name="dir" value={filters.sortDesc ? "desc" : "asc"} />
+            <div className="flex flex-wrap gap-2">
+              <div className="min-w-[280px] flex-1">
+                <Input
+                  name="q"
+                  defaultValue={filters.query}
+                  placeholder="Search product, ASIN, eBay ID, category, or match reason…"
+                />
+              </div>
+              <select
+                name="category"
+                defaultValue={filters.category}
+                className="max-w-[240px] rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
+                aria-label="Category"
+              >
+                <option value="ALL">All categories</option>
+                {data.categories.map((category) => (
+                  <option key={category} value={category}>{category}</option>
+                ))}
+              </select>
+              <Button type="submit">Search & filter</Button>
+              <Link
+                href="/admin/arbitrage"
+                className="inline-flex items-center rounded-lg px-3 py-2 text-sm font-medium text-slate-500 hover:bg-slate-100"
+              >
+                Clear
+              </Link>
+            </div>
+            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-6">
+              <select
+                name="match"
+                defaultValue={filters.matchVerdict}
+                className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
+                aria-label="Match verdict"
+              >
+                <option value="ALL">Any match status</option>
+                <option value="MATCH">Exact match</option>
+                <option value="LIKELY">Likely match</option>
+                <option value="REVIEW">Needs match review</option>
+                <option value="REJECTED">Rejected match</option>
+                <option value="UNVERIFIED">Unverified</option>
+              </select>
+              <select
+                name="source"
+                defaultValue={filters.source}
+                className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
+                aria-label="Catalog source"
+              >
+                <option value="ALL">Any catalog source</option>
+                <option value="BESTSELLER">Amazon bestsellers</option>
+                <option value="ADMIN">Admin-added items</option>
+              </select>
+              <select
+                name="ebayMatch"
+                defaultValue={filters.ebayMatch}
+                className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
+                aria-label="eBay equivalent"
+              >
+                <option value="ALL">With or without eBay match</option>
+                <option value="MATCHED">Has eBay equivalent</option>
+                <option value="UNMATCHED">No eBay equivalent</option>
+              </select>
+              <select
+                name="minMargin"
+                defaultValue={String(filters.minMargin)}
+                className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
+                aria-label="Minimum margin"
+              >
+                <option value="0">Any margin</option>
+                <option value="10">Margin ≥ 10%</option>
+                <option value="15">Margin ≥ 15%</option>
+                <option value="20">Margin ≥ 20%</option>
+                <option value="30">Margin ≥ 30%</option>
+              </select>
+              <select
+                name="minConfidence"
+                defaultValue={String(filters.minConfidence)}
+                className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
+                aria-label="Minimum match confidence"
+              >
+                <option value="0">Any confidence</option>
+                <option value="70">Confidence ≥ 70%</option>
+                <option value="85">Confidence ≥ 85%</option>
+                <option value="95">Confidence ≥ 95%</option>
+              </select>
+              <select
+                name="pageSize"
+                defaultValue={String(filters.pageSize)}
+                className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
+                aria-label="Items per page"
+              >
+                <option value="25">25 per page</option>
+                <option value="50">50 per page</option>
+                <option value="100">100 per page</option>
+              </select>
+            </div>
+          </form>
+
+          <div className="mt-3 flex flex-wrap gap-1.5">
             {statusOptions.map((option) => (
               <Link
                 key={option.value}
-                href={`/admin/arbitrage?status=${option.value}&q=${encodeURIComponent(query)}`}
+                href={urlFor({ status: option.value })}
                 className={cx(
                   "rounded-lg px-3 py-1.5 text-xs font-semibold",
-                  status === option.value
+                  filters.status === option.value
                     ? "bg-indigo-600 text-white"
                     : "bg-slate-100 text-slate-600 hover:bg-slate-200",
                 )}
@@ -351,29 +562,34 @@ export function AdminArbitrageManager({
               </Link>
             ))}
           </div>
-          <form onSubmit={search} className="flex w-full max-w-sm gap-2">
-            <Input name="q" defaultValue={query} placeholder="Search Amazon title or ASIN…" />
-            <Button type="submit" variant="secondary">Search</Button>
-          </form>
         </div>
 
-        <div className="overflow-x-auto">
-          <table className="min-w-[2050px] w-full text-sm">
-            <thead className="bg-slate-50 text-xs font-semibold uppercase tracking-wide text-slate-500">
+        <div
+          className={cx(
+            "overflow-auto",
+            expanded ? "min-h-0 flex-1" : "max-h-[72vh]",
+          )}
+        >
+          <table className="w-full min-w-[2460px] text-sm">
+            <thead className="text-xs font-semibold uppercase tracking-wide text-slate-500">
               <tr>
-                <th className="sticky left-0 z-20 bg-slate-50 px-4 py-3 text-left">Amazon item</th>
-                <th className="px-4 py-3 text-right">Amazon price</th>
-                <th className="px-4 py-3 text-left">Equivalent eBay item</th>
-                <th className="px-4 py-3 text-right">Competitor avg</th>
-                <th className="px-4 py-3 text-right">eBay recommended</th>
-                <th className="px-4 py-3 text-right">Suggested price</th>
-                <th className="px-4 py-3 text-right">Sales / month</th>
-                <th className="px-4 py-3 text-right">Competition</th>
-                <th className="px-4 py-3 text-right">Profit</th>
-                <th className="px-4 py-3 text-right">Margin</th>
-                <th className="px-4 py-3 text-right">Users listed</th>
-                <th className="px-4 py-3 text-left">Researched</th>
-                <th className="sticky right-0 z-20 bg-slate-50 px-4 py-3 text-left">Manage</th>
+                <SortHeader label="Amazon item" sortKey="amazonTitle" filters={filters} href={sortHref("amazonTitle")} align="left" sticky="left" />
+                <SortHeader label="Category" sortKey="category" filters={filters} href={sortHref("category")} align="left" />
+                <SortHeader label="Amazon price" sortKey="amazonPrice" filters={filters} href={sortHref("amazonPrice")} />
+                <SortHeader label="Equivalent eBay item" sortKey="matchConfidence" filters={filters} href={sortHref("matchConfidence")} align="left" />
+                <SortHeader label="eBay price" sortKey="ebayPrice" filters={filters} href={sortHref("ebayPrice")} />
+                <SortHeader label="Competitor avg" sortKey="averagePrice" filters={filters} href={sortHref("averagePrice")} />
+                <SortHeader label="eBay recommended" sortKey="recommendedPrice" filters={filters} href={sortHref("recommendedPrice")} />
+                <SortHeader label="Suggested price" sortKey="suggestedPrice" filters={filters} href={sortHref("suggestedPrice")} />
+                <SortHeader label="Sales / month" sortKey="sales" filters={filters} href={sortHref("sales")} />
+                <SortHeader label="Competition" sortKey="competition" filters={filters} href={sortHref("competition")} />
+                <SortHeader label="Profit" sortKey="profit" filters={filters} href={sortHref("profit")} />
+                <SortHeader label="Margin" sortKey="margin" filters={filters} href={sortHref("margin")} />
+                <SortHeader label="Users listed" sortKey="usersListed" filters={filters} href={sortHref("usersListed")} />
+                <SortHeader label="Researched" sortKey="researched" filters={filters} href={sortHref("researched")} align="left" />
+                <th className="sticky right-0 top-0 z-40 bg-slate-50 px-4 py-3 text-left">
+                  Manage
+                </th>
               </tr>
             </thead>
             <tbody>
@@ -389,23 +605,23 @@ export function AdminArbitrageManager({
           </table>
           {data.rows.length === 0 && (
             <div className="px-6 py-16 text-center text-sm text-slate-500">
-              No catalog products match this view.
+              No catalog products match these search filters.
             </div>
           )}
         </div>
 
-        <div className="flex items-center justify-between border-t border-slate-200 px-4 py-3 text-sm">
+        <div className="flex items-center justify-between border-t border-slate-200 bg-white px-5 py-3 text-sm">
           <span className="text-slate-500">
-            Page {data.page} of {data.pageCount} · {data.total.toLocaleString()} products
+            Page {data.page} of {data.pageCount} · {data.total.toLocaleString()} matching products
           </span>
           <div className="flex gap-2">
             {data.page > 1 ? (
-              <Link href={pageHref(data.page - 1)} className="rounded-lg border px-3 py-1.5 hover:bg-slate-50">
+              <Link href={urlFor({ page: data.page - 1 })} className="rounded-lg border px-3 py-1.5 hover:bg-slate-50">
                 Previous
               </Link>
             ) : <span />}
             {data.page < data.pageCount && (
-              <Link href={pageHref(data.page + 1)} className="rounded-lg border px-3 py-1.5 hover:bg-slate-50">
+              <Link href={urlFor({ page: data.page + 1 })} className="rounded-lg border px-3 py-1.5 hover:bg-slate-50">
                 Next
               </Link>
             )}
