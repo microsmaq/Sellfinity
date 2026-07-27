@@ -349,7 +349,13 @@ export function AdminArbitrageManager({
   }
 
   return (
-    <div className="relative left-1/2 w-[calc(100vw-17rem)] -translate-x-1/2 space-y-5">
+    <div
+      className={cx(
+        "space-y-5",
+        !expanded &&
+          "relative left-1/2 w-[calc(100vw-17rem)] -translate-x-1/2",
+      )}
+    >
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
         <StatCard label="Catalog products" value={data.counts.all.toLocaleString()} />
         <StatCard label="Published to users" value={data.counts.published.toLocaleString()} tone="positive" />
