@@ -29,6 +29,8 @@ export type SourcingCandidate = {
 export type SupplierProductState = {
   stock: number;
   costCents: number;
+  /** Current per-unit source shipping, when the provider exposes it. */
+  shippingCostCents?: number;
 } | null;
 
 export interface SupplierProvider {

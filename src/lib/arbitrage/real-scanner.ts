@@ -188,7 +188,7 @@ async function amazonMatch(
   // The search response already contains a current price. Avoid a second
   // paid request for candidates that cannot be profitable even before exact
   // child-variant verification.
-  if (seed.priceCents > candidate.priceCents) return null;
+  if (seed.priceCents + seed.shippingCostCents > candidate.priceCents) return null;
   const match = await resolveExactAmazonVariant(
     { title: candidate.title, imageUrl: candidate.imageUrl },
     seed,
@@ -208,11 +208,15 @@ async function amazonMatch(
       };
   // Break-even and better both qualify: the Amazon source just can't cost
   // more than the eBay comp — the seller adds their margin at publish time.
-  if (source.priceCents > candidate.priceCents) return null;
+  if (source.priceCents + source.shippingCostCents > candidate.priceCents) return null;
 
   if (assessment.verdict === "REJECTED") return null;
 
-  const margin = estimateMargin(candidate.priceCents, source.priceCents, 0);
+  const margin = estimateMargin(
+    candidate.priceCents,
+    source.priceCents,
+    source.shippingCostCents,
+  );
   let market: Awaited<ReturnType<typeof researchEbayMarket>> = null;
   try {
     market = await researchEbayMarket(candidate.title, candidate.itemId);
@@ -244,6 +248,7 @@ async function amazonMatch(
       asin: source.asin,
       title: source.title,
       priceCents: source.priceCents,
+      shippingCostCents: source.shippingCostCents,
       url: source.url,
     },
     margin,

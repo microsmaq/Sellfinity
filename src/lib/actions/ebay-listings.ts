@@ -463,6 +463,7 @@ export type CleanupItemResult = {
   newPriceCents?: number;
   suggestedPriceCents?: number;
   amazonPriceCents?: number;
+  amazonShippingCents?: number;
   amazonUrl?: string;
   sku?: string;
   profitCents?: number;
@@ -508,6 +509,7 @@ export async function cleanupEbayListings(
           asin: listing.product.supplierProductId,
           title: listing.product.title,
           priceCents: listing.product.costCents,
+          shippingCostCents: listing.product.shippingCostCents,
           url: listing.product.supplierUrl,
           imageUrl: firstImage(listing.product.imageUrlsJson) ?? undefined,
         },
@@ -535,7 +537,7 @@ export async function cleanupEbayListings(
           supplierUrl: exact.url,
           costCents: exact.priceCents,
           supplierStock: 50,
-          shippingCostCents: listing.product.shippingCostCents,
+          shippingCostCents: exact.shippingCostCents,
           suggestedPriceCents: listing.product.suggestedPriceCents,
           sourceScore: listing.product.sourceScore,
         },
@@ -544,6 +546,7 @@ export async function cleanupEbayListings(
           supplierProductId: exact.asin,
           supplierUrl: exact.url,
           costCents: exact.priceCents,
+          shippingCostCents: exact.shippingCostCents,
           supplierStock: 50,
         },
       });
@@ -555,7 +558,7 @@ export async function cleanupEbayListings(
       }
       const newPriceCents = aiSuggestedListingPriceCents(
         exact.priceCents,
-        product.shippingCostCents,
+        exact.shippingCostCents,
         item.ebayRecommendedPriceCents,
         item.averageCompetitorPriceCents,
       );
@@ -570,7 +573,7 @@ export async function cleanupEbayListings(
         const margin = estimateMargin(
           newPriceCents,
           exact.priceCents,
-          product.shippingCostCents,
+          exact.shippingCostCents,
         );
         results.push({
           ebayListingId,
@@ -578,6 +581,7 @@ export async function cleanupEbayListings(
           newPriceCents,
           suggestedPriceCents: newPriceCents,
           amazonPriceCents: exact.priceCents,
+          amazonShippingCents: exact.shippingCostCents,
           amazonUrl: exact.url,
           sku: exact.asin,
           profitCents: margin.estimatedProfitCents,
@@ -589,6 +593,7 @@ export async function cleanupEbayListings(
           action: "ok",
           suggestedPriceCents: newPriceCents,
           amazonPriceCents: exact.priceCents,
+          amazonShippingCents: exact.shippingCostCents,
           amazonUrl: exact.url,
           sku: exact.asin,
         });
@@ -840,6 +845,7 @@ export async function cleanupListingSourcesBatch(): Promise<SourceCleanupBatchRe
         asin: listing.product.supplierProductId,
         title: listing.product.title,
         priceCents: listing.product.costCents,
+        shippingCostCents: listing.product.shippingCostCents,
         url: listing.product.supplierUrl,
         imageUrl: firstImage(listing.product.imageUrlsJson) ?? undefined,
       }, { workflow: "listing_health_sync" });
@@ -860,7 +866,7 @@ export async function cleanupListingSourcesBatch(): Promise<SourceCleanupBatchRe
             supplierUrl: exactCurrent.url,
             costCents: exactCurrent.priceCents,
             supplierStock: 50,
-            shippingCostCents: listing.product.shippingCostCents,
+            shippingCostCents: exactCurrent.shippingCostCents,
             suggestedPriceCents: listing.priceCents,
             sourceScore: assessment.confidence,
           },
@@ -869,6 +875,7 @@ export async function cleanupListingSourcesBatch(): Promise<SourceCleanupBatchRe
             supplierProductId: exactCurrent.asin,
             supplierUrl: exactCurrent.url,
             costCents: exactCurrent.priceCents,
+            shippingCostCents: exactCurrent.shippingCostCents,
             supplierStock: 50,
             sourceScore: assessment.confidence,
           },
@@ -975,7 +982,7 @@ export async function cleanupListingSourcesBatch(): Promise<SourceCleanupBatchRe
               supplierUrl: candidate.url,
               costCents: candidate.priceCents,
               supplierStock: 50,
-              shippingCostCents: 0,
+              shippingCostCents: candidate.shippingCostCents,
               suggestedPriceCents: listing.priceCents,
               sourceScore: assessment.confidence,
             },
@@ -985,6 +992,7 @@ export async function cleanupListingSourcesBatch(): Promise<SourceCleanupBatchRe
               imageUrlsJson: serializeImageUrls(candidate.imageUrl ? [candidate.imageUrl] : []),
               supplierUrl: candidate.url,
               costCents: candidate.priceCents,
+              shippingCostCents: candidate.shippingCostCents,
               supplierStock: 50,
               sourceScore: assessment.confidence,
             },

@@ -68,22 +68,34 @@ describe("exact Amazon variant selection", () => {
     delete process.env.OPENAI_API_KEY;
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () =>
-        new Response(
-          JSON.stringify({
-            product: {
-              asin: "BLUE-SMALL",
-              title: "Outdoor Jacket Blue Small",
-              title_excluding_variant_name: "Outdoor Jacket",
-              variants: variants.map((variant, index) => ({
-                ...variant,
-                price: { value: [19.99, 34.99, 29.99][index] },
-              })),
-            },
-          }),
+      vi.fn(async (input: string | URL | Request) => {
+        const child = String(input).includes("asin=BLUE-LARGE");
+        return new Response(
+          JSON.stringify(child
+            ? {
+                product: {
+                  asin: "BLUE-LARGE",
+                  title: "Outdoor Jacket Blue Large",
+                  buybox_winner: {
+                    price: { value: 34.99 },
+                    shipping: { value: 5.5, raw: "$5.50 delivery" },
+                  },
+                },
+              }
+            : {
+                product: {
+                  asin: "BLUE-SMALL",
+                  title: "Outdoor Jacket Blue Small",
+                  title_excluding_variant_name: "Outdoor Jacket",
+                  variants: variants.map((variant, index) => ({
+                    ...variant,
+                    price: { value: [19.99, 34.99, 29.99][index] },
+                  })),
+                },
+              }),
           { status: 200, headers: { "Content-Type": "application/json" } },
-        ),
-      ),
+        );
+      }),
     );
 
     const result = await resolveExactAmazonVariant(
@@ -92,6 +104,7 @@ describe("exact Amazon variant selection", () => {
         asin: "BLUE-SMALL",
         title: "Outdoor Jacket",
         priceCents: 1999,
+        shippingCostCents: 0,
         url: "https://www.amazon.com/dp/BLUE-SMALL",
       },
     );
@@ -102,6 +115,10 @@ describe("exact Amazon variant selection", () => {
     else process.env.OPENROUTER_API_KEY = oldOpenRouter;
     if (oldOpenAi === undefined) delete process.env.OPENAI_API_KEY;
     else process.env.OPENAI_API_KEY = oldOpenAi;
-    expect(result).toMatchObject({ asin: "BLUE-LARGE", priceCents: 3499 });
+    expect(result).toMatchObject({
+      asin: "BLUE-LARGE",
+      priceCents: 3499,
+      shippingCostCents: 550,
+    });
   });
 });

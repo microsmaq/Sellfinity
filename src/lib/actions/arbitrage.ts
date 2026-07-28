@@ -64,6 +64,7 @@ export async function exportArbitrageExcel(params: ArbitragePageParams) {
       category: row.category,
       ebayPriceCents: row.ebayPriceCents,
       amazonPriceCents: row.amazonPriceCents,
+      amazonShippingCents: row.amazonShippingCents,
       profitCents: ["MATCH", "LIKELY"].includes(row.matchVerdict)
         ? row.profitCents
         : null,
@@ -120,6 +121,7 @@ type MatchVerificationRow = {
   amazonTitle: string;
   asin: string;
   amazonPriceCents: number;
+  amazonShippingCents: number;
   amazonUrl: string;
   ebayPriceCents: number;
   avgCompPriceCents: number | null;
@@ -139,6 +141,7 @@ async function assessAndPersistMatches(
             asin: row.asin,
             title: row.amazonTitle,
             priceCents: row.amazonPriceCents,
+            shippingCostCents: row.amazonShippingCents,
             url: row.amazonUrl,
           },
           { workflow: "historical_variant_verification" },
@@ -186,11 +189,16 @@ async function assessAndPersistMatches(
             row.ebayPriceCents,
             row.bestSellingPriceCents,
             row.avgCompPriceCents ?? row.ebayPriceCents,
+            exact.shippingCostCents,
           )
         : null;
       const margin =
         exact && suggestedPrice
-          ? estimateMargin(suggestedPrice, exact.priceCents, 0)
+          ? estimateMargin(
+              suggestedPrice,
+              exact.priceCents,
+              exact.shippingCostCents,
+            )
           : null;
       return db.arbitrageItem.update({
         where: { ebayItemId: row.ebayItemId },
@@ -200,6 +208,7 @@ async function assessAndPersistMatches(
                 asin: exact.asin,
                 amazonTitle: exact.title,
                 amazonPriceCents: exact.priceCents,
+                amazonShippingCents: exact.shippingCostCents,
                 amazonUrl: exact.url,
                 profitCents: margin.estimatedProfitCents,
                 marginPct: Math.round(margin.marginPct),
@@ -238,6 +247,7 @@ export async function verifyArbitrageMatches(
       amazonTitle: true,
       asin: true,
       amazonPriceCents: true,
+      amazonShippingCents: true,
       amazonUrl: true,
       ebayPriceCents: true,
       avgCompPriceCents: true,
@@ -285,6 +295,7 @@ export async function verifyHistoricalArbitrageMatches(
       amazonTitle: true,
       asin: true,
       amazonPriceCents: true,
+      amazonShippingCents: true,
       amazonUrl: true,
       ebayPriceCents: true,
       avgCompPriceCents: true,
@@ -334,7 +345,11 @@ export async function researchArbitrageMarket(
       }
       const stored = await db.arbitrageItem.findUnique({
         where: { ebayItemId: item.ebayItemId },
-        select: { amazonPriceCents: true, ebayPriceCents: true },
+        select: {
+          amazonPriceCents: true,
+          amazonShippingCents: true,
+          ebayPriceCents: true,
+        },
       });
       const suggestedPrice = stored
         ? arbitrageSuggestedPriceCents(
@@ -342,11 +357,16 @@ export async function researchArbitrageMarket(
             stored.ebayPriceCents,
             result.metrics.bestSellingPriceCents,
             result.metrics.averageCompetitorPriceCents,
+            stored.amazonShippingCents,
           )
         : null;
       const margin =
         stored && suggestedPrice
-          ? estimateMargin(suggestedPrice, stored.amazonPriceCents, 0)
+          ? estimateMargin(
+              suggestedPrice,
+              stored.amazonPriceCents,
+              stored.amazonShippingCents,
+            )
           : null;
       await db.$transaction([
         db.arbitrageItem.updateMany({

@@ -188,9 +188,19 @@ export type RainforestProduct = {
   categories?: { name?: string }[];
   buybox_winner?: {
     price?: { value?: number };
+    shipping?: { value?: number; raw?: string };
     availability?: { type?: string };
   };
 };
+
+/** Rainforest represents free shipping as either zero or `{ raw: "FREE" }`. */
+export function rainforestShippingCents(
+  shipping?: { value?: number; raw?: string },
+): number {
+  return typeof shipping?.value === "number" && shipping.value > 0
+    ? Math.round(shipping.value * 100)
+    : 0;
+}
 
 /** Pure mapping from a Rainforest product payload to our scraper shape. */
 export function mapRainforestProduct(
@@ -218,6 +228,9 @@ export function mapRainforestProduct(
     category: product.categories?.[0]?.name ?? "Other",
     imageUrls: [...new Set(images)].slice(0, 12),
     priceCents: Math.round(priceValue * 100),
+    shippingCostCents: rainforestShippingCents(
+      product.buybox_winner?.shipping,
+    ),
     inStock: product.buybox_winner?.availability?.type !== "out_of_stock",
   };
 }

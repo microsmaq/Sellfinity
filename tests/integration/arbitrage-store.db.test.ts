@@ -23,6 +23,7 @@ function opportunity(n: number, overrides: Partial<{ category: string; profit: n
       asin: `B0TEST${String(n).padStart(4, "0")}`,
       title: `Test Product ${n}`,
       priceCents: 1000,
+      shippingCostCents: 0,
       url: `https://www.amazon.com/dp/B0TEST${String(n).padStart(4, "0")}`,
     },
     margin: {

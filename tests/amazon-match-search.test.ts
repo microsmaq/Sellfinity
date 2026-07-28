@@ -141,6 +141,7 @@ describe("Amazon replacement-source search safety", () => {
           asin: "B000TEST01",
           title: "Specific replacement product",
           priceCents: 2000,
+          shippingCostCents: 0,
           url: "https://www.amazon.com/dp/B000TEST01",
         },
       ),

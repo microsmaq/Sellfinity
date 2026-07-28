@@ -33,6 +33,7 @@ export async function addAmazonCatalogProduct(input: string): Promise<string> {
       asin,
       amazonTitle: product.title,
       amazonPriceCents: product.priceCents,
+      amazonShippingCents: product.shippingCostCents,
       amazonUrl: product.sourceUrl,
       amazonImageUrl: product.imageUrls[0] ?? null,
       category: product.category || "Other",
@@ -44,6 +45,7 @@ export async function addAmazonCatalogProduct(input: string): Promise<string> {
     update: {
       amazonTitle: product.title,
       amazonPriceCents: product.priceCents,
+      amazonShippingCents: product.shippingCostCents,
       amazonUrl: product.sourceUrl,
       amazonImageUrl: product.imageUrls[0] ?? null,
       category: product.category || "Other",
@@ -131,6 +133,7 @@ export async function researchAdminCatalogProduct(id: string): Promise<void> {
       data: {
         amazonTitle: source.title,
         amazonPriceCents: source.priceCents,
+        amazonShippingCents: source.shippingCostCents,
         amazonUrl: source.sourceUrl,
         amazonImageUrl: source.imageUrls[0] ?? null,
         category: source.category || item.category,
@@ -169,8 +172,13 @@ export async function researchAdminCatalogProduct(id: string): Promise<void> {
     best.candidate.priceCents,
     recommendedPrice,
     averagePrice,
+    source.shippingCostCents,
   );
-  const margin = estimateMargin(suggestedPrice, source.priceCents, 0);
+  const margin = estimateMargin(
+    suggestedPrice,
+    source.priceCents,
+    source.shippingCostCents,
+  );
   const approved = isApprovedProductMatch(best.assessment);
 
   await db.adminArbitrageProduct.update({
@@ -178,6 +186,7 @@ export async function researchAdminCatalogProduct(id: string): Promise<void> {
     data: {
       amazonTitle: source.title,
       amazonPriceCents: source.priceCents,
+      amazonShippingCents: source.shippingCostCents,
       amazonUrl: source.sourceUrl,
       amazonImageUrl: source.imageUrls[0] ?? null,
       category: source.category || best.candidate.category || item.category,

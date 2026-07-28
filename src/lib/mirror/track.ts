@@ -23,6 +23,7 @@ export type TrackResult =
       match: {
         sku: string;
         amazonPriceCents: number;
+        amazonShippingCents: number;
         amazonUrl: string;
         profitCents: number;
         marginPct: number;
@@ -85,7 +86,7 @@ export async function matchAndTrackListing(
         supplierUrl: match.url,
         costCents: match.priceCents,
         supplierStock: 50,
-        shippingCostCents: 0,
+        shippingCostCents: match.shippingCostCents,
         suggestedPriceCents: input.priceCents,
         sourceScore: 0,
       },
@@ -94,6 +95,7 @@ export async function matchAndTrackListing(
         supplierProductId: match.asin,
         supplierUrl: match.url,
         costCents: match.priceCents,
+        shippingCostCents: match.shippingCostCents,
         supplierStock: 50,
       },
     });
@@ -118,13 +120,18 @@ export async function matchAndTrackListing(
     });
   });
 
-  const margin = estimateMargin(input.priceCents, match.priceCents, 0);
+  const margin = estimateMargin(
+    input.priceCents,
+    match.priceCents,
+    match.shippingCostCents,
+  );
   return {
     ok: true,
     ebayListingId: input.ebayListingId,
     match: {
       sku: match.asin,
       amazonPriceCents: match.priceCents,
+      amazonShippingCents: match.shippingCostCents,
       amazonUrl: match.url,
       profitCents: margin.estimatedProfitCents,
       marginPct: Math.round(margin.marginPct),

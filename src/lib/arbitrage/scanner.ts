@@ -24,6 +24,7 @@ export type ArbitrageOpportunity = {
     asin: string;
     title: string;
     priceCents: number;
+    shippingCostCents: number;
     url: string;
   };
   /** Selling at the eBay price, buying at the Amazon price, net of eBay fees. */
@@ -48,6 +49,7 @@ export type OpportunityRow = {
   suggestedListingPriceCents: number;
   ebayUrl: string;
   amazonPriceCents: number;
+  amazonShippingCents: number;
   amazonUrl: string;
   profitCents: number;
   marginPct: number;

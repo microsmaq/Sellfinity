@@ -21,4 +21,22 @@ describe("arbitrage market pricing", () => {
     const suggested = arbitrageSuggestedPriceCents(1_000, 1_200, null, 1_500);
     expect(suggested).toBeGreaterThan(1_200);
   });
+
+  it("includes Amazon shipping in the profitability floor", () => {
+    const freeShipping = arbitrageSuggestedPriceCents(
+      1_000,
+      1_500,
+      null,
+      1_500,
+      0,
+    );
+    const paidShipping = arbitrageSuggestedPriceCents(
+      1_000,
+      1_500,
+      null,
+      1_500,
+      600,
+    );
+    expect(paidShipping).toBeGreaterThan(freeShipping);
+  });
 });

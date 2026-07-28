@@ -59,6 +59,7 @@ model AdminArbitrageProduct {
   asin                       String    @unique
   amazonTitle                String
   amazonPriceCents           Int
+  amazonShippingCents        Int       @default(0)
   amazonUrl                  String
   amazonImageUrl             String?
   category                   String
@@ -356,6 +357,7 @@ model ArbitrageItem {
   asin              String
   amazonTitle       String
   amazonPriceCents  Int
+  amazonShippingCents Int                  @default(0)
   amazonUrl         String
   profitCents       Int
   marginPct         Int

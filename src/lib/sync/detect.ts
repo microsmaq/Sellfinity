@@ -89,6 +89,8 @@ export function detectIssues(
   }
 
   if (state.stock > 0) {
+    const shippingCostCents =
+      state.shippingCostCents ?? product.shippingCostCents;
     const profitAtCurrentPrice = netProfitCents({
       quantity: 1,
       salePriceCents: listing.priceCents,
@@ -98,14 +100,14 @@ export function detectIssues(
         salePriceCents: listing.priceCents,
         shippingChargedCents: 0,
       }),
-      shippingCostCents: product.shippingCostCents,
+      shippingCostCents,
       cogsCents: state.costCents,
     });
     if (profitAtCurrentPrice <= 0) {
       const expectedPrice = suggestPriceCents({
         marketPriceCents: listing.priceCents,
         costCents: state.costCents,
-        shippingCostCents: product.shippingCostCents,
+        shippingCostCents,
       });
       issues.push({
         type: "COST_RISE",

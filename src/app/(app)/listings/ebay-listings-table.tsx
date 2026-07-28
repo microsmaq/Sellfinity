@@ -324,7 +324,10 @@ export function EbayListingsTable({
         case "title": return row.title.toLowerCase();
         case "price": return row.priceCents;
         case "listingDate": return row.listingDate ? Date.parse(row.listingDate) : null;
-        case "amazonPrice": return row.match?.amazonPriceCents ?? null;
+        case "amazonPrice":
+          return row.match
+            ? row.match.amazonPriceCents + row.match.shippingCostCents
+            : null;
         case "profit": return row.match?.profitCents ?? null;
         case "margin": return row.match?.marginPct ?? null;
         case "demand": return row.market?.estimatedSales30d ?? null;
@@ -455,7 +458,10 @@ export function EbayListingsTable({
         return r && r.ok
           ? {
               ...row,
-              match: { ...r.match, shippingCostCents: 0 },
+              match: {
+                ...r.match,
+                shippingCostCents: r.match.amazonShippingCents,
+              },
               sourceAssessment: { ...r.assessment, amazonUrl: r.match.amazonUrl },
             }
           : row;
@@ -650,6 +656,8 @@ export function EbayListingsTable({
                   ...row.match,
                   sku: r.sku ?? row.match.sku,
                   amazonPriceCents: r.amazonPriceCents ?? row.match.amazonPriceCents,
+                  shippingCostCents:
+                    r.amazonShippingCents ?? row.match.shippingCostCents,
                   amazonUrl: r.amazonUrl ?? row.match.amazonUrl,
                   profitCents: r.profitCents ?? row.match.profitCents,
                   marginPct: r.marginPct ?? row.match.marginPct,
@@ -762,6 +770,7 @@ export function EbayListingsTable({
           ebayPriceCents: row.priceCents,
           amazonUrl: row.match?.amazonUrl ?? null,
           amazonPriceCents: row.match?.amazonPriceCents ?? null,
+          amazonShippingCents: row.match?.shippingCostCents ?? null,
           profitCents: row.match?.profitCents ?? null,
           marginPct: row.match?.marginPct ?? null,
           estimatedSales30d: row.market?.estimatedSales30d ?? null,
@@ -935,7 +944,7 @@ export function EbayListingsTable({
               </th>
               <ListingSortHeader label="Listing date" value="listingDate" active={sortKey === "listingDate"} descending={sortDescending} onSort={sortBy} />
               <ListingSortHeader label="My price" value="price" active={sortKey === "price"} descending={sortDescending} onSort={sortBy} />
-              <ListingSortHeader label="Amazon price" value="amazonPrice" active={sortKey === "amazonPrice"} descending={sortDescending} onSort={sortBy} />
+              <ListingSortHeader label="Amazon landed cost" value="amazonPrice" active={sortKey === "amazonPrice"} descending={sortDescending} onSort={sortBy} />
               <ListingSortHeader label="Profit / Margin" value="margin" active={sortKey === "margin"} descending={sortDescending} onSort={sortBy} />
               <ListingSortHeader label="Est. demand" value="demand" active={sortKey === "demand"} descending={sortDescending} onSort={sortBy} />
               <ListingSortHeader label="Competition" value="competition" active={sortKey === "competition"} descending={sortDescending} onSort={sortBy} />
@@ -1026,14 +1035,24 @@ export function EbayListingsTable({
                   </td>
                   <td className="px-4 py-3 text-right tabular-nums">
                     {r.match ? (
-                      <a
-                        href={r.match.amazonUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="text-indigo-600 hover:underline"
-                      >
-                        {formatCents(r.match.amazonPriceCents)}
-                      </a>
+                      <>
+                        <a
+                          href={r.match.amazonUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-indigo-600 hover:underline"
+                        >
+                          {formatCents(
+                            r.match.amazonPriceCents +
+                              r.match.shippingCostCents,
+                          )}
+                        </a>
+                        <p className="mt-0.5 text-[11px] text-slate-500">
+                          {r.match.shippingCostCents > 0
+                            ? `${formatCents(r.match.amazonPriceCents)} + ${formatCents(r.match.shippingCostCents)} ship`
+                            : "Free shipping"}
+                        </p>
+                      </>
                     ) : (
                       "—"
                     )}

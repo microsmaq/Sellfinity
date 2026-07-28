@@ -82,6 +82,7 @@ export function productForAsin(asin: string): Omit<ScrapedProduct, "sourceUrl" |
       `https://picsum.photos/seed/${asin}-2/600/600`,
       `https://picsum.photos/seed/${asin}-3/600/600`,
     ],
+    shippingCostCents: 0,
     basePriceCents,
   };
 }
@@ -125,6 +126,7 @@ export class MockAmazonScraper implements ProductPageScraper {
       category: base.category,
       imageUrls: base.imageUrls,
       priceCents: state.costCents,
+      shippingCostCents: 0,
       inStock: state.stock > 0,
     };
   }

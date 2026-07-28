@@ -90,12 +90,18 @@ export async function mirrorUrl(
 
   const priceCents =
     opts.sourceMarkupPct !== undefined
-      ? sourceMarkupPriceCents(scraped.priceCents, opts.sourceMarkupPct)
+      ? sourceMarkupPriceCents(
+          scraped.priceCents + scraped.shippingCostCents,
+          opts.sourceMarkupPct,
+        )
       : suggestPriceCents({
           marketPriceCents:
-            opts.marketPriceCents ?? Math.round(scraped.priceCents * MARKET_MARKUP),
+            opts.marketPriceCents ??
+            Math.round(
+              (scraped.priceCents + scraped.shippingCostCents) * MARKET_MARKUP,
+            ),
           costCents: scraped.priceCents,
-          shippingCostCents: 0, // fulfilled via Amazon free shipping
+          shippingCostCents: scraped.shippingCostCents,
         });
   const supplierStock = scraped.inStock ? NOMINAL_IN_STOCK : 0;
 
@@ -136,7 +142,7 @@ export async function mirrorUrl(
         supplierUrl: scraped.sourceUrl,
         costCents: scraped.priceCents,
         supplierStock,
-        shippingCostCents: 0,
+        shippingCostCents: scraped.shippingCostCents,
         suggestedPriceCents: priceCents,
         sourceScore: 0, // not from the sourcing feed; no score
       },

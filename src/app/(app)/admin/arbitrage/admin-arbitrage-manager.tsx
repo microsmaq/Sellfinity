@@ -151,7 +151,13 @@ function CatalogRow({
         {row.category}
       </td>
       <td className="whitespace-nowrap px-4 py-4 text-right font-semibold tabular-nums">
-        {formatCents(row.amazonPriceCents)}
+        {formatCents(row.amazonPriceCents + row.amazonShippingCents)}
+        <p className="mt-0.5 text-[11px] font-normal text-slate-500">
+          {formatCents(row.amazonPriceCents)}
+          {row.amazonShippingCents > 0
+            ? ` + ${formatCents(row.amazonShippingCents)} shipping`
+            : " · free shipping"}
+        </p>
       </td>
       <td className="min-w-[300px] px-4 py-4">
         {row.ebayTitle && row.ebayUrl ? (
@@ -678,7 +684,7 @@ export function AdminArbitrageManager({
               <tr>
                 <SortHeader label="Amazon item" sortKey="amazonTitle" filters={filters} href={sortHref("amazonTitle")} align="left" sticky="left" />
                 <SortHeader label="Category" sortKey="category" filters={filters} href={sortHref("category")} align="left" />
-                <SortHeader label="Amazon price" sortKey="amazonPrice" filters={filters} href={sortHref("amazonPrice")} />
+                <SortHeader label="Amazon landed cost" sortKey="amazonPrice" filters={filters} href={sortHref("amazonPrice")} />
                 <SortHeader label="Equivalent eBay item" sortKey="matchConfidence" filters={filters} href={sortHref("matchConfidence")} align="left" />
                 <SortHeader label="eBay price" sortKey="ebayPrice" filters={filters} href={sortHref("ebayPrice")} />
                 <SortHeader label="Competitor avg" sortKey="averagePrice" filters={filters} href={sortHref("averagePrice")} />

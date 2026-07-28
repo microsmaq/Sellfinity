@@ -9,6 +9,7 @@ export type AmazonMatch = {
   asin: string;
   title: string;
   priceCents: number;
+  shippingCostCents: number;
   url: string;
   imageUrl?: string;
 };
@@ -64,6 +65,7 @@ function mockMatch(title: string): AmazonMatch | null {
     asin,
     title: productForAsin(asin).title,
     priceCents: state.costCents,
+    shippingCostCents: 0,
     url: `https://www.amazon.com/dp/${asin}`,
     imageUrl: productForAsin(asin).imageUrls[0],
   };
@@ -74,8 +76,15 @@ type RainforestSearchResult = {
   title?: string;
   link?: string;
   price?: { value?: number };
+  shipping?: { value?: number; raw?: string };
   image?: string;
 };
+
+function searchShippingCents(result: RainforestSearchResult): number {
+  return typeof result.shipping?.value === "number" && result.shipping.value > 0
+    ? Math.round(result.shipping.value * 100)
+    : 0;
+}
 
 /** Source-first discovery: one paid Amazon search supplies many products;
  * callers use free marketplace/local filters before buying product detail. */
@@ -125,6 +134,7 @@ export async function findAmazonCatalogProducts(
       asin: result.asin,
       title: result.title,
       priceCents: Math.round(result.price.value * 100),
+      shippingCostCents: searchShippingCents(result),
       url: result.link ?? `https://www.amazon.com/dp/${result.asin}`,
       imageUrl: result.image,
     }];
@@ -189,6 +199,7 @@ export async function findAmazonMatches(
       asin: result.asin,
       title: result.title ?? title,
       priceCents: Math.round(result.price.value * 100),
+      shippingCostCents: searchShippingCents(result),
       url: result.link ?? `https://www.amazon.com/dp/${result.asin}`,
       imageUrl: result.image,
     });

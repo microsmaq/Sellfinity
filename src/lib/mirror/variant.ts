@@ -3,7 +3,10 @@ import {
   isApprovedProductMatch,
   type ProductMatchAssessment,
 } from "@/lib/arbitrage/product-match";
-import { rainforestRequest } from "./rainforest";
+import {
+  rainforestRequest,
+  rainforestShippingCents,
+} from "./rainforest";
 import type { AmazonMatch } from "./match";
 
 export type RainforestVariant = {
@@ -11,6 +14,7 @@ export type RainforestVariant = {
   title?: string;
   link?: string;
   price?: { value?: number };
+  shipping?: { value?: number; raw?: string };
   dimensions?: { name?: string; value?: string }[];
   is_current_product?: boolean;
 };
@@ -21,7 +25,10 @@ export type VariantProduct = {
   title_excluding_variant_name?: string;
   link?: string;
   main_image?: { link?: string };
-  buybox_winner?: { price?: { value?: number } };
+  buybox_winner?: {
+    price?: { value?: number };
+    shipping?: { value?: number; raw?: string };
+  };
   variants?: RainforestVariant[];
 };
 
@@ -157,17 +164,31 @@ export async function resolveExactAmazonVariant(
       title: product.title,
       link: product.link,
       price: product.buybox_winner?.price,
+      shipping: product.buybox_winner?.shipping,
       is_current_product: true,
     };
   }
 
   const asin = selected.asin;
   if (!asin) return null;
+  const isCurrentProduct =
+    selected.is_current_product === true || asin === product.asin;
   let price = selected.price?.value;
-  if (typeof price !== "number" && selected.is_current_product) {
+  let shipping = selected.shipping;
+  if (typeof price !== "number" && isCurrentProduct) {
     price = product.buybox_winner?.price?.value;
   }
-  if (typeof price !== "number" || price <= 0) {
+  if (!shipping && isCurrentProduct) {
+    shipping = product.buybox_winner?.shipping;
+  }
+  // Variant summaries usually omit delivery charges. Fetch the selected
+  // child only when needed so shipping is exact without spending another
+  // credit for the current parent variant.
+  if (
+    typeof price !== "number" ||
+    price <= 0 ||
+    (!shipping && !isCurrentProduct)
+  ) {
     const child = await rainforestRequest<{
       request_info?: { success?: boolean };
       product?: VariantProduct;
@@ -184,7 +205,11 @@ export async function resolveExactAmazonVariant(
     if (child.request_info?.success === false) {
       throw new Error("Amazon child-variant lookup returned an incomplete response.");
     }
-    price = child.product?.buybox_winner?.price?.value;
+    const childPrice = child.product?.buybox_winner?.price?.value;
+    if (typeof childPrice === "number" && childPrice > 0) {
+      price = childPrice;
+    }
+    shipping = child.product?.buybox_winner?.shipping;
   }
   if (typeof price !== "number" || price <= 0) return null;
 
@@ -200,6 +225,7 @@ export async function resolveExactAmazonVariant(
     asin,
     title,
     priceCents: Math.round(price * 100),
+    shippingCostCents: rainforestShippingCents(shipping),
     url: selected.link ?? `https://www.amazon.com/dp/${asin}`,
     imageUrl: product.main_image?.link ?? seed.imageUrl,
     variantAssessment: assessment,

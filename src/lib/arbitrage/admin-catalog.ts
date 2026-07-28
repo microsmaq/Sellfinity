@@ -49,6 +49,7 @@ export type AdminCatalogRow = {
   asin: string;
   amazonTitle: string;
   amazonPriceCents: number;
+  amazonShippingCents: number;
   amazonUrl: string;
   amazonImageUrl: string | null;
   category: string;
@@ -269,8 +270,13 @@ export async function publishCatalogProductToUsers(id: string): Promise<void> {
       item.ebayPriceCents,
       item.ebayRecommendedPriceCents,
       item.averageCompetitorPriceCents ?? item.ebayPriceCents,
+      item.amazonShippingCents,
     );
-  const margin = estimateMargin(suggested, item.amazonPriceCents, 0);
+  const margin = estimateMargin(
+    suggested,
+    item.amazonPriceCents,
+    item.amazonShippingCents,
+  );
   await db.$transaction([
     db.arbitrageItem.upsert({
       where: { ebayItemId: item.ebayItemId },
@@ -284,6 +290,7 @@ export async function publishCatalogProductToUsers(id: string): Promise<void> {
         asin: item.asin,
         amazonTitle: item.amazonTitle,
         amazonPriceCents: item.amazonPriceCents,
+        amazonShippingCents: item.amazonShippingCents,
         amazonUrl: item.amazonUrl,
         profitCents: margin.estimatedProfitCents,
         marginPct: Math.round(margin.marginPct),
@@ -307,6 +314,7 @@ export async function publishCatalogProductToUsers(id: string): Promise<void> {
         asin: item.asin,
         amazonTitle: item.amazonTitle,
         amazonPriceCents: item.amazonPriceCents,
+        amazonShippingCents: item.amazonShippingCents,
         amazonUrl: item.amazonUrl,
         profitCents: margin.estimatedProfitCents,
         marginPct: Math.round(margin.marginPct),
@@ -345,8 +353,13 @@ export async function syncAdminCatalogFromOpportunities(
       opportunity.ebay.priceCents,
       opportunity.market?.bestSellingPriceCents,
       opportunity.market?.averageCompetitorPriceCents ?? opportunity.ebay.priceCents,
+      opportunity.amazon.shippingCostCents,
     );
-    const margin = estimateMargin(suggested, opportunity.amazon.priceCents, 0);
+    const margin = estimateMargin(
+      suggested,
+      opportunity.amazon.priceCents,
+      opportunity.amazon.shippingCostCents,
+    );
     const match = opportunity.match ?? {
       verdict: "MATCH",
       confidence: 100,
@@ -358,6 +371,7 @@ export async function syncAdminCatalogFromOpportunities(
         asin: opportunity.amazon.asin,
         amazonTitle: opportunity.amazon.title,
         amazonPriceCents: opportunity.amazon.priceCents,
+        amazonShippingCents: opportunity.amazon.shippingCostCents,
         amazonUrl: opportunity.amazon.url,
         category: opportunity.category,
         isAmazonBestSeller: true,
@@ -385,6 +399,7 @@ export async function syncAdminCatalogFromOpportunities(
       update: {
         amazonTitle: opportunity.amazon.title,
         amazonPriceCents: opportunity.amazon.priceCents,
+        amazonShippingCents: opportunity.amazon.shippingCostCents,
         amazonUrl: opportunity.amazon.url,
         category: opportunity.category,
         isAmazonBestSeller: true,

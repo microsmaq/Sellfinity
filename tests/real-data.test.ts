@@ -16,6 +16,7 @@ describe("mapRainforestProduct", () => {
     categories: [{ name: "Home & Kitchen" }, { name: "Milk Frothers" }],
     buybox_winner: {
       price: { value: 8.99 },
+      shipping: { value: 4.25, raw: "$4.25 delivery" },
       availability: { type: "in_stock" },
     },
   };
@@ -24,6 +25,7 @@ describe("mapRainforestProduct", () => {
     const p = mapRainforestProduct("B0DPG6SNV1", fixture)!;
     expect(p.sourceId).toBe("B0DPG6SNV1");
     expect(p.priceCents).toBe(899);
+    expect(p.shippingCostCents).toBe(425);
     expect(p.inStock).toBe(true);
     expect(p.brand).toBe("CIRCLE JOY");
     expect(p.category).toBe("Home & Kitchen");
@@ -34,6 +36,17 @@ describe("mapRainforestProduct", () => {
     ]);
     expect(p.bulletPoints).toHaveLength(3);
     expect(p.description).toContain("Dual coil whisk");
+  });
+
+  it("treats Rainforest's FREE shipping marker as zero", () => {
+    const p = mapRainforestProduct("B0FREE", {
+      ...fixture,
+      buybox_winner: {
+        ...fixture.buybox_winner,
+        shipping: { raw: "FREE" },
+      },
+    })!;
+    expect(p.shippingCostCents).toBe(0);
   });
 
   it("rejects products without a title or buyable price", () => {

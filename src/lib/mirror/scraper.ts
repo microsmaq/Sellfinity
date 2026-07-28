@@ -16,6 +16,8 @@ export type ScrapedProduct = {
   imageUrls: string[];
   /** Current buy price on the source marketplace (our cost when dropshipping). */
   priceCents: number;
+  /** Shipping charged by the winning Amazon offer for this exact variant. */
+  shippingCostCents: number;
   inStock: boolean;
 };
 

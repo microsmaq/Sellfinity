@@ -39,11 +39,12 @@ export async function persistOpportunities(
       o.ebay.priceCents,
       o.market?.bestSellingPriceCents,
       o.market?.averageCompetitorPriceCents ?? o.ebay.priceCents,
+      o.amazon.shippingCostCents,
     );
     const projectedMargin = estimateMargin(
       suggestedPrice,
       o.amazon.priceCents,
-      0,
+      o.amazon.shippingCostCents,
     );
     return {
       ebayTitle: o.ebay.title,
@@ -54,6 +55,7 @@ export async function persistOpportunities(
       asin: o.amazon.asin,
       amazonTitle: o.amazon.title,
       amazonPriceCents: o.amazon.priceCents,
+      amazonShippingCents: o.amazon.shippingCostCents,
       amazonUrl: o.amazon.url,
       profitCents: projectedMargin.estimatedProfitCents,
       marginPct: Math.round(projectedMargin.marginPct),
@@ -221,9 +223,11 @@ export async function listArbitragePage(
         i.ebayPriceCents,
         i.bestSellingPriceCents,
         i.avgCompPriceCents ?? i.ebayPriceCents,
+        i.amazonShippingCents,
       ),
       ebayUrl: i.ebayUrl,
       amazonPriceCents: i.amazonPriceCents,
+      amazonShippingCents: i.amazonShippingCents,
       amazonUrl: i.amazonUrl,
       profitCents: i.profitCents,
       marginPct: i.marginPct,

@@ -30,6 +30,7 @@ export async function amazonProductState(
   return {
     stock: scraped.inStock ? NOMINAL_AMAZON_STOCK : 0,
     costCents: scraped.priceCents,
+    shippingCostCents: scraped.shippingCostCents,
   };
 }
 

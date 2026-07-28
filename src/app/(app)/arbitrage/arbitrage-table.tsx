@@ -378,6 +378,7 @@ export function ArbitrageTable({
                     row.ebayPriceCents,
                     result.market.bestSellingPriceCents,
                     result.market.averageCompetitorPriceCents,
+                    row.amazonShippingCents,
                   ),
                 }
               : row;
@@ -644,7 +645,7 @@ export function ArbitrageTable({
               <SortHeader label="Competition" sortKey="competition" params={params} onSort={onSort} />
               <SortHeader label="Avg. comp price" sortKey="avgCompPrice" params={params} onSort={onSort} />
               <th className="px-4 py-3 text-right">Suggested price</th>
-              <SortHeader label="Amazon price" sortKey="amazonPrice" params={params} onSort={onSort} />
+              <SortHeader label="Amazon landed cost" sortKey="amazonPrice" params={params} onSort={onSort} />
               <SortHeader label="Profit after ads" sortKey="profit" params={params} onSort={onSort} />
               <SortHeader label="Margin after ads" sortKey="margin" params={params} onSort={onSort} />
               <SortHeader label="Found" sortKey="newest" params={params} onSort={onSort} />
@@ -738,9 +739,18 @@ export function ArbitrageTable({
                   {isVerifiedMatch(r) ? formatCents(r.suggestedListingPriceCents) : "—"}
                 </td>
                 <td className="px-4 py-3 text-right tabular-nums">
-                  <span title={isVerifiedMatch(r) ? undefined : "Candidate price only; exact child variant is not verified."}>
-                    {isVerifiedMatch(r) ? formatCents(r.amazonPriceCents) : `~${formatCents(r.amazonPriceCents)}`}
+                  <span title={isVerifiedMatch(r) ? "Amazon item price plus source shipping" : "Candidate price only; exact child variant is not verified."}>
+                    {isVerifiedMatch(r)
+                      ? formatCents(r.amazonPriceCents + r.amazonShippingCents)
+                      : `~${formatCents(r.amazonPriceCents + r.amazonShippingCents)}`}
                   </span>
+                  {isVerifiedMatch(r) && (
+                    <p className="mt-0.5 text-[11px] text-slate-500">
+                      {r.amazonShippingCents > 0
+                        ? `${formatCents(r.amazonPriceCents)} + ${formatCents(r.amazonShippingCents)} ship`
+                        : "Free shipping"}
+                    </p>
+                  )}
                 </td>
                 <td className="px-4 py-3 text-right font-medium tabular-nums text-emerald-600">
                   {isVerifiedMatch(r) ? formatCents(r.profitCents) : "—"}

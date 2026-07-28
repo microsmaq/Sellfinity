@@ -79,7 +79,13 @@ export async function runSync(
     await db.product.update({
       where: { id: listing.product.id },
       data: state
-        ? { costCents: state.costCents, supplierStock: state.stock }
+        ? {
+            costCents: state.costCents,
+            supplierStock: state.stock,
+            ...(state.shippingCostCents !== undefined && {
+              shippingCostCents: state.shippingCostCents,
+            }),
+          }
         : { supplierStock: 0 },
     });
 
