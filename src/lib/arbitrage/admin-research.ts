@@ -215,3 +215,106 @@ export async function researchAdminCatalogProduct(id: string): Promise<void> {
 
   if (approved) await publishCatalogProductToUsers(id);
 }
+
+/** Refresh only Amazon buy-box truth for one curated row. This is the paid
+ * Rainforest portion; eBay market data and AI matching are deliberately
+ * untouched so one product costs at most one uncached provider request. */
+export async function refreshAdminAmazonCost(id: string): Promise<void> {
+  const item = await db.adminArbitrageProduct.findUnique({ where: { id } });
+  if (!item) throw new Error("Catalog item no longer exists.");
+  const source = await getScraper().scrape(item.amazonUrl);
+  if (!source || !source.inStock || source.priceCents <= 0) {
+    await db.adminArbitrageProduct.update({
+      where: { id },
+      data: {
+        status: "NO_MATCH",
+        matchVerdict: "REJECTED",
+        matchConfidence: 100,
+        matchReason: "The exact Amazon source is currently unavailable.",
+        lastResearchedAt: new Date(),
+      },
+    });
+    return;
+  }
+
+  const suggestedPrice = item.ebayPriceCents
+    ? arbitrageSuggestedPriceCents(
+        source.priceCents,
+        item.ebayPriceCents,
+        item.ebayRecommendedPriceCents,
+        item.averageCompetitorPriceCents ?? item.ebayPriceCents,
+        source.shippingCostCents,
+      )
+    : null;
+  const margin = suggestedPrice
+    ? estimateMargin(
+        suggestedPrice,
+        source.priceCents,
+        source.shippingCostCents,
+      )
+    : null;
+  await db.adminArbitrageProduct.update({
+    where: { id },
+    data: {
+      amazonTitle: source.title,
+      amazonPriceCents: source.priceCents,
+      amazonShippingCents: source.shippingCostCents,
+      amazonUrl: source.sourceUrl,
+      amazonImageUrl: source.imageUrls[0] ?? item.amazonImageUrl,
+      category: source.category || item.category,
+      ...(suggestedPrice && margin && {
+        suggestedPriceCents: suggestedPrice,
+        estimatedProfitCents: margin.estimatedProfitCents,
+        marginPct: Math.round(margin.marginPct),
+      }),
+      lastResearchedAt: new Date(),
+    },
+  });
+  if (item.status === "PUBLISHED") {
+    await publishCatalogProductToUsers(id);
+  }
+}
+
+/** Refresh eBay market metrics without making an Amazon/Rainforest request. */
+export async function refreshAdminEbayMarket(id: string): Promise<void> {
+  const item = await db.adminArbitrageProduct.findUnique({ where: { id } });
+  if (
+    !item ||
+    !item.ebayItemId ||
+    !item.ebayTitle ||
+    !item.ebayPriceCents
+  ) {
+    throw new Error("This catalog row has no researched eBay equivalent.");
+  }
+  const market = await researchEbayMarket(item.ebayTitle, item.ebayItemId);
+  if (!market) throw new Error("No comparable eBay market results were found.");
+  const metrics = market.metrics;
+  const suggestedPrice = arbitrageSuggestedPriceCents(
+    item.amazonPriceCents,
+    item.ebayPriceCents,
+    metrics.bestSellingPriceCents,
+    metrics.averageCompetitorPriceCents,
+    item.amazonShippingCents,
+  );
+  const margin = estimateMargin(
+    suggestedPrice,
+    item.amazonPriceCents,
+    item.amazonShippingCents,
+  );
+  await db.adminArbitrageProduct.update({
+    where: { id },
+    data: {
+      estimatedSales30d: metrics.estimatedSales30d,
+      competitorCount: metrics.competitorCount,
+      averageCompetitorPriceCents: metrics.averageCompetitorPriceCents,
+      ebayRecommendedPriceCents: metrics.bestSellingPriceCents,
+      suggestedPriceCents: suggestedPrice,
+      estimatedProfitCents: margin.estimatedProfitCents,
+      marginPct: Math.round(margin.marginPct),
+      lastResearchedAt: new Date(),
+    },
+  });
+  if (item.status === "PUBLISHED") {
+    await publishCatalogProductToUsers(id);
+  }
+}

@@ -7,10 +7,13 @@ import { db } from "@/lib/db";
 import { scanMore } from "@/lib/arbitrage";
 import {
   addAmazonCatalogProduct,
+  refreshAdminAmazonCost,
+  refreshAdminEbayMarket,
   researchAdminCatalogProduct,
 } from "@/lib/arbitrage/admin-research";
 import { publishCatalogProductToUsers } from "@/lib/arbitrage/admin-catalog";
 import type { ScanReport } from "@/lib/arbitrage/scan-types";
+import { getRainforestEfficiencySummary } from "@/lib/mirror/rainforest";
 
 export type AdminActionResult = {
   ok: boolean;
@@ -18,6 +21,15 @@ export type AdminActionResult = {
 };
 
 export type AdminScanResult = AdminActionResult & ScanReport;
+export type AdminRefreshMode = "MARKET" | "AMAZON";
+
+export type AdminRefreshBatchResult = AdminActionResult & {
+  processed: number;
+  succeeded: number;
+  failed: number;
+  rainforestRequests: number;
+  cacheHits: number;
+};
 
 function message(error: unknown): string {
   return error instanceof Error ? error.message.slice(0, 300) : "The operation failed.";
@@ -120,4 +132,72 @@ export async function adminScanBestSellers(
       paused: true,
     };
   }
+}
+
+export async function prepareAdminCatalogRefresh(
+  mode: AdminRefreshMode,
+  count: number,
+): Promise<{ ids: string[]; mode: AdminRefreshMode }> {
+  await requireAdmin();
+  const parsedMode = z.enum(["MARKET", "AMAZON"]).parse(mode);
+  const take = z.number().int().min(1).max(50).parse(count);
+  const rows = await db.adminArbitrageProduct.findMany({
+    where: {
+      status: { not: "ARCHIVED" },
+      ...(parsedMode === "MARKET" && { ebayItemId: { not: null } }),
+    },
+    orderBy: [
+      { lastResearchedAt: { sort: "asc", nulls: "first" } },
+      { updatedAt: "asc" },
+    ],
+    take,
+    select: { id: true },
+  });
+  return { ids: rows.map((row) => row.id), mode: parsedMode };
+}
+
+/** Process a small explicit checkpoint so a refresh survives serverless
+ * request limits. The browser owns the fixed target list, preventing a
+ * failed row from being selected repeatedly in the same manual run. */
+export async function adminRefreshCatalogBatch(
+  mode: AdminRefreshMode,
+  ids: string[],
+): Promise<AdminRefreshBatchResult> {
+  await requireAdmin();
+  const parsedMode = z.enum(["MARKET", "AMAZON"]).parse(mode);
+  const parsedIds = z.array(z.string().min(1).max(100)).min(1).max(5).parse(ids);
+  const before = parsedMode === "AMAZON"
+    ? await getRainforestEfficiencySummary()
+    : null;
+  let succeeded = 0;
+  let failed = 0;
+  for (const id of parsedIds) {
+    try {
+      if (parsedMode === "AMAZON") await refreshAdminAmazonCost(id);
+      else await refreshAdminEbayMarket(id);
+      succeeded++;
+    } catch {
+      failed++;
+    }
+  }
+  const after = parsedMode === "AMAZON"
+    ? await getRainforestEfficiencySummary()
+    : null;
+  revalidatePath("/admin/arbitrage");
+  revalidatePath("/arbitrage");
+  return {
+    ok: failed === 0,
+    message: failed
+      ? `${succeeded} refreshed; ${failed} could not be updated.`
+      : `${succeeded} catalog products refreshed.`,
+    processed: parsedIds.length,
+    succeeded,
+    failed,
+    rainforestRequests:
+      before && after
+        ? Math.max(0, after.providerRequests - before.providerRequests)
+        : 0,
+    cacheHits:
+      before && after ? Math.max(0, after.cacheHits - before.cacheHits) : 0,
+  };
 }

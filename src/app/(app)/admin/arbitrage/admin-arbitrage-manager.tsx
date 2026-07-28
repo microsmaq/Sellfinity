@@ -7,8 +7,11 @@ import {
   adminAddAmazonItem,
   adminArchiveItem,
   adminPublishItem,
+  adminRefreshCatalogBatch,
   adminResearchItem,
   adminScanBestSellers,
+  prepareAdminCatalogRefresh,
+  type AdminRefreshMode,
 } from "@/lib/actions/admin-arbitrage";
 import type {
   AdminCatalogFilters,
@@ -27,6 +30,15 @@ type AdminScanProgress = {
   errors: number;
   status: "running" | "paused" | "error";
   detail: string;
+};
+
+type AdminRefreshProgress = {
+  completed: number;
+  total: number;
+  succeeded: number;
+  failed: number;
+  rainforestRequests: number;
+  cacheHits: number;
 };
 
 const statusOptions: { value: AdminCatalogStatus; label: string }[] = [
@@ -227,6 +239,7 @@ function CatalogRow({
             size="sm"
             variant="secondary"
             disabled={busy}
+            title="Full Amazon + eBay research. Uses up to 1 Rainforest credit when the Amazon response is not cached."
             onClick={() => run("research", row.id)}
           >
             ↻ Research
@@ -265,9 +278,13 @@ export function AdminArbitrageManager({
   const [operation, setOperation] = useState<string | null>(null);
   const [notice, setNotice] = useState<{ text: string; error: boolean } | null>(null);
   const [scanProgress, setScanProgress] = useState<AdminScanProgress | null>(null);
+  const [refreshMode, setRefreshMode] = useState<AdminRefreshMode>("MARKET");
+  const [refreshCount, setRefreshCount] = useState(25);
+  const [refreshProgress, setRefreshProgress] = useState<AdminRefreshProgress | null>(null);
   const [expanded, setExpanded] = useState(false);
   const [pending, startTransition] = useTransition();
   const stopScanRequested = useRef(false);
+  const stopRefreshRequested = useRef(false);
 
   function finish(result: { ok: boolean; message: string }) {
     setNotice({ text: result.message, error: !result.ok });
@@ -278,6 +295,7 @@ export function AdminArbitrageManager({
     event.preventDefault();
     if (!amazonInput.trim()) return;
     setScanProgress(null);
+    setRefreshProgress(null);
     setOperation("Researching the Amazon item and equivalent eBay market");
     setNotice(null);
     startTransition(async () => {
@@ -293,6 +311,7 @@ export function AdminArbitrageManager({
     stopScanRequested.current = false;
     setOperation("Scanning bestseller sources and verifying profitable matches");
     setNotice(null);
+    setRefreshProgress(null);
     setScanProgress({
       added: 0,
       examined: 0,
@@ -370,9 +389,124 @@ export function AdminArbitrageManager({
     );
   }
 
+  function refreshCatalog() {
+    stopRefreshRequested.current = false;
+    setScanProgress(null);
+    setNotice(null);
+    setOperation(
+      refreshMode === "MARKET"
+        ? "Refreshing eBay market intelligence"
+        : "Refreshing Amazon landed costs",
+    );
+    setRefreshProgress({
+      completed: 0,
+      total: refreshCount,
+      succeeded: 0,
+      failed: 0,
+      rainforestRequests: 0,
+      cacheHits: 0,
+    });
+    startTransition(async () => {
+      let prepared: Awaited<ReturnType<typeof prepareAdminCatalogRefresh>>;
+      try {
+        prepared = await prepareAdminCatalogRefresh(
+          refreshMode,
+          refreshCount,
+        );
+      } catch {
+        setNotice({
+          text: "The refresh could not be prepared. No catalog data or API credits were changed.",
+          error: true,
+        });
+        setRefreshProgress(null);
+        setOperation(null);
+        return;
+      }
+      const ids = prepared.ids;
+      if (ids.length === 0) {
+        setNotice({
+          text: "No eligible catalog products are available for this refresh.",
+          error: false,
+        });
+        setRefreshProgress(null);
+        setOperation(null);
+        return;
+      }
+      let completed = 0;
+      let succeeded = 0;
+      let failed = 0;
+      let rainforestRequests = 0;
+      let cacheHits = 0;
+      setRefreshProgress((current) =>
+        current ? { ...current, total: ids.length } : current,
+      );
+      for (
+        let index = 0;
+        index < ids.length && !stopRefreshRequested.current;
+        index += 5
+      ) {
+        const checkpointIds = ids.slice(index, index + 5);
+        let result: Awaited<ReturnType<typeof adminRefreshCatalogBatch>>;
+        try {
+          result = await adminRefreshCatalogBatch(
+            prepared.mode,
+            checkpointIds,
+          );
+        } catch {
+          completed += checkpointIds.length;
+          failed += checkpointIds.length;
+          setRefreshProgress({
+            completed,
+            total: ids.length,
+            succeeded,
+            failed,
+            rainforestRequests,
+            cacheHits,
+          });
+          continue;
+        }
+        completed += result.processed;
+        succeeded += result.succeeded;
+        failed += result.failed;
+        rainforestRequests += result.rainforestRequests;
+        cacheHits += result.cacheHits;
+        setRefreshProgress({
+          completed,
+          total: ids.length,
+          succeeded,
+          failed,
+          rainforestRequests,
+          cacheHits,
+        });
+      }
+      const stopped = stopRefreshRequested.current;
+      const creditSummary = prepared.mode === "AMAZON"
+        ? `${rainforestRequests} Rainforest request${rainforestRequests === 1 ? "" : "s"} used${cacheHits ? `; ${cacheHits} cache hit${cacheHits === 1 ? "" : "s"} avoided provider calls` : ""}.`
+        : "0 Rainforest credits used.";
+      setNotice({
+        text: stopped
+          ? `Refresh stopped safely after ${completed}/${ids.length} products. ${creditSummary}`
+          : `Refresh complete: ${succeeded}/${ids.length} updated${failed ? `, ${failed} failed` : ""}. ${creditSummary}`,
+        error: failed > 0,
+      });
+      setRefreshProgress(null);
+      setOperation(null);
+      router.refresh();
+    });
+  }
+
+  function stopRefresh() {
+    stopRefreshRequested.current = true;
+    setNotice({
+      text: "Stopping after the current five-product checkpoint…",
+      error: false,
+    });
+  }
+
   function run(kind: "research" | "publish" | "archive", id: string) {
     setBusyId(id);
     setScanProgress(null);
+    setRefreshProgress(null);
     setOperation(
       kind === "research"
         ? "Refreshing source, match, and market intelligence"
@@ -475,7 +609,51 @@ export function AdminArbitrageManager({
               </Button>
             </form>
           </div>
-          <div className="flex items-center">
+          <div className="flex flex-col justify-center gap-3">
+            <div className="rounded-xl border border-white/15 bg-white/10 p-3">
+              <p className="text-xs font-semibold uppercase tracking-wide text-indigo-100">
+                Manual catalog refresh
+              </p>
+              <div className="mt-2 flex flex-wrap gap-2">
+                <select
+                  aria-label="Refresh data type"
+                  value={refreshMode}
+                  disabled={pending}
+                  onChange={(event) =>
+                    setRefreshMode(event.target.value as AdminRefreshMode)
+                  }
+                  className="rounded-md border border-white/20 bg-slate-900 px-2 py-1.5 text-xs text-white"
+                >
+                  <option value="MARKET">eBay market · 0 Amazon credits</option>
+                  <option value="AMAZON">Amazon cost + shipping</option>
+                </select>
+                <select
+                  aria-label="Products to refresh"
+                  value={refreshCount}
+                  disabled={pending}
+                  onChange={(event) => setRefreshCount(Number(event.target.value))}
+                  className="rounded-md border border-white/20 bg-slate-900 px-2 py-1.5 text-xs text-white"
+                >
+                  {[10, 25, 50].map((count) => (
+                    <option key={count} value={count}>{count} oldest products</option>
+                  ))}
+                </select>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  disabled={pending}
+                  onClick={refreshCatalog}
+                  className="border-white/30 bg-white text-slate-900 hover:bg-indigo-50"
+                >
+                  ↻ Refresh data
+                </Button>
+              </div>
+              <p className="mt-2 max-w-md text-[11px] leading-4 text-indigo-100">
+                {refreshMode === "MARKET"
+                  ? "Refreshes demand, competition, market prices, and profit with no Rainforest calls."
+                  : `Refreshes exact Amazon price and shipping for up to ${refreshCount} products. Cache hits are free; otherwise allow up to ${refreshCount} Rainforest credits.`}
+              </p>
+            </div>
             <Button
               variant="secondary"
               disabled={pending}
@@ -491,8 +669,21 @@ export function AdminArbitrageManager({
       {operation && (
         <PremiumProgress
           title={operation}
-          subtitle={scanProgress?.detail ?? "Completed data is saved as each provider finishes."}
-          percentage={scanProgress ? (scanProgress.added / 50) * 100 : undefined}
+          subtitle={
+            scanProgress?.detail ??
+            (refreshProgress
+              ? refreshMode === "MARKET"
+                ? "Refreshing eBay intelligence only · no Rainforest credits"
+                : `Refreshing exact Amazon landed costs · up to ${refreshProgress.total} credits before cache savings`
+              : "Completed data is saved as each provider finishes.")
+          }
+          percentage={
+            scanProgress
+              ? (scanProgress.added / 50) * 100
+              : refreshProgress
+                ? (refreshProgress.completed / refreshProgress.total) * 100
+                : undefined
+          }
           status={scanProgress?.status ?? "running"}
           stats={scanProgress
             ? [
@@ -500,16 +691,35 @@ export function AdminArbitrageManager({
                 { label: "Candidates examined", value: scanProgress.examined, tone: "info" },
                 { label: "Temporary failures", value: scanProgress.errors, tone: scanProgress.errors ? "warning" : "default" },
               ]
+            : refreshProgress
+              ? [
+                  { label: "Completed", value: `${refreshProgress.completed}/${refreshProgress.total}`, tone: "info" },
+                  { label: "Updated", value: refreshProgress.succeeded, tone: "success" },
+                  {
+                    label: refreshMode === "AMAZON" ? "Rainforest requests" : "Rainforest credits",
+                    value: refreshMode === "AMAZON" ? refreshProgress.rainforestRequests : 0,
+                    tone: refreshProgress.rainforestRequests ? "warning" : "success",
+                  },
+                  ...(refreshMode === "AMAZON"
+                    ? [{ label: "Cache hits", value: refreshProgress.cacheHits, tone: "info" as const }]
+                    : []),
+                ]
             : [
                 { label: "Amazon source", value: "checking", tone: "info" },
                 { label: "eBay market", value: "matching", tone: "info" },
                 { label: "Profit model", value: "calculating", tone: "success" },
               ]}
-          action={scanProgress && scanProgress.status !== "error" && (
-            <Button type="button" variant="secondary" onClick={stopScan}>
-              Stop scan
-            </Button>
-          )}
+          action={
+            scanProgress && scanProgress.status !== "error" ? (
+              <Button type="button" variant="secondary" onClick={stopScan}>
+                Stop scan
+              </Button>
+            ) : refreshProgress ? (
+              <Button type="button" variant="secondary" onClick={stopRefresh}>
+                Stop refresh
+              </Button>
+            ) : null
+          }
         />
       )}
       {notice && (
