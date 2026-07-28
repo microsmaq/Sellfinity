@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { FormEvent, useState, useTransition } from "react";
+import { FormEvent, useRef, useState, useTransition } from "react";
 import {
   adminAddAmazonItem,
   adminArchiveItem,
@@ -20,6 +20,14 @@ import type {
 import { formatCents } from "@/lib/money";
 import { Badge, Button, Card, Input, StatCard, cx } from "@/components/ui";
 import { PremiumProgress } from "@/components/premium-progress";
+
+type AdminScanProgress = {
+  added: number;
+  examined: number;
+  errors: number;
+  status: "running" | "paused" | "error";
+  detail: string;
+};
 
 const statusOptions: { value: AdminCatalogStatus; label: string }[] = [
   { value: "ALL", label: "All" },
@@ -250,8 +258,10 @@ export function AdminArbitrageManager({
   const [busyId, setBusyId] = useState<string | null>(null);
   const [operation, setOperation] = useState<string | null>(null);
   const [notice, setNotice] = useState<{ text: string; error: boolean } | null>(null);
+  const [scanProgress, setScanProgress] = useState<AdminScanProgress | null>(null);
   const [expanded, setExpanded] = useState(false);
   const [pending, startTransition] = useTransition();
+  const stopScanRequested = useRef(false);
 
   function finish(result: { ok: boolean; message: string }) {
     setNotice({ text: result.message, error: !result.ok });
@@ -261,6 +271,7 @@ export function AdminArbitrageManager({
   function addAmazon(event: FormEvent) {
     event.preventDefault();
     if (!amazonInput.trim()) return;
+    setScanProgress(null);
     setOperation("Researching the Amazon item and equivalent eBay market");
     setNotice(null);
     startTransition(async () => {
@@ -272,16 +283,90 @@ export function AdminArbitrageManager({
   }
 
   function scan() {
+    const target = 50;
+    stopScanRequested.current = false;
     setOperation("Scanning bestseller sources and verifying profitable matches");
     setNotice(null);
+    setScanProgress({
+      added: 0,
+      examined: 0,
+      errors: 0,
+      status: "running",
+      detail: "Opening the persisted bestseller queue…",
+    });
     startTransition(async () => {
-      finish(await adminScanBestSellers(50));
+      let added = 0;
+      let examined = 0;
+      let errors = 0;
+      let exhausted = false;
+
+      while (added < target && !exhausted && !stopScanRequested.current) {
+        const result = await adminScanBestSellers(target - added);
+        if (!result.ok) {
+          setNotice({ text: result.message, error: true });
+          setScanProgress(null);
+          setOperation(null);
+          return;
+        }
+
+        added += result.added;
+        examined += result.examined;
+        errors += result.errors ?? 0;
+        exhausted = result.exhausted;
+        setScanProgress({
+          added,
+          examined,
+          errors,
+          status: result.paused ? "paused" : "running",
+          detail: result.paused
+            ? "A provider lookup paused. Fresh sources and eligible retries will continue automatically."
+            : `Research saved · ${added} of ${target} new products added`,
+        });
+        setNotice({
+          text: `Adding Amazon bestsellers… ${added}/${target} added from ${examined} candidates.`,
+          error: false,
+        });
+
+        const needsRetry =
+          result.paused ||
+          (result.added === 0 && result.examined === 0 && !result.exhausted);
+        if (needsRetry && !stopScanRequested.current) {
+          await new Promise((resolve) => setTimeout(resolve, 2_000));
+          setScanProgress((current) =>
+            current ? { ...current, status: "running" } : current,
+          );
+        }
+      }
+
+      const stopped = stopScanRequested.current;
+      const text = stopped
+        ? `Scan stopped safely: ${added} new products added from ${examined} candidates. The queue was saved.`
+        : exhausted
+          ? `Bestseller scan complete: ${added} new products added; today's available sources are exhausted.`
+          : `Bestseller scan complete: all ${target} new products were added from ${examined} candidates.`;
+      setNotice({ text, error: false });
+      setScanProgress(null);
+      router.refresh();
       setOperation(null);
     });
   }
 
+  function stopScan() {
+    stopScanRequested.current = true;
+    setScanProgress((current) =>
+      current
+        ? {
+            ...current,
+            status: "paused",
+            detail: "Stopping safely after the current provider lookup. Completed research is already saved.",
+          }
+        : current,
+    );
+  }
+
   function run(kind: "research" | "publish" | "archive", id: string) {
     setBusyId(id);
+    setScanProgress(null);
     setOperation(
       kind === "research"
         ? "Refreshing source, match, and market intelligence"
@@ -391,7 +476,7 @@ export function AdminArbitrageManager({
               onClick={scan}
               className="border-white/30 bg-white/10 text-white hover:bg-white/20"
             >
-              ✦ Add 50 bestsellers
+              {scanProgress ? "Adding bestsellers…" : "✦ Add 50 bestsellers"}
             </Button>
           </div>
         </div>
@@ -400,14 +485,25 @@ export function AdminArbitrageManager({
       {operation && (
         <PremiumProgress
           title={operation}
-          subtitle="Completed data is saved as each provider finishes."
-          percentage={pending ? 38 : 100}
-          status={pending ? "running" : "complete"}
-          stats={[
-            { label: "Amazon source", value: "checking", tone: "info" },
-            { label: "eBay market", value: "matching", tone: "info" },
-            { label: "Profit model", value: "calculating", tone: "success" },
-          ]}
+          subtitle={scanProgress?.detail ?? "Completed data is saved as each provider finishes."}
+          percentage={scanProgress ? (scanProgress.added / 50) * 100 : undefined}
+          status={scanProgress?.status ?? "running"}
+          stats={scanProgress
+            ? [
+                { label: "Products added", value: `${scanProgress.added}/50`, tone: "success" },
+                { label: "Candidates examined", value: scanProgress.examined, tone: "info" },
+                { label: "Temporary failures", value: scanProgress.errors, tone: scanProgress.errors ? "warning" : "default" },
+              ]
+            : [
+                { label: "Amazon source", value: "checking", tone: "info" },
+                { label: "eBay market", value: "matching", tone: "info" },
+                { label: "Profit model", value: "calculating", tone: "success" },
+              ]}
+          action={scanProgress && scanProgress.status !== "error" && (
+            <Button type="button" variant="secondary" onClick={stopScan}>
+              Stop scan
+            </Button>
+          )}
         />
       )}
       {notice && (

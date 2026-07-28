@@ -10,11 +10,14 @@ import {
   researchAdminCatalogProduct,
 } from "@/lib/arbitrage/admin-research";
 import { publishCatalogProductToUsers } from "@/lib/arbitrage/admin-catalog";
+import type { ScanReport } from "@/lib/arbitrage/scan-types";
 
 export type AdminActionResult = {
   ok: boolean;
   message: string;
 };
+
+export type AdminScanResult = AdminActionResult & ScanReport;
 
 function message(error: unknown): string {
   return error instanceof Error ? error.message.slice(0, 300) : "The operation failed.";
@@ -87,20 +90,34 @@ export async function adminArchiveItem(id: string): Promise<AdminActionResult> {
 
 export async function adminScanBestSellers(
   count: number,
-): Promise<AdminActionResult> {
+): Promise<AdminScanResult> {
   await requireAdmin();
   const target = z.number().int().min(1).max(100).parse(count);
   try {
-    const report = await scanMore({ target, timeBudgetMs: 45_000 });
+    // Keep every request comfortably below the hosting timeout. The admin
+    // client resumes these persisted checkpoints until its requested total is
+    // reached, the sources are exhausted, or the administrator stops it.
+    const report = await scanMore({ target, timeBudgetMs: 22_000 });
     revalidatePath("/admin/arbitrage");
     revalidatePath("/arbitrage");
     return {
+      ...report,
       ok: true,
-      message: report.exhausted
-        ? `Research complete: ${report.added} new products added; the available bestseller sources were exhausted.`
-        : `Research checkpoint saved: ${report.added} new products added from ${report.examined} candidates. Run again to continue.`,
+      message: report.paused
+        ? `Research checkpoint saved: ${report.added} products added and ${report.examined} candidates examined. A provider lookup will be retried automatically.`
+        : report.exhausted
+          ? `Research complete: ${report.added} new products added; the available bestseller sources were exhausted.`
+          : `Research checkpoint saved: ${report.added} new products added from ${report.examined} candidates.`,
     };
   } catch (error) {
-    return { ok: false, message: message(error) };
+    return {
+      ok: false,
+      message: message(error),
+      added: 0,
+      examined: 0,
+      exhausted: false,
+      errors: 1,
+      paused: true,
+    };
   }
 }

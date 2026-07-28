@@ -283,14 +283,28 @@ export async function realScanMore(opts: {
   };
 
   while (added < target && !cursor.exhausted && Date.now() < deadline) {
-    if (cursor.pending.length === 0) {
+    const now = Date.now();
+    const hasReadyCandidate = cursor.pending.some((candidate) => {
+      const failure = cursor.failures?.[candidate.itemId];
+      return !failure || failure.retryAfter <= now;
+    });
+
+    if (cursor.pending.length === 0 || !hasReadyCandidate) {
       if (
         discoveryRotation.length === 0 ||
         cursor.pageOffset > MAX_PAGES_PER_KEYWORD
       ) {
-        cursor.exhausted = true;
+        // A cooling-down lookup is not an exhausted source pool. Preserve it
+        // for a later retry, but only report true exhaustion when no queued
+        // candidates remain.
+        cursor.exhausted = cursor.pending.length === 0;
+        paused = cursor.pending.length > 0;
         break;
       }
+      // Do not let one failed lookup block every fresh bestseller source.
+      // Temporarily move cooling-down candidates aside, discover a new source
+      // page, then put the deferred work back behind the new candidates.
+      const deferred = hasReadyCandidate ? [] : cursor.pending.splice(0);
       // Source-first discovery: one paid Amazon search page yields many
       // source products, then eBay/local rules narrow them for free.
       const { keyword, category } = discoveryRotation[cursor.keywordIdx];
@@ -311,6 +325,7 @@ export async function realScanMore(opts: {
           cursor.pageOffset++;
         }
       } catch {
+        cursor.pending.push(...deferred);
         paused = true;
         errors++;
         break;
@@ -330,6 +345,7 @@ export async function realScanMore(opts: {
           (candidate) =>
             !examined.has(candidate.itemId) && !blockedIds.has(candidate.itemId),
         ),
+        ...deferred,
       );
       continue;
     }
