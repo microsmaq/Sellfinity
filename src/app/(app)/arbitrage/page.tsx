@@ -38,6 +38,7 @@ export default async function ArbitragePage({
       ? (rawMatch as ArbitragePageParams["matchVerdict"])
       : "ALL",
     qualifiedOnly: raw.qualified === "1" || raw.qualified === "true",
+    unlistedOnly: raw.unlisted === "1" || raw.unlisted === "true",
     query: typeof raw.q === "string" ? raw.q : "",
   };
   const data = await listArbitragePage(user.id, params);

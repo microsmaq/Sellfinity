@@ -196,6 +196,13 @@ describe("listArbitragePage", () => {
     });
     const page = await listArbitragePage(user.id, { ...base, page: 1 });
     expect(page.rows[0].mirrored).toBe(true);
+
+    const unlisted = await listArbitragePage(user.id, {
+      ...base,
+      page: 1,
+      unlistedOnly: true,
+    });
+    expect(unlisted.total).toBe(0);
   });
 });
 

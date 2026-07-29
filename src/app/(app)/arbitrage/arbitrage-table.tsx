@@ -247,7 +247,7 @@ export function ArbitrageTable({
   function urlFor(
     overrides: Partial<Record<
       "page" | "q" | "category" | "match" | "minMargin" |
-      "minConfidence" | "qualified" | "sort" | "dir" | "pageSize",
+      "minConfidence" | "qualified" | "unlisted" | "sort" | "dir" | "pageSize",
       string | number
     >> = {},
   ) {
@@ -259,6 +259,7 @@ export function ArbitrageTable({
       minMargin: String(filters.minMarginPct),
       minConfidence: String(filters.minConfidence ?? 0),
       qualified: filters.qualifiedOnly ? "1" : "0",
+      unlisted: filters.unlistedOnly ? "1" : "0",
       sort: filters.sortKey,
       dir: filters.sortDesc ? "desc" : "asc",
       pageSize: String(filters.pageSize ?? 50),
@@ -419,7 +420,7 @@ export function ArbitrageTable({
                 Clear
               </Link>
             </div>
-            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
+            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-6">
               <select name="match" defaultValue={filters.matchVerdict ?? "ALL"} className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm">
                 <option value="ALL">Any match status</option>
                 <option value="MATCH">Exact match</option>
@@ -447,6 +448,10 @@ export function ArbitrageTable({
               <label className="flex cursor-pointer items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-medium text-emerald-900">
                 <input type="checkbox" name="qualified" value="1" defaultChecked={filters.qualifiedOnly} className="h-4 w-4 rounded border-emerald-400 text-emerald-600" />
                 Qualified only
+              </label>
+              <label className="flex cursor-pointer items-center gap-2 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-sm font-medium text-indigo-900">
+                <input type="checkbox" name="unlisted" value="1" defaultChecked={filters.unlistedOnly} className="h-4 w-4 rounded border-indigo-400 text-indigo-600" />
+                Unlisted by me only
               </label>
             </div>
           </form>

@@ -116,6 +116,7 @@ export type ArbitragePageParams = {
   minConfidence?: number;
   matchVerdict?: "ALL" | "MATCH" | "LIKELY" | "REVIEW";
   qualifiedOnly?: boolean;
+  unlistedOnly?: boolean;
   query: string;
 };
 
@@ -182,12 +183,20 @@ export async function listArbitragePage(
     where: { userId },
     select: { ebayItemId: true },
   });
+  const ownedProducts = params.unlistedOnly
+    ? await db.product.findMany({
+        where: { userId },
+        select: { sku: true },
+      })
+    : [];
   const hiddenIds = hiddenRows.map((row) => row.ebayItemId);
+  const ownedAsins = ownedProducts.map((product) => product.sku);
   const matchVerdict = params.matchVerdict ?? "ALL";
   const query = params.query.trim();
   const where: Prisma.AdminArbitrageProductWhereInput = {
     status: "PUBLISHED",
     ebayItemId: { not: null, ...(hiddenIds.length && { notIn: hiddenIds }) },
+    ...(ownedAsins.length > 0 && { asin: { notIn: ownedAsins } }),
     ...(params.category !== "all" && { category: params.category }),
     ...(params.minMarginPct > 0 && { marginPct: { gte: params.minMarginPct } }),
     ...((params.minConfidence ?? 0) > 0 && {
