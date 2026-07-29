@@ -173,9 +173,17 @@ export async function createArbitrageMirrorBatch(
 ): Promise<{ batchId?: string; error?: string }> {
   const user = await requireUser();
   const ids = [...new Set(ebayItemIds)].slice(0, MAX_BATCH_ITEMS);
+  const published = await db.adminArbitrageProduct.findMany({
+    where: {
+      status: "PUBLISHED",
+      ebayItemId: { in: ids },
+    },
+    select: { ebayItemId: true },
+  });
+  const publishedIds = published.flatMap((item) => item.ebayItemId ?? []);
   const rows = await db.arbitrageItem.findMany({
     where: {
-      ebayItemId: { in: ids },
+      ebayItemId: { in: publishedIds },
       matchVerdict: { in: ["MATCH", "LIKELY"] },
     },
     select: { ebayItemId: true, amazonUrl: true },

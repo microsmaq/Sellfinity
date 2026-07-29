@@ -123,7 +123,10 @@ export type ArbitrageExcelRow = {
   estimatedSales30d: number;
   competitorCount: number | null;
   averageCompetitorPriceCents: number | null;
+  ebayRecommendedPriceCents?: number | null;
   suggestedPriceCents: number | null;
+  usersListed?: number;
+  lastResearchedAt?: string | null;
   matchVerdict: string;
   matchConfidence: number;
   matchReason: string | null;
@@ -142,6 +145,7 @@ export async function createArbitrageWorkbook(
     "eBay price", "Amazon item price", "Amazon shipping", "Amazon landed cost",
     "Profit / unit", "Margin", "Est. sales / 30d", "Competition",
     "Avg. comp price", "Suggested price", "eBay link", "Amazon link",
+    "eBay recommended", "Users listed", "Last researched",
   ]);
   for (const item of rows) {
     const row = sheet.addRow([
@@ -164,16 +168,22 @@ export async function createArbitrageWorkbook(
       item.suggestedPriceCents === null ? null : item.suggestedPriceCents / 100,
       "",
       "",
+      item.ebayRecommendedPriceCents == null
+        ? null
+        : item.ebayRecommendedPriceCents / 100,
+      item.usersListed ?? 0,
+      item.lastResearchedAt ? new Date(item.lastResearchedAt) : null,
     ]);
     setLink(row.getCell(16), "Open on eBay", item.ebayUrl);
     setLink(row.getCell(17), "Open on Amazon", item.amazonUrl);
   }
-  [6, 7, 8, 9, 10, 14, 15].forEach(
+  [6, 7, 8, 9, 10, 14, 15, 18].forEach(
     (column) => (sheet.getColumn(column).numFmt = '"$"#,##0.00'),
   );
+  sheet.getColumn(20).numFmt = "mmm d, yyyy";
   sheet.getColumn(4).numFmt = "0%";
   sheet.getColumn(11).numFmt = "0%";
-  styleSheet(sheet, [46, 20, 13, 18, 48, 14, 16, 16, 17, 14, 11, 16, 13, 16, 16, 18, 18]);
+  styleSheet(sheet, [46, 20, 13, 18, 48, 14, 16, 16, 17, 14, 11, 16, 13, 16, 16, 18, 18, 18, 14, 17]);
   const buffer = await workbook.xlsx.writeBuffer();
   return {
     filename: `sellfinity-arbitrage-${new Date().toISOString().slice(0, 10)}.xlsx`,

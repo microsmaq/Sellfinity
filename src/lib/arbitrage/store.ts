@@ -102,11 +102,20 @@ export type ArbitragePageParams = {
     | "sales"
     | "competition"
     | "avgCompPrice"
+    | "recommendedPrice"
+    | "suggestedPrice"
     | "matchConfidence"
+    | "usersListed"
+    | "researched"
+    | "amazonTitle"
+    | "category"
     | "newest";
   sortDesc: boolean;
   category: string; // "all" or a category name
   minMarginPct: number;
+  minConfidence?: number;
+  matchVerdict?: "ALL" | "MATCH" | "LIKELY" | "REVIEW";
+  qualifiedOnly?: boolean;
   query: string;
 };
 
@@ -116,27 +125,52 @@ export type ArbitragePage = {
   page: number;
   pageCount: number;
   categories: string[];
+  counts: {
+    published: number;
+    qualified: number;
+    listedByUser: number;
+    hiddenByUser: number;
+  };
 };
 
-const SORT_COLUMNS: Record<ArbitragePageParams["sortKey"], string> = {
-  profit: "profitCents",
+const SORT_COLUMNS: Record<
+  Exclude<ArbitragePageParams["sortKey"], "usersListed">,
+  keyof Prisma.AdminArbitrageProductOrderByWithRelationInput
+> = {
+  profit: "estimatedProfitCents",
   margin: "marginPct",
   ebayPrice: "ebayPriceCents",
   amazonPrice: "amazonPriceCents",
-  sales: "salesEst",
+  sales: "estimatedSales30d",
   competition: "competitorCount",
-  avgCompPrice: "avgCompPriceCents",
+  avgCompPrice: "averageCompetitorPriceCents",
+  recommendedPrice: "ebayRecommendedPriceCents",
+  suggestedPrice: "suggestedPriceCents",
   matchConfidence: "matchConfidence",
-  newest: "createdAt",
+  researched: "lastResearchedAt",
+  amazonTitle: "amazonTitle",
+  category: "category",
+  newest: "updatedAt",
 };
 
 function orderBy(params: ArbitragePageParams) {
-  const column = SORT_COLUMNS[params.sortKey] ?? SORT_COLUMNS.profit;
+  const key = params.sortKey === "usersListed" ? "newest" : params.sortKey;
+  const column = SORT_COLUMNS[key] ?? SORT_COLUMNS.profit;
   const direction = params.sortDesc ? "desc" : "asc";
-  const nullable = column === "competitorCount" || column === "avgCompPriceCents";
+  const nullable = [
+    "ebayPriceCents",
+    "estimatedSales30d",
+    "competitorCount",
+    "averageCompetitorPriceCents",
+    "ebayRecommendedPriceCents",
+    "suggestedPriceCents",
+    "estimatedProfitCents",
+    "marginPct",
+    "lastResearchedAt",
+  ].includes(column);
   return {
     [column]: nullable ? { sort: direction, nulls: "last" } : direction,
-  } as Prisma.ArbitrageItemOrderByWithRelationInput;
+  } as Prisma.AdminArbitrageProductOrderByWithRelationInput;
 }
 
 /** One page of the research database, with the user's ownership flags. */
@@ -144,55 +178,143 @@ export async function listArbitragePage(
   userId: string,
   params: ArbitragePageParams,
 ): Promise<ArbitragePage> {
-  const curated = await db.adminArbitrageProduct.findMany({
-    where: { status: "PUBLISHED", ebayItemId: { not: null } },
+  const hiddenRows = await db.hiddenArbitrageItem.findMany({
+    where: { userId },
     select: { ebayItemId: true },
   });
-  const curatedEbayIds = curated.flatMap((item) => item.ebayItemId ?? []);
-  const where: Prisma.ArbitrageItemWhereInput = {
-    ebayItemId: { in: curatedEbayIds },
-    hiddenBy: { none: { userId } },
-    // Similar candidates stay visible for human review. Definite identity
-    // conflicts remain excluded; the UI withholds unverified profitability.
-    matchVerdict: { in: ["MATCH", "LIKELY", "REVIEW"] },
+  const hiddenIds = hiddenRows.map((row) => row.ebayItemId);
+  const matchVerdict = params.matchVerdict ?? "ALL";
+  const query = params.query.trim();
+  const where: Prisma.AdminArbitrageProductWhereInput = {
+    status: "PUBLISHED",
+    ebayItemId: { not: null, ...(hiddenIds.length && { notIn: hiddenIds }) },
     ...(params.category !== "all" && { category: params.category }),
     ...(params.minMarginPct > 0 && { marginPct: { gte: params.minMarginPct } }),
-    ...(params.query.trim() && {
-      ebayTitle: { contains: params.query.trim(), mode: "insensitive" },
+    ...((params.minConfidence ?? 0) > 0 && {
+      matchConfidence: { gte: params.minConfidence },
+    }),
+    ...(matchVerdict !== "ALL"
+      ? { matchVerdict }
+      : { matchVerdict: { in: ["MATCH", "LIKELY", "REVIEW"] } }),
+    ...(params.qualifiedOnly && {
+      matchVerdict: { in: ["MATCH", "LIKELY"] },
+      matchConfidence: { gte: 95 },
+      marginPct: { gte: 15 },
+      estimatedProfitCents: { gt: 0 },
+      suggestedPriceCents: { not: null },
+    }),
+    ...(query && {
+      OR: [
+        { asin: { contains: query, mode: "insensitive" } },
+        { amazonTitle: { contains: query, mode: "insensitive" } },
+        { ebayTitle: { contains: query, mode: "insensitive" } },
+        { ebayItemId: { contains: query, mode: "insensitive" } },
+        { category: { contains: query, mode: "insensitive" } },
+        { matchReason: { contains: query, mode: "insensitive" } },
+      ],
     }),
   };
   const pageSize = [25, 50, 100].includes(params.pageSize ?? DEFAULT_PAGE_SIZE)
     ? (params.pageSize ?? DEFAULT_PAGE_SIZE)
     : DEFAULT_PAGE_SIZE;
 
-  const [total, items, categoryRows] = await Promise.all([
-    db.arbitrageItem.count({ where }),
-    db.arbitrageItem.findMany({
-      where,
-      orderBy: orderBy(params),
-      skip: (Math.max(1, params.page) - 1) * pageSize,
-      take: pageSize,
+  const [total, publishedRows, qualified, categoryRows] = await Promise.all([
+    db.adminArbitrageProduct.count({ where }),
+    db.adminArbitrageProduct.findMany({
+      where: { status: "PUBLISHED", ebayItemId: { not: null } },
+      select: { asin: true },
     }),
-    db.arbitrageItem.findMany({
-      where: { ebayItemId: { in: curatedEbayIds } },
+    db.adminArbitrageProduct.count({
+      where: {
+        status: "PUBLISHED",
+        ebayItemId: { not: null },
+        matchVerdict: { in: ["MATCH", "LIKELY"] },
+        matchConfidence: { gte: 95 },
+        marginPct: { gte: 15 },
+        estimatedProfitCents: { gt: 0 },
+      },
+    }),
+    db.adminArbitrageProduct.findMany({
+      where: { status: "PUBLISHED" },
       distinct: ["category"],
       select: { category: true },
       orderBy: { category: "asc" },
     }),
   ]);
 
+  let items = await db.adminArbitrageProduct.findMany({
+    where,
+    orderBy: orderBy(params),
+    ...(params.sortKey === "usersListed"
+      ? {}
+      : {
+          skip: (Math.max(1, params.page) - 1) * pageSize,
+          take: pageSize,
+        }),
+  });
+
+  const adoptionAsins = items.map((item) => item.asin);
+  const activeProducts = adoptionAsins.length
+    ? await db.product.findMany({
+        where: {
+          sku: { in: adoptionAsins },
+          listings: { some: { status: "ACTIVE" } },
+        },
+        select: { sku: true, userId: true },
+      })
+    : [];
+  const usersByAsin = new Map<string, Set<string>>();
+  for (const product of activeProducts) {
+    const users = usersByAsin.get(product.sku) ?? new Set<string>();
+    users.add(product.userId);
+    usersByAsin.set(product.sku, users);
+  }
+  if (params.sortKey === "usersListed") {
+    items.sort((a, b) => {
+      const difference =
+        (usersByAsin.get(a.asin)?.size ?? 0) -
+        (usersByAsin.get(b.asin)?.size ?? 0);
+      if (difference !== 0) return params.sortDesc ? -difference : difference;
+      return b.updatedAt.getTime() - a.updatedAt.getTime();
+    });
+    const start = (Math.max(1, params.page) - 1) * pageSize;
+    items = items.slice(start, start + pageSize);
+  }
+
   // Ownership: which of this page's ASINs the user already sells.
   const asins = items.map((i) => i.asin);
-  const products = await db.product.findMany({
-    where: { userId, sku: { in: asins } },
-    select: {
-      sku: true,
-      listings: {
-        orderBy: { updatedAt: "desc" },
-        select: { ebayListingId: true, status: true },
+  const [products, researchRows, listedByUser] = await Promise.all([
+    db.product.findMany({
+      where: { userId, sku: { in: asins } },
+      select: {
+        sku: true,
+        listings: {
+          orderBy: { updatedAt: "desc" },
+          select: { ebayListingId: true, status: true },
+        },
       },
-    },
-  });
+    }),
+    db.arbitrageItem.findMany({
+      where: {
+        ebayItemId: {
+          in: items.flatMap((item) => item.ebayItemId ?? []),
+        },
+      },
+      select: {
+        ebayItemId: true,
+        feeCents: true,
+        matchMethod: true,
+        createdAt: true,
+      },
+    }),
+    db.product.count({
+      where: {
+        userId,
+        sku: { in: publishedRows.map((item) => item.asin) },
+        listings: { some: { status: "ACTIVE" } },
+      },
+    }),
+  ]);
   const itemHost =
     ebayEnvConfig()?.env === "PRODUCTION"
       ? "https://www.ebay.com"
@@ -206,44 +328,62 @@ export async function listArbitragePage(
       published?.ebayListingId ? `${itemHost}/itm/${published.ebayListingId}` : null,
     );
   }
+  const researchById = new Map(
+    researchRows.map((row) => [row.ebayItemId, row]),
+  );
 
   return {
     rows: items.map((i) => ({
       asin: i.asin,
-      ebayItemId: i.ebayItemId,
+      ebayItemId: i.ebayItemId ?? "",
       category: i.category,
-      title: i.ebayTitle,
-      imageUrl: i.imageUrl,
-      ebayPriceCents: i.ebayPriceCents,
-      ebaySales30d: i.salesEst,
-      competitorCount: i.competitorCount ?? 1,
-      avgCompPriceCents: i.avgCompPriceCents ?? i.ebayPriceCents,
-      suggestedListingPriceCents: arbitrageSuggestedPriceCents(
-        i.amazonPriceCents,
-        i.ebayPriceCents,
-        i.bestSellingPriceCents,
-        i.avgCompPriceCents ?? i.ebayPriceCents,
-        i.amazonShippingCents,
-      ),
-      ebayUrl: i.ebayUrl,
+      title: i.ebayTitle ?? i.amazonTitle,
+      imageUrl: i.ebayImageUrl ?? i.amazonImageUrl ?? "",
+      ebayPriceCents: i.ebayPriceCents ?? 0,
+      ebaySales30d: i.estimatedSales30d ?? 0,
+      competitorCount: i.competitorCount,
+      avgCompPriceCents: i.averageCompetitorPriceCents,
+      suggestedListingPriceCents:
+        i.suggestedPriceCents ??
+        arbitrageSuggestedPriceCents(
+          i.amazonPriceCents,
+          i.ebayPriceCents ?? 0,
+          i.ebayRecommendedPriceCents,
+          i.averageCompetitorPriceCents ?? i.ebayPriceCents ?? 0,
+          i.amazonShippingCents,
+        ),
+      ebayUrl: i.ebayUrl ?? "",
       amazonPriceCents: i.amazonPriceCents,
       amazonShippingCents: i.amazonShippingCents,
       amazonUrl: i.amazonUrl,
-      profitCents: i.profitCents,
-      marginPct: i.marginPct,
-      feeCents: i.feeCents,
+      profitCents: i.estimatedProfitCents ?? 0,
+      marginPct: i.marginPct ?? 0,
+      feeCents: researchById.get(i.ebayItemId ?? "")?.feeCents ?? 0,
       mirrored: owned.has(i.asin),
       storeEbayUrl: owned.get(i.asin) ?? null,
-      foundAt: i.createdAt.toISOString(),
+      foundAt:
+        researchById.get(i.ebayItemId ?? "")?.createdAt.toISOString() ??
+        i.createdAt.toISOString(),
       amazonTitle: i.amazonTitle,
+      amazonImageUrl: i.amazonImageUrl,
+      isAmazonBestSeller: i.isAmazonBestSeller,
+      ebayRecommendedPriceCents: i.ebayRecommendedPriceCents,
+      usersListed: usersByAsin.get(i.asin)?.size ?? 0,
+      lastResearchedAt: i.lastResearchedAt?.toISOString() ?? null,
       matchVerdict: i.matchVerdict,
       matchConfidence: i.matchConfidence,
       matchReason: i.matchReason,
-      matchMethod: i.matchMethod,
+      matchMethod: researchById.get(i.ebayItemId ?? "")?.matchMethod ?? "ADMIN",
     })),
     total,
     page: Math.max(1, params.page),
     pageCount: Math.max(1, Math.ceil(total / pageSize)),
     categories: categoryRows.map((c) => c.category),
+    counts: {
+      published: publishedRows.length,
+      qualified,
+      listedByUser,
+      hiddenByUser: hiddenIds.length,
+    },
   };
 }

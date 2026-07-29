@@ -61,6 +61,11 @@ export type OpportunityRow = {
   /** ISO date the scanner first found this opportunity. */
   foundAt: string;
   amazonTitle: string;
+  amazonImageUrl: string | null;
+  isAmazonBestSeller: boolean;
+  ebayRecommendedPriceCents: number | null;
+  usersListed: number;
+  lastResearchedAt: string | null;
   matchVerdict: string;
   matchConfidence: number;
   matchReason: string | null;

@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { requireUser } from "@/lib/auth";
+import { requireAdmin, requireUser } from "@/lib/auth";
 import { scanMore } from "@/lib/arbitrage";
 import {
   listArbitragePage,
@@ -74,9 +74,12 @@ export async function exportArbitrageExcel(params: ArbitragePageParams) {
       estimatedSales30d: row.ebaySales30d,
       competitorCount: row.competitorCount,
       averageCompetitorPriceCents: row.avgCompPriceCents,
+      ebayRecommendedPriceCents: row.ebayRecommendedPriceCents,
       suggestedPriceCents: ["MATCH", "LIKELY"].includes(row.matchVerdict)
         ? row.suggestedListingPriceCents
         : null,
+      usersListed: row.usersListed,
+      lastResearchedAt: row.lastResearchedAt,
       matchVerdict: row.matchVerdict,
       matchConfidence: row.matchConfidence,
       matchReason: row.matchReason,
@@ -89,7 +92,7 @@ export async function exportArbitrageExcel(params: ArbitragePageParams) {
 /** Advance the scan now ("add more to the database"). Each call is
  * time-boxed; the client loops until its target is reached. */
 export async function scanForNew(target = 50): Promise<ScanReport> {
-  await requireUser();
+  await requireAdmin();
   const report = await scanMore({ target: Math.min(Math.max(1, target), 50) });
   revalidatePath("/arbitrage");
   return report;
@@ -236,7 +239,7 @@ async function assessAndPersistMatches(
 export async function verifyArbitrageMatches(
   ebayItemIds: string[],
 ): Promise<MatchVerificationResult[]> {
-  await requireUser();
+  await requireAdmin();
   const ids = [...new Set(ebayItemIds)].slice(0, 10);
   const rows = await db.arbitrageItem.findMany({
     where: { ebayItemId: { in: ids } },
@@ -273,7 +276,7 @@ export type HistoricalMatchBatchResult = {
 export async function verifyHistoricalArbitrageMatches(
   requestedBatchSize = 4,
 ): Promise<HistoricalMatchBatchResult> {
-  await requireUser();
+  await requireAdmin();
   // Retry rows abandoned by a transient provider failure, but not repeatedly
   // within the same long-running browser job.
   await db.arbitrageItem.updateMany({
@@ -334,7 +337,7 @@ export type ArbitrageMarketResult = {
 export async function researchArbitrageMarket(
   items: { asin: string; ebayItemId: string; title: string }[],
 ): Promise<ArbitrageMarketResult[]> {
-  await requireUser();
+  await requireAdmin();
   const results: ArbitrageMarketResult[] = [];
   for (const item of items.slice(0, 10)) {
     try {
@@ -428,6 +431,21 @@ export async function mirrorOpportunity(
   ebayPriceCents: number,
 ): Promise<MirrorOutcome> {
   const user = await requireUser();
+  const published = await db.adminArbitrageProduct.findFirst({
+    where: {
+      asin,
+      status: "PUBLISHED",
+      matchVerdict: { in: ["MATCH", "LIKELY"] },
+    },
+    select: { asin: true },
+  });
+  if (!published) {
+    return {
+      ok: false,
+      url: `https://www.amazon.com/dp/${asin}`,
+      error: "This product is not in the admin-published catalog.",
+    };
+  }
   const outcome = await mirrorUrl(
     user.id,
     `https://www.amazon.com/dp/${asin}`,
@@ -454,11 +472,21 @@ export async function mirrorOpportunities(
   items: { asin: string; ebayPriceCents: number }[],
 ): Promise<BulkMirrorResult> {
   const user = await requireUser();
+  const requested = items.slice(0, 50);
+  const published = await db.adminArbitrageProduct.findMany({
+    where: {
+      asin: { in: requested.map((item) => item.asin) },
+      status: "PUBLISHED",
+      matchVerdict: { in: ["MATCH", "LIKELY"] },
+    },
+    select: { asin: true },
+  });
+  const allowed = new Set(published.map((item) => item.asin));
   const mirroredAsins: string[] = [];
   let failed = 0;
   let firstError: string | undefined;
 
-  for (const item of items.slice(0, 50)) {
+  for (const item of requested.filter((item) => allowed.has(item.asin))) {
     const outcome = await mirrorUrl(
       user.id,
       `https://www.amazon.com/dp/${item.asin}`,

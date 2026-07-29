@@ -2,834 +2,527 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useRef, useState, useTransition } from "react";
+import { useState, useTransition } from "react";
 import {
-  fetchArbitragePage,
   exportArbitrageExcel,
   hideArbitrageItem,
-  researchArbitrageMarket,
-  scanForNew,
-  verifyArbitrageMatches,
 } from "@/lib/actions/arbitrage";
-import {
-  createArbitrageMirrorBatch,
-  createQualifiedArbitrageMirrorBatch,
-} from "@/lib/actions/mirror-batches";
-import {
-  AUTO_PUBLISH_MIN_MARGIN_PCT,
-  AUTO_PUBLISH_MIN_MATCH_CONFIDENCE,
-} from "@/lib/arbitrage/auto-publish";
-import type { ArbitragePage, ArbitragePageParams } from "@/lib/arbitrage/store";
+import { createArbitrageMirrorBatch } from "@/lib/actions/mirror-batches";
+import type {
+  ArbitragePage,
+  ArbitragePageParams,
+} from "@/lib/arbitrage/store";
 import type { OpportunityRow } from "@/lib/arbitrage/scanner";
-import { formatCents } from "@/lib/money";
-import { arbitrageSuggestedPriceCents } from "@/lib/arbitrage/pricing";
-import { Badge, Button, Card, Input, cx } from "@/components/ui";
-import { PremiumProgress, type PremiumProgressStatus } from "@/components/premium-progress";
 import { downloadBase64File } from "@/lib/download";
+import { formatCents } from "@/lib/money";
+import { Badge, Button, Card, Input, StatCard, cx } from "@/components/ui";
 
 type SortKey = ArbitragePageParams["sortKey"];
 
-const DEFAULT_PARAMS: ArbitragePageParams = {
-  page: 1,
-  pageSize: 25,
-  sortKey: "profit",
-  sortDesc: true,
-  category: "all",
-  minMarginPct: 0,
-  query: "",
-};
+function confidenceTone(value: number): "green" | "amber" | "red" {
+  if (value >= 95) return "green";
+  if (value >= 75) return "amber";
+  return "red";
+}
 
-type ArbitrageProgress = {
-  kind: "scan" | "market" | "verify" | "publish";
-  completed: number;
-  total: number;
-  succeeded: number;
-  failed: number;
-  examined?: number;
-  detail?: string;
-  status: PremiumProgressStatus;
-};
-
-function ArbitrageProgressCard({ progress, onStop }: { progress: ArbitrageProgress; onStop?: () => void }) {
-  const percentage = progress.total > 0
-    ? Math.round((progress.completed / progress.total) * 100)
-    : progress.status === "complete" ? 100 : 4;
-  const meta = {
-    scan: ["Discovering profitable products", "Researching best-selling products and their exact Amazon variants."],
-    market: ["Researching market intelligence", "Updating demand, competition, competitor pricing, and suggested prices."],
-    verify: ["Verifying product matches", "Comparing eBay products with their exact Amazon source variants."],
-    publish: ["Preparing automatic publishing", "Checking every researched product against your publishing rules."],
-  }[progress.kind];
-  return (
-    <PremiumProgress
-      title={progress.status === "complete" ? `${meta[0]} complete` : meta[0]}
-      subtitle={progress.detail ?? meta[1]}
-      percentage={percentage}
-      status={progress.status}
-      action={onStop && progress.status !== "complete" ? (
-        <Button size="sm" variant="secondary" onClick={onStop}>Stop safely</Button>
-      ) : undefined}
-      stats={[
-        { label: progress.kind === "scan" ? "new products" : "processed", value: `${progress.completed}/${progress.total}` },
-        ...(progress.examined !== undefined ? [{ label: "candidates examined", value: progress.examined, tone: "info" as const }] : []),
-        { label: progress.kind === "verify" ? "approved" : "updated", value: progress.succeeded, tone: "success" },
-        ...(progress.failed > 0 ? [{ label: "need attention", value: progress.failed, tone: "danger" as const }] : []),
-      ]}
-    />
+function CellValue({
+  value,
+  suffix = "",
+}: {
+  value: number | null;
+  suffix?: string;
+}) {
+  return value === null ? (
+    <span className="text-slate-400">—</span>
+  ) : (
+    <span className="tabular-nums">{value.toLocaleString()}{suffix}</span>
   );
 }
 
 function SortHeader({
   label,
   sortKey,
-  params,
-  onSort,
+  filters,
+  href,
+  align = "right",
+  sticky,
 }: {
   label: string;
   sortKey: SortKey;
-  params: ArbitragePageParams;
-  onSort: (key: SortKey) => void;
+  filters: ArbitragePageParams;
+  href: string;
+  align?: "left" | "right";
+  sticky?: "left" | "right";
 }) {
-  const active = params.sortKey === sortKey;
+  const active = filters.sortKey === sortKey;
   return (
-    <th className="px-4 py-3 text-right">
-      <button
-        onClick={() => onSort(sortKey)}
+    <th
+      className={cx(
+        "sticky top-0 z-30 bg-slate-50 px-4 py-3",
+        align === "right" ? "text-right" : "text-left",
+        sticky === "left" && "left-12 z-40",
+        sticky === "right" && "right-0 z-40",
+      )}
+    >
+      <Link
+        href={href}
         className={cx(
-          "inline-flex items-center gap-1 text-xs font-semibold uppercase tracking-wide hover:text-slate-900",
-          active ? "text-slate-900" : "text-slate-500",
+          "inline-flex items-center gap-1 whitespace-nowrap hover:text-indigo-700",
+          active ? "text-indigo-700" : "text-slate-500",
         )}
       >
         {label}
-        <span className="w-2 text-slate-400">
-          {active ? (params.sortDesc ? "↓" : "↑") : ""}
+        <span className="inline-block w-2">
+          {active ? (filters.sortDesc ? "↓" : "↑") : "↕"}
         </span>
-      </button>
+      </Link>
     </th>
   );
 }
 
-export function ArbitrageTable({
-  initial,
-  initialAutoPublish,
-  canManageData,
+function eligible(row: OpportunityRow) {
+  return !row.mirrored && ["MATCH", "LIKELY"].includes(row.matchVerdict);
+}
+
+function FinderRow({
+  row,
+  selected,
+  busy,
+  onSelect,
+  onPublish,
+  onHide,
 }: {
-  initial: ArbitragePage;
-  initialAutoPublish: boolean;
-  canManageData: boolean;
+  row: OpportunityRow;
+  selected: boolean;
+  busy: boolean;
+  onSelect: (checked: boolean) => void;
+  onPublish: () => void;
+  onHide: () => void;
+}) {
+  const publishable = eligible(row);
+  return (
+    <tr className="group border-t border-slate-100 align-top hover:bg-slate-50/70">
+      <td className="sticky left-0 z-10 w-12 bg-white px-3 py-5 group-hover:bg-slate-50">
+        <input
+          type="checkbox"
+          checked={selected}
+          disabled={!publishable}
+          onChange={(event) => onSelect(event.target.checked)}
+          aria-label={`Select ${row.amazonTitle}`}
+          className="h-4 w-4 rounded border-slate-300 text-indigo-600"
+        />
+      </td>
+      <td className="sticky left-12 z-10 min-w-[390px] bg-white px-5 py-4 group-hover:bg-slate-50">
+        <div className="flex gap-3">
+          {row.amazonImageUrl || row.imageUrl ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={row.amazonImageUrl || row.imageUrl}
+              alt=""
+              className="h-16 w-16 shrink-0 rounded-lg border border-slate-200 bg-white object-contain"
+            />
+          ) : (
+            <div className="h-16 w-16 shrink-0 rounded-lg bg-slate-100" />
+          )}
+          <div className="min-w-0">
+            <a
+              href={row.amazonUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="line-clamp-3 text-sm font-semibold leading-5 text-slate-900 hover:text-indigo-600"
+            >
+              {row.amazonTitle}
+            </a>
+            <p className="mt-1 text-xs text-slate-500">{row.asin}</p>
+            <div className="mt-1 flex flex-wrap gap-1.5">
+              {row.isAmazonBestSeller && <Badge tone="indigo">Amazon bestseller</Badge>}
+              {row.mirrored && <Badge tone="green">Listed by you</Badge>}
+            </div>
+          </div>
+        </div>
+      </td>
+      <td className="min-w-[170px] px-4 py-4 text-sm text-slate-700">{row.category}</td>
+      <td className="whitespace-nowrap px-4 py-4 text-right font-semibold tabular-nums">
+        {formatCents(row.amazonPriceCents + row.amazonShippingCents)}
+        <p className="mt-0.5 text-[11px] font-normal text-slate-500">
+          {formatCents(row.amazonPriceCents)}
+          {row.amazonShippingCents > 0
+            ? ` + ${formatCents(row.amazonShippingCents)} shipping`
+            : " · free shipping"}
+        </p>
+      </td>
+      <td className="min-w-[310px] px-4 py-4">
+        <a
+          href={row.ebayUrl}
+          target="_blank"
+          rel="noreferrer"
+          className="line-clamp-2 text-sm font-medium text-slate-800 hover:text-indigo-600"
+        >
+          {row.title}
+        </a>
+        <div className="mt-1">
+          <Badge tone={confidenceTone(row.matchConfidence)}>
+            {row.matchVerdict} {row.matchConfidence}%
+          </Badge>
+        </div>
+        {row.matchReason && (
+          <p className="mt-1 line-clamp-2 text-xs text-slate-500">{row.matchReason}</p>
+        )}
+      </td>
+      <td className="whitespace-nowrap px-4 py-4 text-right font-medium tabular-nums">
+        {formatCents(row.ebayPriceCents)}
+      </td>
+      <td className="whitespace-nowrap px-4 py-4 text-right">
+        {row.avgCompPriceCents === null ? "—" : formatCents(row.avgCompPriceCents)}
+      </td>
+      <td className="whitespace-nowrap px-4 py-4 text-right">
+        {row.ebayRecommendedPriceCents === null
+          ? <span className="text-slate-400">—</span>
+          : formatCents(row.ebayRecommendedPriceCents)}
+      </td>
+      <td className="whitespace-nowrap px-4 py-4 text-right font-semibold text-indigo-700">
+        {formatCents(row.suggestedListingPriceCents)}
+      </td>
+      <td className="px-4 py-4 text-right"><CellValue value={row.ebaySales30d} /></td>
+      <td className="px-4 py-4 text-right"><CellValue value={row.competitorCount} /></td>
+      <td className="whitespace-nowrap px-4 py-4 text-right">
+        <span className={row.profitCents > 0 ? "font-semibold text-emerald-700" : "text-red-600"}>
+          {formatCents(row.profitCents)}
+        </span>
+      </td>
+      <td className="px-4 py-4 text-right">
+        <span className={row.marginPct >= 15 ? "font-semibold text-emerald-700" : "text-amber-700"}>
+          {row.marginPct}%
+        </span>
+      </td>
+      <td className="px-4 py-4 text-right font-semibold tabular-nums">{row.usersListed}</td>
+      <td className="whitespace-nowrap px-4 py-4 text-xs text-slate-500">
+        {row.lastResearchedAt
+          ? new Date(row.lastResearchedAt).toLocaleDateString()
+          : "Not researched"}
+      </td>
+      <td className="sticky right-0 min-w-[170px] bg-white px-4 py-4 group-hover:bg-slate-50">
+        <div className="flex flex-col gap-1.5">
+          {row.storeEbayUrl ? (
+            <a
+              href={row.storeEbayUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex justify-center rounded-lg bg-emerald-50 px-2.5 py-1.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-100"
+            >
+              View your listing ↗
+            </a>
+          ) : publishable ? (
+            <Button size="sm" disabled={busy} onClick={onPublish}>
+              {busy ? "Starting…" : "Publish to eBay"}
+            </Button>
+          ) : (
+            <span className="rounded-lg bg-amber-50 px-2.5 py-1.5 text-center text-xs font-medium text-amber-700">
+              Review match first
+            </span>
+          )}
+          <Button size="sm" variant="ghost" disabled={busy} onClick={onHide}>
+            Hide from my finder
+          </Button>
+        </div>
+      </td>
+    </tr>
+  );
+}
+
+export function ArbitrageTable({
+  data,
+  filters,
+}: {
+  data: ArbitragePage;
+  filters: ArbitragePageParams;
 }) {
   const router = useRouter();
-  const [data, setData] = useState(initial);
-  const [params, setParams] = useState(DEFAULT_PARAMS);
-  const [queryInput, setQueryInput] = useState("");
+  const [expanded, setExpanded] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [pending, startTransition] = useTransition();
-  const [scanning, startScan] = useTransition();
-  const [researching, startResearch] = useTransition();
-  const [verifying, startVerify] = useTransition();
-  const [scanTarget, setScanTarget] = useState(50);
-  const [busyAsin, setBusyAsin] = useState<string | null>(null);
-  const [hidingId, setHidingId] = useState<string | null>(null);
+  const [busyId, setBusyId] = useState<string | null>(null);
   const [notice, setNotice] = useState<{ text: string; error: boolean } | null>(null);
-  const [progress, setProgress] = useState<ArbitrageProgress | null>(null);
-  const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const stopScanRequested = useRef(false);
+  const [pending, startTransition] = useTransition();
 
-  function load(next: ArbitragePageParams) {
-    setParams(next);
-    startTransition(async () => {
-      setData(await fetchArbitragePage(next));
+  function urlFor(
+    overrides: Partial<Record<
+      "page" | "q" | "category" | "match" | "minMargin" |
+      "minConfidence" | "qualified" | "sort" | "dir" | "pageSize",
+      string | number
+    >> = {},
+  ) {
+    const params = new URLSearchParams({
+      page: "1",
+      q: filters.query,
+      category: filters.category,
+      match: filters.matchVerdict ?? "ALL",
+      minMargin: String(filters.minMarginPct),
+      minConfidence: String(filters.minConfidence ?? 0),
+      qualified: filters.qualifiedOnly ? "1" : "0",
+      sort: filters.sortKey,
+      dir: filters.sortDesc ? "desc" : "asc",
+      pageSize: String(filters.pageSize ?? 50),
+    });
+    for (const [key, value] of Object.entries(overrides)) params.set(key, String(value));
+    return `/arbitrage?${params.toString()}`;
+  }
+
+  function sortHref(sortKey: SortKey) {
+    return urlFor({
+      sort: sortKey,
+      dir: filters.sortKey === sortKey && filters.sortDesc ? "asc" : "desc",
     });
   }
 
-  function update(partial: Partial<ArbitragePageParams>) {
-    load({ ...params, ...partial, page: partial.page ?? 1 });
-  }
-
-  function onSearchChange(value: string) {
-    setQueryInput(value);
-    if (searchTimer.current) clearTimeout(searchTimer.current);
-    searchTimer.current = setTimeout(() => update({ query: value }), 400);
-  }
-
-  function onSort(key: SortKey) {
-    update(
-      params.sortKey === key
-        ? { sortDesc: !params.sortDesc }
-        : { sortKey: key, sortDesc: true },
+  function toggleAll(checked: boolean) {
+    setSelected(
+      checked
+        ? new Set(data.rows.filter(eligible).map((row) => row.ebayItemId))
+        : new Set(),
     );
   }
 
-  function isMirrored(r: OpportunityRow) {
-    return r.mirrored;
-  }
-
-  function isVerifiedMatch(r: OpportunityRow) {
-    return r.matchVerdict === "MATCH" || r.matchVerdict === "LIKELY";
-  }
-
-  async function waitForScanRetry(delayMs: number): Promise<boolean> {
-    const retryAt = Date.now() + delayMs;
-    while (!stopScanRequested.current && Date.now() < retryAt) {
-      await new Promise((resolve) => setTimeout(resolve, 250));
-    }
-    return !stopScanRequested.current;
-  }
-
-  function stopScan() {
-    stopScanRequested.current = true;
-    setProgress((current) => current && ({
-      ...current,
-      status: "paused",
-      detail: "Stopping safely after the current provider lookup. Completed research is already saved.",
-    }));
-    setNotice({
-      text: "Stopping after the current provider lookup finishes…",
-      error: false,
+  function publish(ids: string[]) {
+    setNotice(null);
+    setBusyId(ids.length === 1 ? ids[0] : "bulk");
+    startTransition(async () => {
+      const result = await createArbitrageMirrorBatch(ids);
+      setBusyId(null);
+      if (result.error || !result.batchId) {
+        setNotice({ text: result.error ?? "Could not start the publishing batch.", error: true });
+        return;
+      }
+      router.push(`/mirror/batches/${result.batchId}`);
     });
   }
 
-  function scanNow() {
-    const SCAN_TARGET = scanTarget;
-    stopScanRequested.current = false;
+  function hide(row: OpportunityRow) {
+    setBusyId(row.ebayItemId);
     setNotice(null);
-    setProgress({ kind: "scan", completed: 0, total: SCAN_TARGET, succeeded: 0, failed: 0, examined: 0, status: "running" });
-    startScan(async () => {
-      let added = 0;
-      let examined = 0;
-      let exhausted = false;
-      let errors = 0;
-      let consecutiveFailures = 0;
-      // Each call is time-boxed server-side; loop until the full target of
-      // new items has been researched, today's sources run dry, or the user
-      // explicitly stops the scan. The server persists the queue after every
-      // small batch, so stopping never discards completed research.
-      while (
-        added < SCAN_TARGET &&
-        !exhausted &&
-        !stopScanRequested.current
-      ) {
-        let report: Awaited<ReturnType<typeof scanForNew>>;
-        try {
-          report = await scanForNew(SCAN_TARGET - added);
-        } catch {
-          errors++;
-          consecutiveFailures++;
-          const retrySeconds = Math.min(15, 2 ** consecutiveFailures);
-          setNotice({
-            text: `Provider request temporarily failed. Retrying in ${retrySeconds} seconds… ${added}/${SCAN_TARGET} new items added.`,
-            error: true,
-          });
-          setProgress({
-            kind: "scan",
-            completed: added,
-            total: SCAN_TARGET,
-            succeeded: added,
-            failed: errors,
-            examined,
-            detail: `Provider request paused. Retrying automatically in ${retrySeconds} seconds…`,
-            status: "paused",
-          });
-          if (!(await waitForScanRetry(retrySeconds * 1000))) break;
-          setProgress((current) => current && ({ ...current, status: "running", detail: undefined }));
-          continue;
-        }
-        added += report.added;
-        examined += report.examined;
-        exhausted = report.exhausted;
-        errors += report.errors ?? 0;
-        const temporarilyPaused = report.paused ?? false;
-        consecutiveFailures = temporarilyPaused
-          ? consecutiveFailures + 1
-          : report.added > 0 || report.examined > 0
-            ? 0
-            : consecutiveFailures + 1;
-        setNotice({
-          text: `Researching exact Amazon variants… ${added}/${SCAN_TARGET} new items added (${examined} candidates examined${errors ? `, ${errors} temporarily failed` : ""})`,
-          error: false,
-        });
-        setProgress({
-          kind: "scan",
-          completed: added,
-          total: SCAN_TARGET,
-          succeeded: added,
-          failed: errors,
-          examined,
-          detail: `Finding exact variants · ${added} of ${SCAN_TARGET} requested products added`,
-          status: "running",
-        });
-        if (temporarilyPaused || (report.added === 0 && report.examined === 0 && !exhausted)) {
-          const retrySeconds = Math.min(15, 2 ** consecutiveFailures);
-          setNotice({
-            text: `Provider lookup temporarily paused. Retrying in ${retrySeconds} seconds… ${added}/${SCAN_TARGET} new items added (${examined} examined).`,
-            error: false,
-          });
-          setProgress((current) => current && ({
-            ...current,
-            status: "paused",
-            detail: `Provider lookup paused. Retrying automatically in ${retrySeconds} seconds…`,
-          }));
-          if (!(await waitForScanRetry(retrySeconds * 1000))) break;
-          setProgress((current) => current && ({ ...current, status: "running", detail: undefined }));
-        }
-      }
-      try {
-        setData(await fetchArbitragePage(params));
-      } catch {
-        errors++;
-      }
-      const stopped = stopScanRequested.current;
-      const scanSummary = stopped
-        ? `Scan stopped: ${added} product candidate${added === 1 ? "" : "s"} added and ${examined} candidates examined. The queue was saved and will resume next time.`
-        : exhausted
-          ? `Scan complete: ${added} product candidate${added === 1 ? "" : "s"} added (${examined} candidates examined) — today's sources are fully scanned.`
-          : `Scan complete: ${added} product candidate${added === 1 ? "" : "s"} added (${examined} candidates examined)${errors ? ` after recovering from ${errors} temporary provider failure${errors === 1 ? "" : "s"}` : ""}.`;
-
-      setProgress({
-        kind: "scan",
-        completed: stopped || exhausted ? Math.min(added, SCAN_TARGET) : SCAN_TARGET,
-        total: SCAN_TARGET,
-        succeeded: added,
-        failed: errors,
-        examined,
-        detail: stopped ? "Scan stopped safely. The persisted queue will resume on your next scan." : scanSummary,
-        status: stopped ? "paused" : "complete",
+    startTransition(async () => {
+      await hideArbitrageItem(row.ebayItemId);
+      setSelected((current) => {
+        const next = new Set(current);
+        next.delete(row.ebayItemId);
+        return next;
       });
-
-      if (!stopped && initialAutoPublish) {
-        setNotice({
-          text: `${scanSummary} Checking all available products against the automatic publishing rules…`,
-          error: false,
-        });
-        setProgress({
-          kind: "publish",
-          completed: 99,
-          total: 100,
-          succeeded: added,
-          failed: errors,
-          detail: "Scan finished. Checking match confidence, margin, and prior publishing history.",
-          status: "running",
-        });
-        try {
-          const automaticBatch = await createQualifiedArbitrageMirrorBatch();
-          if (automaticBatch.error) {
-            setProgress((current) => current && ({ ...current, status: "error", completed: 100, detail: automaticBatch.error }));
-            setNotice({
-              text: `${scanSummary} Automatic publishing could not start: ${automaticBatch.error}`,
-              error: true,
-            });
-            return;
-          }
-          if (automaticBatch.batchId) {
-            router.push(`/mirror/batches/${automaticBatch.batchId}`);
-            return;
-          }
-          setNotice({
-            text: `${scanSummary} No unlisted products currently meet the ${AUTO_PUBLISH_MIN_MATCH_CONFIDENCE}% match and ${AUTO_PUBLISH_MIN_MARGIN_PCT}% net-margin rules.`,
-            error: false,
-          });
-          setProgress((current) => current && ({ ...current, status: "complete", completed: 100, detail: "Eligibility check complete. No additional products currently qualify." }));
-          return;
-        } catch {
-          setProgress((current) => current && ({ ...current, status: "error", completed: 100, failed: current.failed + 1, detail: "The automatic eligibility check temporarily failed." }));
-          setNotice({
-            text: `${scanSummary} The automatic eligibility check temporarily failed; no products were published.`,
-            error: true,
-          });
-          return;
-        }
-      }
-      setNotice({
-        text: scanSummary,
-        error: errors > 0 && !stopped && added < SCAN_TARGET,
-      });
-    });
-  }
-
-  function researchPage() {
-    setNotice(null);
-    setProgress({ kind: "market", completed: 0, total: data.rows.length, succeeded: 0, failed: 0, status: "running" });
-    startResearch(async () => {
-      let updated = 0;
-      let unavailable = 0;
-      let errors = 0;
-      for (let i = 0; i < data.rows.length; i += 10) {
-        const results = await researchArbitrageMarket(
-          data.rows.slice(i, i + 10).map((row) => ({
-            asin: row.asin,
-            ebayItemId: row.ebayItemId,
-            title: row.title,
-          })),
-        );
-        setData((previous) => ({
-          ...previous,
-          rows: previous.rows.map((row) => {
-            const result = results.find(
-              (item) => item.ebayItemId === row.ebayItemId,
-            );
-            return result?.market
-              ? {
-                  ...row,
-                  ebaySales30d: result.market.estimatedSales30d,
-                  competitorCount: result.market.competitorCount,
-                  avgCompPriceCents: result.market.averageCompetitorPriceCents,
-                  suggestedListingPriceCents: arbitrageSuggestedPriceCents(
-                    row.amazonPriceCents,
-                    row.ebayPriceCents,
-                    result.market.bestSellingPriceCents,
-                    result.market.averageCompetitorPriceCents,
-                    row.amazonShippingCents,
-                  ),
-                }
-              : row;
-          }),
-        }));
-        updated += results.filter((result) => result.market).length;
-        unavailable += results.filter(
-          (result) => !result.market && !result.error,
-        ).length;
-        errors += results.filter((result) => result.error).length;
-        setNotice({
-          text: `Researching page… ${Math.min(i + 10, data.rows.length)}/${data.rows.length} (${updated} updated)`,
-          error: false,
-        });
-        const completed = Math.min(i + 10, data.rows.length);
-        setProgress({
-          kind: "market",
-          completed,
-          total: data.rows.length,
-          succeeded: updated,
-          failed: errors,
-          detail: unavailable ? `${unavailable} products currently have no comparable market results.` : undefined,
-          status: completed === data.rows.length ? "complete" : "running",
-        });
-      }
-      setData(await fetchArbitragePage(params));
-      setNotice({
-        text: `Market research complete: ${updated} updated${unavailable ? `, ${unavailable} without comparable results` : ""}${errors ? `, ${errors} failed` : ""}.`,
-        error: errors > 0,
-      });
-    });
-  }
-
-  function verifyPageMatches() {
-    setNotice(null);
-    setProgress({ kind: "verify", completed: 0, total: data.rows.length, succeeded: 0, failed: 0, status: "running" });
-    startVerify(async () => {
-      let approved = 0;
-      let removed = 0;
-      let aiChecked = 0;
-      for (let i = 0; i < data.rows.length; i += 10) {
-        const results = await verifyArbitrageMatches(
-          data.rows.slice(i, i + 10).map((row) => row.ebayItemId),
-        );
-        approved += results.filter(
-          (result) => result.verdict === "MATCH" || result.verdict === "LIKELY",
-        ).length;
-        removed += results.filter(
-          (result) => result.verdict === "REJECTED" || result.verdict === "REVIEW",
-        ).length;
-        aiChecked += results.filter((result) => result.method === "AI").length;
-        setNotice({
-          text: `Checking product identity… ${Math.min(i + 10, data.rows.length)}/${data.rows.length}`,
-          error: false,
-        });
-        const completed = Math.min(i + 10, data.rows.length);
-        setProgress({
-          kind: "verify",
-          completed,
-          total: data.rows.length,
-          succeeded: approved,
-          failed: removed,
-          detail: aiChecked ? `${aiChecked} product pairs have been checked by AI.` : undefined,
-          status: completed === data.rows.length ? "complete" : "running",
-        });
-      }
-      setData(await fetchArbitragePage(params));
-      setSelected(new Set());
-      setNotice({
-        text: `Match verification complete: ${approved} approved, ${removed} pair${removed === 1 ? "" : "s"} flagged for review or excluded${aiChecked ? `, ${aiChecked} checked by AI` : " using identity rules"}.`,
-        error: false,
-      });
+      setBusyId(null);
+      router.refresh();
     });
   }
 
   function exportExcel() {
+    setBusyId("export");
     startTransition(async () => {
-      const file = await exportArbitrageExcel(params);
+      const file = await exportArbitrageExcel(filters);
       downloadBase64File(
         file.filename,
         file.base64,
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
       );
-      setNotice({ text: `Exported all ${data.total} matching opportunities to Excel.`, error: false });
-    });
-  }
-
-  function mirrorOne(row: OpportunityRow) {
-    setNotice(null);
-    setBusyAsin(row.asin);
-    startTransition(async () => {
-      const result = await createArbitrageMirrorBatch([row.ebayItemId]);
-      setBusyAsin(null);
-      if (result.error || !result.batchId) {
-        setNotice({ text: result.error ?? "Could not create the publishing batch.", error: true });
-        return;
-      }
-      router.push(`/mirror/batches/${result.batchId}`);
-    });
-  }
-
-  function hideOne(row: OpportunityRow) {
-    setHidingId(row.ebayItemId);
-    setNotice(null);
-    startTransition(async () => {
-      await hideArbitrageItem(row.ebayItemId);
-      setData(await fetchArbitragePage(params));
-      setSelected((current) => {
-        const updated = new Set(current);
-        updated.delete(row.asin);
-        return updated;
+      setBusyId(null);
+      setNotice({
+        text: `Exported ${data.total.toLocaleString()} matching opportunities.`,
+        error: false,
       });
-      setHidingId(null);
-      setNotice({ text: `Hidden "${row.title}" from your Arbitrage Finder.`, error: false });
     });
   }
 
-  function mirrorSelected() {
-    const ebayItemIds = data.rows
-      .filter((r) => selected.has(r.asin) && isVerifiedMatch(r) && !isMirrored(r))
-      .map((r) => r.ebayItemId);
-    setNotice(null);
-    startTransition(async () => {
-      const result = await createArbitrageMirrorBatch(ebayItemIds);
-      if (result.error || !result.batchId) {
-        setNotice({ text: result.error ?? "Could not create the publishing batch.", error: true });
-        return;
-      }
-      setSelected(new Set());
-      router.push(`/mirror/batches/${result.batchId}`);
-    });
-  }
-
-  const selectable = data.rows.filter((r) => isVerifiedMatch(r) && !isMirrored(r));
+  const eligibleRows = data.rows.filter(eligible);
   const allSelected =
-    selectable.length > 0 && selectable.every((r) => selected.has(r.asin));
+    eligibleRows.length > 0 &&
+    eligibleRows.every((row) => selected.has(row.ebayItemId));
 
   return (
-    <div className="space-y-4">
-      <div className="flex flex-wrap items-center gap-3">
-        <Input
-          value={queryInput}
-          onChange={(e) => onSearchChange(e.target.value)}
-          placeholder="Search products…"
-          className="w-56"
-          aria-label="Search products"
-        />
-        <select
-          value={params.category}
-          onChange={(e) => update({ category: e.target.value })}
-          className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
-        >
-          <option value="all">All categories</option>
-          {data.categories.map((c) => (
-            <option key={c} value={c}>
-              {c}
-            </option>
-          ))}
-        </select>
-        <select
-          value={params.pageSize}
-          onChange={(e) => update({ pageSize: Number(e.target.value), page: 1 })}
-          className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
-          aria-label="Items per page"
-        >
-          <option value={25}>25 per page</option>
-          <option value={50}>50 per page</option>
-          <option value={100}>100 per page</option>
-        </select>
-        <select
-          value={params.minMarginPct}
-          onChange={(e) => update({ minMarginPct: Number(e.target.value) })}
-          className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
-        >
-          <option value={0}>Any margin</option>
-          <option value={15}>Margin ≥ 15%</option>
-          <option value={25}>Margin ≥ 25%</option>
-          <option value={35}>Margin ≥ 35%</option>
-        </select>
-        <p className="text-sm text-slate-500">
-          {data.total.toLocaleString()} researched
-        </p>
-        <div className="ml-auto flex items-center gap-2">
-          {canManageData && (
-            <>
-              {scanning ? (
-                <Button variant="secondary" onClick={stopScan}>
-                  Stop scan
-                </Button>
-              ) : (
-                <div className="flex items-center gap-2">
-                  <select
-                    value={scanTarget}
-                    onChange={(event) => setScanTarget(Number(event.target.value))}
-                    className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
-                    aria-label="Number of new items to scan"
-                  >
-                    <option value={50}>50 items</option>
-                    <option value={100}>100 items</option>
-                    <option value={200}>200 items</option>
-                    <option value={500}>500 items</option>
-                    <option value={1000}>1,000 items</option>
-                  </select>
-                  <Button variant="secondary" onClick={scanNow}>
-                    Scan for {scanTarget.toLocaleString()} new items
-                  </Button>
-                </div>
-              )}
-              <Button variant="secondary" disabled={researching} onClick={researchPage}>
-                {researching ? "Researching market…" : "Research market data"}
-              </Button>
-              <Button variant="secondary" disabled={verifying} onClick={verifyPageMatches}>
-                {verifying ? "Verifying matches…" : "Verify product matches"}
-              </Button>
-            </>
-          )}
-          <Button variant="secondary" disabled={pending} onClick={exportExcel}>
-            Export Excel
-          </Button>
-          <Button disabled={pending || selected.size === 0} onClick={mirrorSelected}>
-            {`Publish selected (${selected.size})`}
-          </Button>
-        </div>
+    <div className={cx(
+      "space-y-5",
+      !expanded && "relative left-1/2 w-[calc(100vw-17rem)] -translate-x-1/2",
+    )}>
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <StatCard label="Published opportunities" value={data.counts.published.toLocaleString()} />
+        <StatCard label="High-confidence & profitable" value={data.counts.qualified.toLocaleString()} tone="positive" />
+        <StatCard label="Your active products" value={data.counts.listedByUser.toLocaleString()} />
+        <StatCard label="Hidden by you" value={data.counts.hiddenByUser.toLocaleString()} />
       </div>
 
-      {progress && (
-        <ArbitrageProgressCard
-          progress={progress}
-          onStop={progress.kind === "scan" && scanning ? stopScan : undefined}
-        />
+      {notice && (
+        <div className={cx(
+          "rounded-lg border px-4 py-3 text-sm",
+          notice.error
+            ? "border-red-200 bg-red-50 text-red-700"
+            : "border-emerald-200 bg-emerald-50 text-emerald-700",
+        )}>
+          {notice.text}
+        </div>
       )}
 
-      {notice && (!progress || progress.status === "complete" || progress.status === "error") && (
-        <p
-          className={cx(
-            "rounded-lg px-3 py-2 text-sm",
-            notice.error ? "bg-red-50 text-red-700" : "bg-emerald-50 text-emerald-700",
-          )}
-        >
-          {notice.text}{" "}
-        </p>
-      )}
-
-      <Card className={cx("overflow-x-auto", pending && "opacity-60")}>
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-slate-200 text-left text-xs uppercase tracking-wide text-slate-500">
-              <th className="px-4 py-3">
-                <input
-                  type="checkbox"
-                  checked={allSelected}
-                  onChange={() =>
-                    setSelected(
-                      allSelected ? new Set() : new Set(selectable.map((r) => r.asin)),
-                    )
-                  }
-                  aria-label="Select all"
-                />
-              </th>
-              <th className="px-4 py-3">Product</th>
-              <SortHeader label="Match confidence" sortKey="matchConfidence" params={params} onSort={onSort} />
-              <SortHeader label="eBay price" sortKey="ebayPrice" params={params} onSort={onSort} />
-              <SortHeader label="Est. sales/30d" sortKey="sales" params={params} onSort={onSort} />
-              <SortHeader label="Competition" sortKey="competition" params={params} onSort={onSort} />
-              <SortHeader label="Avg. comp price" sortKey="avgCompPrice" params={params} onSort={onSort} />
-              <th className="px-4 py-3 text-right">Suggested price</th>
-              <SortHeader label="Amazon landed cost" sortKey="amazonPrice" params={params} onSort={onSort} />
-              <SortHeader label="Profit after ads" sortKey="profit" params={params} onSort={onSort} />
-              <SortHeader label="Margin after ads" sortKey="margin" params={params} onSort={onSort} />
-              <SortHeader label="Found" sortKey="newest" params={params} onSort={onSort} />
-              <th className="px-4 py-3" />
-            </tr>
-          </thead>
-          <tbody>
-            {data.rows.length === 0 && (
-              <tr>
-                <td colSpan={13} className="px-6 py-12 text-center text-sm text-slate-500">
-                  No matching or reviewable opportunities are currently available. Run a scan
-                  to research more candidates.
-                </td>
-              </tr>
-            )}
-            {data.rows.map((r) => (
-              <tr
-                key={r.ebayItemId}
-                className={cx(
-                  "border-b border-slate-100 last:border-0",
-                  selected.has(r.asin) && "bg-indigo-50/50",
-                )}
+      {expanded && <div className="fixed inset-0 z-40 bg-slate-950/35 backdrop-blur-sm" />}
+      <Card className={cx(
+        "min-w-0 overflow-hidden",
+        expanded && "fixed inset-3 z-50 flex flex-col rounded-2xl border-slate-300 shadow-2xl",
+      )}>
+        <div className="border-b border-slate-200 bg-white px-5 py-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2 className="font-semibold text-slate-900">Published product intelligence</h2>
+              <p className="mt-0.5 text-xs text-slate-500">
+                Curated by Sellfinity admins. Profit and margin include Amazon shipping,
+                eBay fees, and a 3% advertising allowance.
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-xs text-slate-500">{data.total.toLocaleString()} results</span>
+              <Button
+                type="button"
+                variant="secondary"
+                disabled={pending}
+                onClick={exportExcel}
               >
-                <td className="px-4 py-3">
+                {busyId === "export" ? "Exporting…" : "Export Excel"}
+              </Button>
+              <Button
+                type="button"
+                disabled={pending || selected.size === 0}
+                onClick={() => publish([...selected])}
+              >
+                Publish selected ({selected.size})
+              </Button>
+              <Button type="button" variant="secondary" onClick={() => setExpanded((value) => !value)}>
+                {expanded ? "↙ Exit full screen" : "↗ Expand table"}
+              </Button>
+            </div>
+          </div>
+
+          <form action="/arbitrage" method="get" className="mt-4 space-y-3">
+            <input type="hidden" name="sort" value={filters.sortKey} />
+            <input type="hidden" name="dir" value={filters.sortDesc ? "desc" : "asc"} />
+            <div className="flex flex-wrap gap-2">
+              <div className="min-w-[280px] flex-1">
+                <Input
+                  name="q"
+                  defaultValue={filters.query}
+                  placeholder="Search product, ASIN, eBay ID, category, or match reason…"
+                />
+              </div>
+              <select
+                name="category"
+                defaultValue={filters.category}
+                className="max-w-[240px] rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
+              >
+                <option value="all">All categories</option>
+                {data.categories.map((category) => (
+                  <option key={category} value={category}>{category}</option>
+                ))}
+              </select>
+              <Button type="submit">Search & filter</Button>
+              <Link href="/arbitrage" className="inline-flex items-center rounded-lg px-3 py-2 text-sm font-medium text-slate-500 hover:bg-slate-100">
+                Clear
+              </Link>
+            </div>
+            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
+              <select name="match" defaultValue={filters.matchVerdict ?? "ALL"} className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm">
+                <option value="ALL">Any match status</option>
+                <option value="MATCH">Exact match</option>
+                <option value="LIKELY">Likely match</option>
+                <option value="REVIEW">Needs your review</option>
+              </select>
+              <select name="minMargin" defaultValue={String(filters.minMarginPct)} className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm">
+                <option value="0">Any margin</option>
+                <option value="10">Margin ≥ 10%</option>
+                <option value="15">Margin ≥ 15%</option>
+                <option value="20">Margin ≥ 20%</option>
+                <option value="30">Margin ≥ 30%</option>
+              </select>
+              <select name="minConfidence" defaultValue={String(filters.minConfidence ?? 0)} className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm">
+                <option value="0">Any confidence</option>
+                <option value="70">Confidence ≥ 70%</option>
+                <option value="85">Confidence ≥ 85%</option>
+                <option value="95">Confidence ≥ 95%</option>
+              </select>
+              <select name="pageSize" defaultValue={String(filters.pageSize ?? 50)} className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm">
+                <option value="25">25 per page</option>
+                <option value="50">50 per page</option>
+                <option value="100">100 per page</option>
+              </select>
+              <label className="flex cursor-pointer items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-medium text-emerald-900">
+                <input type="checkbox" name="qualified" value="1" defaultChecked={filters.qualifiedOnly} className="h-4 w-4 rounded border-emerald-400 text-emerald-600" />
+                Qualified only
+              </label>
+            </div>
+          </form>
+        </div>
+
+        <div className={cx("overflow-auto", expanded ? "min-h-0 flex-1" : "max-h-[72vh]")}>
+          <table className="w-full min-w-[2600px] text-sm">
+            <thead className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+              <tr>
+                <th className="sticky left-0 top-0 z-50 w-12 bg-slate-50 px-3 py-3">
                   <input
                     type="checkbox"
-                    checked={selected.has(r.asin)}
-                    onChange={() =>
-                      setSelected((prev) => {
-                        const next = new Set(prev);
-                        if (next.has(r.asin)) next.delete(r.asin);
-                        else next.add(r.asin);
-                        return next;
-                      })
-                    }
-                    disabled={isMirrored(r) || !isVerifiedMatch(r)}
-                    aria-label={`Select ${r.title}`}
+                    checked={allSelected}
+                    disabled={eligibleRows.length === 0}
+                    onChange={(event) => toggleAll(event.target.checked)}
+                    aria-label="Select all publishable products on this page"
+                    className="h-4 w-4 rounded border-slate-300 text-indigo-600"
                   />
-                </td>
-                <td className="max-w-sm px-4 py-3">
-                  <div className="flex items-center gap-3">
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img
-                      src={r.imageUrl}
-                      alt=""
-                      className="h-10 w-10 shrink-0 rounded-lg bg-slate-100 object-cover"
-                    />
-                    <div className="min-w-0">
-                      <p className="truncate font-medium text-slate-900" title={r.title}>
-                        {r.title}
-                      </p>
-                      <p className="text-xs text-slate-500">
-                        {r.category} ·{" "}
-                        <a href={r.ebayUrl} target="_blank" rel="noreferrer" className="text-indigo-600 hover:underline">
-                          eBay comp
-                        </a>{" "}
-                        ·{" "}
-                        <a href={r.amazonUrl} target="_blank" rel="noreferrer" className="text-indigo-600 hover:underline">
-                          Amazon source
-                        </a>
-                      </p>
-                      <p className="mt-1 truncate text-xs text-slate-500" title={r.amazonTitle}>
-                        Amazon: {r.amazonTitle}
-                      </p>
-                    </div>
-                  </div>
-                </td>
-                <td className="px-4 py-3 text-right">
-                  <span title={r.matchReason ?? "This pair has not been checked yet."}>
-                    <Badge tone={isVerifiedMatch(r) ? "green" : "amber"}>
-                      {r.matchVerdict === "REVIEW" ? "Review" : "Match"} {r.matchConfidence}%
-                    </Badge>
-                  </span>
-                  {r.matchVerdict === "REVIEW" && (
-                    <p className="mt-1 text-xs text-amber-700">Exact variant unverified</p>
-                  )}
-                </td>
-                <td className="px-4 py-3 text-right font-medium tabular-nums">
-                  {formatCents(r.ebayPriceCents)}
-                </td>
-                <td className="px-4 py-3 text-right tabular-nums">{r.ebaySales30d}</td>
-                <td className="px-4 py-3 text-right tabular-nums">
-                  {r.competitorCount ?? "—"}
-                </td>
-                <td className="px-4 py-3 text-right tabular-nums">
-                  {r.avgCompPriceCents !== null
-                    ? formatCents(r.avgCompPriceCents)
-                    : "—"}
-                </td>
-                <td className="px-4 py-3 text-right font-medium tabular-nums text-indigo-700">
-                  {isVerifiedMatch(r) ? formatCents(r.suggestedListingPriceCents) : "—"}
-                </td>
-                <td className="px-4 py-3 text-right tabular-nums">
-                  <span title={isVerifiedMatch(r) ? "Amazon item price plus source shipping" : "Candidate price only; exact child variant is not verified."}>
-                    {isVerifiedMatch(r)
-                      ? formatCents(r.amazonPriceCents + r.amazonShippingCents)
-                      : `~${formatCents(r.amazonPriceCents + r.amazonShippingCents)}`}
-                  </span>
-                  {isVerifiedMatch(r) && (
-                    <p className="mt-0.5 text-[11px] text-slate-500">
-                      {r.amazonShippingCents > 0
-                        ? `${formatCents(r.amazonPriceCents)} + ${formatCents(r.amazonShippingCents)} ship`
-                        : "Free shipping"}
-                    </p>
-                  )}
-                </td>
-                <td className="px-4 py-3 text-right font-medium tabular-nums text-emerald-600">
-                  {isVerifiedMatch(r) ? formatCents(r.profitCents) : "—"}
-                </td>
-                <td className="px-4 py-3 text-right tabular-nums">
-                  {isVerifiedMatch(r) ? `${r.marginPct}%` : "—"}
-                </td>
-                <td className="whitespace-nowrap px-4 py-3 text-right text-xs text-slate-500">
-                  {new Date(r.foundAt).toLocaleDateString("en-US", {
-                    month: "short",
-                    day: "numeric",
-                    timeZone: "UTC",
+                </th>
+                <SortHeader label="Amazon item" sortKey="amazonTitle" filters={filters} href={sortHref("amazonTitle")} align="left" sticky="left" />
+                <SortHeader label="Category" sortKey="category" filters={filters} href={sortHref("category")} align="left" />
+                <SortHeader label="Amazon landed cost" sortKey="amazonPrice" filters={filters} href={sortHref("amazonPrice")} />
+                <SortHeader label="Equivalent eBay item" sortKey="matchConfidence" filters={filters} href={sortHref("matchConfidence")} align="left" />
+                <SortHeader label="eBay price" sortKey="ebayPrice" filters={filters} href={sortHref("ebayPrice")} />
+                <SortHeader label="Competitor avg" sortKey="avgCompPrice" filters={filters} href={sortHref("avgCompPrice")} />
+                <SortHeader label="eBay recommended" sortKey="recommendedPrice" filters={filters} href={sortHref("recommendedPrice")} />
+                <SortHeader label="Suggested price" sortKey="suggestedPrice" filters={filters} href={sortHref("suggestedPrice")} />
+                <SortHeader label="Sales / month" sortKey="sales" filters={filters} href={sortHref("sales")} />
+                <SortHeader label="Competition" sortKey="competition" filters={filters} href={sortHref("competition")} />
+                <SortHeader label="Profit after ads" sortKey="profit" filters={filters} href={sortHref("profit")} />
+                <SortHeader label="Margin after ads" sortKey="margin" filters={filters} href={sortHref("margin")} />
+                <SortHeader label="Users listed" sortKey="usersListed" filters={filters} href={sortHref("usersListed")} />
+                <SortHeader label="Researched" sortKey="researched" filters={filters} href={sortHref("researched")} align="left" />
+                <th className="sticky right-0 top-0 z-40 bg-slate-50 px-4 py-3 text-left">Publish</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.rows.map((row) => (
+                <FinderRow
+                  key={row.ebayItemId}
+                  row={row}
+                  selected={selected.has(row.ebayItemId)}
+                  busy={pending && (busyId === row.ebayItemId || busyId === "bulk")}
+                  onSelect={(checked) => setSelected((current) => {
+                    const next = new Set(current);
+                    if (checked) next.add(row.ebayItemId);
+                    else next.delete(row.ebayItemId);
+                    return next;
                   })}
-                </td>
-                <td className="whitespace-nowrap px-4 py-3 text-right">
-                  <span className="inline-flex items-center gap-2">
-                  {!isVerifiedMatch(r) ? (
-                    <Badge tone="amber">Review candidate</Badge>
-                  ) : isMirrored(r) ? (
-                    r.storeEbayUrl ? (
-                      <a
-                        href={r.storeEbayUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="inline-flex items-center rounded-md bg-indigo-50 px-2 py-0.5 text-xs font-medium text-indigo-700 ring-1 ring-inset ring-indigo-600/20 hover:bg-indigo-100"
-                      >
-                        My eBay listing ↗
-                      </a>
-                    ) : (
-                      <Link href="/listings">
-                        <Badge tone="indigo">Draft in store →</Badge>
-                      </Link>
-                    )
-                  ) : (
-                    <Button size="sm" disabled={pending} onClick={() => mirrorOne(r)}>
-                      {busyAsin === r.asin ? "Creating batch…" : "Publish to eBay"}
-                    </Button>
-                  )}
-                    <Button size="sm" variant="ghost" disabled={pending} onClick={() => hideOne(r)}>
-                      {hidingId === r.ebayItemId ? "Hiding…" : "Hide"}
-                    </Button>
-                  </span>
-                </td>
-              </tr>
-            ))}
-            {data.rows.length === 0 && (
-              <tr>
-                <td colSpan={13} className="px-4 py-12 text-center text-slate-500">
-                  {data.total === 0
-                    ? "The research database is empty — run a scan to start filling it."
-                    : "No opportunities match these filters."}
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </Card>
+                  onPublish={() => publish([row.ebayItemId])}
+                  onHide={() => hide(row)}
+                />
+              ))}
+            </tbody>
+          </table>
+          {data.rows.length === 0 && (
+            <div className="px-6 py-16 text-center text-sm text-slate-500">
+              No admin-published opportunities match these search filters.
+            </div>
+          )}
+        </div>
 
-      <div className="flex items-center justify-center gap-4 text-sm">
-        <Button
-          variant="secondary"
-          size="sm"
-          disabled={pending || data.page <= 1}
-          onClick={() => update({ page: data.page - 1 })}
-        >
-          ← Previous
-        </Button>
-        <span className="text-slate-500">
-          Page {data.page} of {data.pageCount}
-        </span>
-        <Button
-          variant="secondary"
-          size="sm"
-          disabled={pending || data.page >= data.pageCount}
-          onClick={() => update({ page: data.page + 1 })}
-        >
-          Next →
-        </Button>
-      </div>
+        <div className="flex items-center justify-between border-t border-slate-200 bg-white px-5 py-3 text-sm">
+          <span className="text-slate-500">
+            Page {data.page} of {data.pageCount} · {data.total.toLocaleString()} matching products
+          </span>
+          <div className="flex gap-2">
+            {data.page > 1 ? (
+              <Link href={urlFor({ page: data.page - 1 })} className="rounded-lg border px-3 py-1.5 hover:bg-slate-50">Previous</Link>
+            ) : <span />}
+            {data.page < data.pageCount && (
+              <Link href={urlFor({ page: data.page + 1 })} className="rounded-lg border px-3 py-1.5 hover:bg-slate-50">Next</Link>
+            )}
+          </div>
+        </div>
+      </Card>
     </div>
   );
 }

@@ -126,10 +126,16 @@ describe("listArbitragePage", () => {
 
   it("supports 100 rows and sorts the entire dataset by requested metrics", async () => {
     await persistOpportunities(Array.from({ length: 120 }, (_, index) => opportunity(index)));
-    await db.arbitrageItem.update({
-      where: { ebayItemId: "v1|1005|0" },
-      data: { competitorCount: 999 },
-    });
+    await db.$transaction([
+      db.arbitrageItem.update({
+        where: { ebayItemId: "v1|1005|0" },
+        data: { competitorCount: 999 },
+      }),
+      db.adminArbitrageProduct.update({
+        where: { asin: "B0TEST0005" },
+        data: { competitorCount: 999 },
+      }),
+    ]);
     const user = await db.user.create({
       data: { email: "sort@t.dev", passwordHash: "x", name: "T" },
     });
