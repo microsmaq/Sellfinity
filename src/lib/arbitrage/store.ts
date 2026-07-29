@@ -5,6 +5,10 @@ import type { ArbitrageOpportunity, OpportunityRow } from "./scanner";
 import { estimateMargin } from "@/lib/fees";
 import { syncAdminCatalogFromOpportunities } from "./admin-catalog";
 import { arbitrageSuggestedPriceCents } from "./pricing";
+import {
+  AUTO_PUBLISH_FLAT_PROFIT_CENTS,
+  AUTO_PUBLISH_MIN_MARGIN_PCT,
+} from "./auto-publish";
 
 /** Upsert scanned opportunities into the shared research database.
  * Batched: one lookup + one createMany for new rows, individual updates
@@ -208,7 +212,10 @@ export async function listArbitragePage(
     ...(params.qualifiedOnly && {
       matchVerdict: { in: ["MATCH", "LIKELY"] },
       matchConfidence: { gte: 95 },
-      marginPct: { gte: 15 },
+      OR: [
+        { marginPct: { gte: AUTO_PUBLISH_MIN_MARGIN_PCT } },
+        { estimatedProfitCents: { gte: AUTO_PUBLISH_FLAT_PROFIT_CENTS } },
+      ],
       estimatedProfitCents: { gt: 0 },
       suggestedPriceCents: { not: null },
     }),
@@ -239,7 +246,10 @@ export async function listArbitragePage(
         ebayItemId: { not: null },
         matchVerdict: { in: ["MATCH", "LIKELY"] },
         matchConfidence: { gte: 95 },
-        marginPct: { gte: 15 },
+        OR: [
+          { marginPct: { gte: AUTO_PUBLISH_MIN_MARGIN_PCT } },
+          { estimatedProfitCents: { gte: AUTO_PUBLISH_FLAT_PROFIT_CENTS } },
+        ],
         estimatedProfitCents: { gt: 0 },
       },
     }),
@@ -342,8 +352,21 @@ export async function listArbitragePage(
   );
 
   return {
-    rows: items.map((i) => ({
-      asin: i.asin,
+    rows: items.map((i) => {
+      const suggestedPrice = arbitrageSuggestedPriceCents(
+        i.amazonPriceCents,
+        i.ebayPriceCents ?? 0,
+        i.ebayRecommendedPriceCents,
+        i.averageCompetitorPriceCents ?? i.ebayPriceCents ?? 0,
+        i.amazonShippingCents,
+      );
+      const currentMargin = estimateMargin(
+        suggestedPrice,
+        i.amazonPriceCents,
+        i.amazonShippingCents,
+      );
+      return {
+        asin: i.asin,
       ebayItemId: i.ebayItemId ?? "",
       category: i.category,
       title: i.ebayTitle ?? i.amazonTitle,
@@ -352,22 +375,14 @@ export async function listArbitragePage(
       ebaySales30d: i.estimatedSales30d ?? 0,
       competitorCount: i.competitorCount,
       avgCompPriceCents: i.averageCompetitorPriceCents,
-      suggestedListingPriceCents:
-        i.suggestedPriceCents ??
-        arbitrageSuggestedPriceCents(
-          i.amazonPriceCents,
-          i.ebayPriceCents ?? 0,
-          i.ebayRecommendedPriceCents,
-          i.averageCompetitorPriceCents ?? i.ebayPriceCents ?? 0,
-          i.amazonShippingCents,
-        ),
+      suggestedListingPriceCents: suggestedPrice,
       ebayUrl: i.ebayUrl ?? "",
       amazonPriceCents: i.amazonPriceCents,
       amazonShippingCents: i.amazonShippingCents,
       amazonUrl: i.amazonUrl,
-      profitCents: i.estimatedProfitCents ?? 0,
-      marginPct: i.marginPct ?? 0,
-      feeCents: researchById.get(i.ebayItemId ?? "")?.feeCents ?? 0,
+      profitCents: currentMargin.estimatedProfitCents,
+      marginPct: Math.round(currentMargin.marginPct),
+      feeCents: currentMargin.estimatedFeeCents,
       mirrored: owned.has(i.asin),
       storeEbayUrl: owned.get(i.asin) ?? null,
       foundAt:
@@ -382,8 +397,9 @@ export async function listArbitragePage(
       matchVerdict: i.matchVerdict,
       matchConfidence: i.matchConfidence,
       matchReason: i.matchReason,
-      matchMethod: researchById.get(i.ebayItemId ?? "")?.matchMethod ?? "ADMIN",
-    })),
+        matchMethod: researchById.get(i.ebayItemId ?? "")?.matchMethod ?? "ADMIN",
+      };
+    }),
     total,
     page: Math.max(1, params.page),
     pageCount: Math.max(1, Math.ceil(total / pageSize)),

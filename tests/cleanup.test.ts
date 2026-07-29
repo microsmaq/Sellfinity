@@ -10,6 +10,7 @@ import {
   suggestedListingPriceCents,
   aiSuggestedListingPriceCents,
   AI_MIN_MARGIN,
+  AI_MAX_TARGET_PROFIT_CENTS,
   AI_TARGET_MARGIN,
   trueProfitCents,
 } from "@/lib/listings/cleanup";
@@ -143,9 +144,19 @@ describe("aiSuggestedListingPriceCents", () => {
     expect(marginAt(suggested, 3000)).toBeGreaterThanOrEqual(AI_MIN_MARGIN);
   });
 
-  it("never sacrifices the 15% floor when the market average is too low", () => {
+  it("caps an expensive product at about $7 net profit instead of forcing 15%", () => {
     const suggested = aiSuggestedListingPriceCents(4000, 0, 3999, 4199);
     expect(suggested).toBeGreaterThan(4199);
-    expect(marginAt(suggested, 4000)).toBeGreaterThanOrEqual(AI_MIN_MARGIN);
+    expect(trueProfitCents(suggested, 4000, 0)).toBeLessThanOrEqual(
+      AI_MAX_TARGET_PROFIT_CENTS,
+    );
+    expect(trueProfitCents(suggested, 4000, 0)).toBeGreaterThanOrEqual(699);
+  });
+
+  it("limits a $50 landed-cost item to no more than $7 modeled profit", () => {
+    const suggested = aiSuggestedListingPriceCents(5000, 0, 8000, 8000);
+    expect(trueProfitCents(suggested, 5000, 0)).toBeLessThanOrEqual(700);
+    expect(trueProfitCents(suggested, 5000, 0)).toBeGreaterThanOrEqual(699);
+    expect(suggested).toBeLessThan(7316);
   });
 });

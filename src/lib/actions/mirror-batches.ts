@@ -12,6 +12,7 @@ import { sendBatchCompletionEmail } from "@/lib/email/batch-completion";
 import {
   AUTO_PUBLISH_MIN_MARGIN_PCT,
   AUTO_PUBLISH_MIN_MATCH_CONFIDENCE,
+  AUTO_PUBLISH_FLAT_PROFIT_CENTS,
 } from "@/lib/arbitrage/auto-publish";
 import {
   attachArbitrageResearchToListing,
@@ -291,7 +292,10 @@ async function createQualifiedArbitrageMirrorBatchForUser(
       hiddenBy: { none: { userId } },
       matchVerdict: { in: ["MATCH", "LIKELY"] },
       matchConfidence: { gte: AUTO_PUBLISH_MIN_MATCH_CONFIDENCE },
-      marginPct: { gte: AUTO_PUBLISH_MIN_MARGIN_PCT },
+      OR: [
+        { marginPct: { gte: AUTO_PUBLISH_MIN_MARGIN_PCT } },
+        { profitCents: { gte: AUTO_PUBLISH_FLAT_PROFIT_CENTS } },
+      ],
       profitCents: { gt: 0 },
       ...(unavailableAsins.length > 0 && { asin: { notIn: unavailableAsins } }),
       ...(queuedEbayIds.length > 0 && { ebayItemId: { notIn: queuedEbayIds } }),

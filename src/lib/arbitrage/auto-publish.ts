@@ -1,5 +1,6 @@
 export const AUTO_PUBLISH_MIN_MATCH_CONFIDENCE = 95;
 export const AUTO_PUBLISH_MIN_MARGIN_PCT = 15;
+export const AUTO_PUBLISH_FLAT_PROFIT_CENTS = 699;
 
 export type AutoPublishCandidate = {
   matchVerdict: string;
@@ -13,7 +14,8 @@ export function isAutoPublishCandidate(item: AutoPublishCandidate): boolean {
   return (
     (item.matchVerdict === "MATCH" || item.matchVerdict === "LIKELY") &&
     item.matchConfidence >= AUTO_PUBLISH_MIN_MATCH_CONFIDENCE &&
-    item.marginPct >= AUTO_PUBLISH_MIN_MARGIN_PCT &&
+    (item.marginPct >= AUTO_PUBLISH_MIN_MARGIN_PCT ||
+      item.profitCents >= AUTO_PUBLISH_FLAT_PROFIT_CENTS) &&
     item.profitCents > 0
   );
 }

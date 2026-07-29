@@ -6,6 +6,7 @@ import { arbitrageSuggestedPriceCents } from "./pricing";
 import {
   AUTO_PUBLISH_MIN_MARGIN_PCT,
   AUTO_PUBLISH_MIN_MATCH_CONFIDENCE,
+  AUTO_PUBLISH_FLAT_PROFIT_CENTS,
 } from "./auto-publish";
 
 export const ADMIN_CATALOG_PAGE_SIZE = 50;
@@ -120,7 +121,10 @@ export async function listAdminCatalog(params: {
           suggestedPriceCents: { not: null },
           matchVerdict: { in: ["MATCH", "LIKELY"] },
           matchConfidence: { gte: AUTO_PUBLISH_MIN_MATCH_CONFIDENCE },
-          marginPct: { gte: AUTO_PUBLISH_MIN_MARGIN_PCT },
+          OR: [
+            { marginPct: { gte: AUTO_PUBLISH_MIN_MARGIN_PCT } },
+            { estimatedProfitCents: { gte: AUTO_PUBLISH_FLAT_PROFIT_CENTS } },
+          ],
           estimatedProfitCents: { gt: 0 },
         },
       ],
@@ -254,12 +258,33 @@ export async function listAdminCatalog(params: {
   }
 
   return {
-    rows: items.map((item) => ({
-      ...item,
-      usersListed: userSets.get(item.asin)?.size ?? 0,
-      lastResearchedAt: item.lastResearchedAt?.toISOString() ?? null,
-      updatedAt: item.updatedAt.toISOString(),
-    })),
+    rows: items.map((item) => {
+      const suggestedPrice = item.ebayPriceCents
+        ? arbitrageSuggestedPriceCents(
+            item.amazonPriceCents,
+            item.ebayPriceCents,
+            item.ebayRecommendedPriceCents,
+            item.averageCompetitorPriceCents ?? item.ebayPriceCents,
+            item.amazonShippingCents,
+          )
+        : null;
+      const margin = suggestedPrice
+        ? estimateMargin(
+            suggestedPrice,
+            item.amazonPriceCents,
+            item.amazonShippingCents,
+          )
+        : null;
+      return {
+        ...item,
+        suggestedPriceCents: suggestedPrice,
+        estimatedProfitCents: margin?.estimatedProfitCents ?? null,
+        marginPct: margin ? Math.round(margin.marginPct) : null,
+        usersListed: userSets.get(item.asin)?.size ?? 0,
+        lastResearchedAt: item.lastResearchedAt?.toISOString() ?? null,
+        updatedAt: item.updatedAt.toISOString(),
+      };
+    }),
     total,
     page,
     pageCount: Math.max(1, Math.ceil(total / pageSize)),
@@ -281,14 +306,13 @@ export async function publishCatalogProductToUsers(id: string): Promise<void> {
   ) {
     throw new Error("Research an eBay equivalent before publishing this product.");
   }
-  const suggested = item.suggestedPriceCents ??
-    arbitrageSuggestedPriceCents(
-      item.amazonPriceCents,
-      item.ebayPriceCents,
-      item.ebayRecommendedPriceCents,
-      item.averageCompetitorPriceCents ?? item.ebayPriceCents,
-      item.amazonShippingCents,
-    );
+  const suggested = arbitrageSuggestedPriceCents(
+    item.amazonPriceCents,
+    item.ebayPriceCents,
+    item.ebayRecommendedPriceCents,
+    item.averageCompetitorPriceCents ?? item.ebayPriceCents,
+    item.amazonShippingCents,
+  );
   const margin = estimateMargin(
     suggested,
     item.amazonPriceCents,

@@ -7,6 +7,7 @@ import {
   setImproveMainImagePreference,
 } from "@/lib/actions/mirror-batches";
 import {
+  AUTO_PUBLISH_FLAT_PROFIT_CENTS,
   AUTO_PUBLISH_MIN_MARGIN_PCT,
   AUTO_PUBLISH_MIN_MATCH_CONFIDENCE,
 } from "@/lib/arbitrage/auto-publish";
@@ -144,7 +145,7 @@ export function PublishingPreferences({
               </span>
             </div>
             <p className="mt-2 text-sm leading-6 text-slate-600">
-              After a manual or scheduled Arbitrage Finder scan finishes, Sellfinity automatically publishes unlisted products with at least {AUTO_PUBLISH_MIN_MATCH_CONFIDENCE}% Amazon-variant match confidence, {AUTO_PUBLISH_MIN_MARGIN_PCT}% estimated net margin, and positive estimated profit.
+              After a manual or scheduled Arbitrage Finder scan finishes, Sellfinity automatically publishes unlisted products with at least {AUTO_PUBLISH_MIN_MATCH_CONFIDENCE}% Amazon-variant match confidence and either {AUTO_PUBLISH_MIN_MARGIN_PCT}% estimated net margin or about ${(AUTO_PUBLISH_FLAT_PROFIT_CENTS / 100).toFixed(2)} net profit.
             </p>
             <p className="mt-2 text-xs leading-5 text-slate-500">
               Hidden products, previously listed products, and products already waiting in another publishing batch are skipped. Every run appears in Publishing batch history and sends the usual completion email.

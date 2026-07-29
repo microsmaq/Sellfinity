@@ -45,7 +45,7 @@ describe("arbitrage market pricing", () => {
     expect(paidShipping).toBeGreaterThan(freeShipping);
   });
 
-  it("clears the true 15% floor after separate fee rounding", () => {
+  it("uses 15% for lower costs and caps higher-cost profit near $7", () => {
     for (const [cost, shipping] of [
       [1_099, 0],
       [2_537, 499],
@@ -59,7 +59,13 @@ describe("arbitrage market pricing", () => {
         1_299,
         shipping,
       );
-      expect(estimateMargin(suggested, cost, shipping).marginPct).toBeGreaterThanOrEqual(15);
+      const margin = estimateMargin(suggested, cost, shipping);
+      if (cost + shipping > 3_200) {
+        expect(margin.estimatedProfitCents).toBeGreaterThanOrEqual(699);
+        expect(margin.estimatedProfitCents).toBeLessThanOrEqual(700);
+      } else {
+        expect(margin.marginPct).toBeGreaterThanOrEqual(15);
+      }
     }
   });
 });

@@ -876,7 +876,7 @@ export function AdminArbitrageManager({
               <span>
                 <span className="font-semibold">Qualified opportunities only</span>
                 <span className="ml-2 text-xs text-emerald-800">
-                  Match or Likely · confidence ≥ 95% · net margin ≥ 15% · positive profit
+                  Match or Likely · confidence ≥ 95% · net margin ≥ 15% or about $7 profit
                 </span>
               </span>
             </label>

@@ -19,6 +19,9 @@ export const TARGET_PROFIT_CENTS = 700;
  * doing so keeps the listing close to the eBay market recommendation. */
 export const AI_TARGET_MARGIN = 0.2;
 export const AI_MIN_MARGIN = 0.15;
+/** On higher-cost products, percentage margins scale into an unnecessarily
+ * large dollar profit and push the listing away from the market. */
+export const AI_MAX_TARGET_PROFIT_CENTS = 700;
 
 /** Beyond this loss ratio, repricing would be futile — end the listing. */
 export const END_MARGIN = -0.3;
@@ -80,11 +83,33 @@ export function marginFloorPriceCents(
   return price;
 }
 
+/** Highest sale price whose modeled net profit does not exceed the requested
+ * dollar target. Used as a cap only when the percentage floor would earn more. */
+export function profitCapPriceCents(
+  costCents: number,
+  shippingCostCents: number,
+  profitCents = AI_MAX_TARGET_PROFIT_CENTS,
+): number {
+  const keep = 1 - EBAY_FINAL_VALUE_RATE - AD_RATE;
+  const fixed = EBAY_PER_ORDER_FEE_CENTS + costCents + shippingCostCents;
+  let price = Math.max(99, Math.floor((fixed + profitCents) / keep));
+  while (price > 99 && trueProfitCents(price, costCents, shippingCostCents) > profitCents) {
+    price--;
+  }
+  while (
+    trueProfitCents(price + 1, costCents, shippingCostCents) <= profitCents
+  ) {
+    price++;
+  }
+  return price;
+}
+
 /**
  * AI-assisted listing recommendation based on live eBay market research.
  * It chooses the price closest to the strongest estimated-demand comparable,
  * stays at/below the market average when that is feasible, targets 20%
- * margin, and never crosses the hard 15% profitability floor.
+ * margin. For higher-cost products, the percentage rule is capped at $7 net
+ * profit so the recommendation does not drift unnecessarily above the market.
  */
 export function aiSuggestedListingPriceCents(
   costCents: number,
@@ -113,16 +138,28 @@ export function aiSuggestedListingPriceCents(
         ? Math.round(average * 0.97)
         : preferred;
 
-  if (!average) return Math.max(preferred, anchor);
-  if (average >= preferred) {
-    return Math.min(average, Math.max(preferred, anchor));
+  let suggested: number;
+  if (!average) {
+    suggested = Math.max(preferred, anchor);
+  } else if (average >= preferred) {
+    suggested = Math.min(average, Math.max(preferred, anchor));
+  } else if (average >= minimum) {
+    suggested = Math.min(average, Math.max(minimum, anchor));
+  } else {
+    // No price at or below the average can clear 15%; profitability wins.
+    suggested = minimum;
   }
-  if (average >= minimum) {
-    return Math.min(average, Math.max(minimum, anchor));
+
+  if (
+    trueProfitCents(minimum, costCents, shippingCostCents) >
+    AI_MAX_TARGET_PROFIT_CENTS
+  ) {
+    return Math.min(
+      suggested,
+      profitCapPriceCents(costCents, shippingCostCents),
+    );
   }
-  // No price at or below the average can clear 15%; profitability wins and
-  // the UI explicitly identifies this above-market exception.
-  return minimum;
+  return suggested;
 }
 
 /** A profitable, market-aware listing recommendation. The profitability
