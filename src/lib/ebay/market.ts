@@ -74,15 +74,52 @@ export async function searchEbayProducts(
 export async function researchEbayMarket(
   title: string,
   ownEbayListingId: string,
-): Promise<{ query: string; metrics: ListingMarketMetrics } | null> {
+  options?: { allowReferenceFallback?: boolean },
+): Promise<{
+  query: string;
+  metrics: ListingMarketMetrics;
+  referencePriceCents: number | null;
+} | null> {
   const query = marketSearchQuery(title);
   if (!query) return null;
   const data = await browseSearch(title, 50);
-  const metrics = summarizeBrowseMarket(
+  let metrics = summarizeBrowseMarket(
     data.total,
     data.items,
     ownEbayListingId,
     title,
   );
-  return metrics ? { query, metrics } : null;
+  // Administrative catalog rows point at a competitor/reference listing, not
+  // the signed-in seller's own offer. If that is the only precise search
+  // result, it remains a valid market signal and should not leave every metric
+  // blank. Seller-listing research keeps the stricter default.
+  if (!metrics && options?.allowReferenceFallback) {
+    metrics = summarizeBrowseMarket(
+      data.total,
+      data.items,
+      "__no_listing_excluded__",
+      title,
+    );
+  }
+  const ownNumericId = ownEbayListingId.includes("|")
+    ? ownEbayListingId.split("|")[1]
+    : ownEbayListingId;
+  const reference = data.items.find((item) => {
+    if (!item.itemId) return false;
+    const candidateNumericId = item.itemId.includes("|")
+      ? item.itemId.split("|")[1]
+      : item.itemId;
+    return candidateNumericId === ownNumericId;
+  });
+  const referencePriceCents = Math.round(
+    Number(reference?.price?.value ?? 0) * 100,
+  );
+  return metrics
+    ? {
+        query,
+        metrics,
+        referencePriceCents:
+          referencePriceCents > 0 ? referencePriceCents : null,
+      }
+    : null;
 }

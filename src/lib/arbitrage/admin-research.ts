@@ -276,7 +276,12 @@ export async function refreshAdminAmazonCost(id: string): Promise<void> {
 }
 
 /** Refresh eBay market metrics without making an Amazon/Rainforest request. */
-export async function refreshAdminEbayMarket(id: string): Promise<void> {
+export async function refreshAdminEbayMarket(id: string): Promise<{
+  asin: string;
+  matchVerdict: string;
+  matchConfidence: number;
+  marketFallback: boolean;
+}> {
   const item = await db.adminArbitrageProduct.findUnique({ where: { id } });
   if (
     !item ||
@@ -286,12 +291,31 @@ export async function refreshAdminEbayMarket(id: string): Promise<void> {
   ) {
     throw new Error("This catalog row has no researched eBay equivalent.");
   }
-  const market = await researchEbayMarket(item.ebayTitle, item.ebayItemId);
-  if (!market) throw new Error("No comparable eBay market results were found.");
-  const metrics = market.metrics;
+  const [market, assessment] = await Promise.all([
+    researchEbayMarket(item.ebayTitle, item.ebayItemId, {
+      allowReferenceFallback: true,
+    }),
+    assessProductMatch(
+      { title: item.ebayTitle, imageUrl: item.ebayImageUrl },
+      { title: item.amazonTitle, imageUrl: item.amazonImageUrl },
+    ),
+  ]);
+  // An ended or uniquely named reference can legitimately return no live
+  // comparable. Preserve a complete, explicitly conservative one-item market
+  // snapshot instead of leaving demand/pricing columns empty.
+  const metrics = market?.metrics ?? {
+    estimatedSales30d: estimatedSales30d(
+      item.ebayItemId,
+      item.ebayPriceCents,
+    ),
+    competitorCount: 1,
+    averageCompetitorPriceCents: item.ebayPriceCents,
+    bestSellingPriceCents: item.ebayPriceCents,
+  };
+  const ebayPriceCents = market?.referencePriceCents ?? item.ebayPriceCents;
   const suggestedPrice = arbitrageSuggestedPriceCents(
     item.amazonPriceCents,
-    item.ebayPriceCents,
+    ebayPriceCents,
     metrics.bestSellingPriceCents,
     metrics.averageCompetitorPriceCents,
     item.amazonShippingCents,
@@ -301,9 +325,17 @@ export async function refreshAdminEbayMarket(id: string): Promise<void> {
     item.amazonPriceCents,
     item.amazonShippingCents,
   );
+  const status =
+    assessment.verdict === "REJECTED" ? "NO_MATCH" : "PUBLISHED";
+  const researchedAt = new Date();
   await db.adminArbitrageProduct.update({
     where: { id },
     data: {
+      status,
+      ebayPriceCents,
+      matchVerdict: assessment.verdict,
+      matchConfidence: assessment.confidence,
+      matchReason: assessment.reason,
       estimatedSales30d: metrics.estimatedSales30d,
       competitorCount: metrics.competitorCount,
       averageCompetitorPriceCents: metrics.averageCompetitorPriceCents,
@@ -311,10 +343,35 @@ export async function refreshAdminEbayMarket(id: string): Promise<void> {
       suggestedPriceCents: suggestedPrice,
       estimatedProfitCents: margin.estimatedProfitCents,
       marginPct: Math.round(margin.marginPct),
-      lastResearchedAt: new Date(),
+      lastResearchedAt: researchedAt,
     },
   });
-  if (item.status === "PUBLISHED") {
+
+  if (status === "PUBLISHED") {
     await publishCatalogProductToUsers(id);
+  } else {
+    await db.arbitrageItem.updateMany({
+      where: { ebayItemId: item.ebayItemId },
+      data: {
+        salesEst: metrics.estimatedSales30d,
+        competitorCount: metrics.competitorCount,
+        avgCompPriceCents: metrics.averageCompetitorPriceCents,
+        bestSellingPriceCents: metrics.bestSellingPriceCents,
+        profitCents: margin.estimatedProfitCents,
+        marginPct: Math.round(margin.marginPct),
+        feeCents: margin.estimatedFeeCents,
+        matchVerdict: assessment.verdict,
+        matchConfidence: assessment.confidence,
+        matchReason: assessment.reason,
+        matchMethod: assessment.method,
+        matchCheckedAt: researchedAt,
+      },
+    });
   }
+  return {
+    asin: item.asin,
+    matchVerdict: assessment.verdict,
+    matchConfidence: assessment.confidence,
+    marketFallback: !market,
+  };
 }
