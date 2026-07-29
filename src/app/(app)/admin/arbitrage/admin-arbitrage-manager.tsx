@@ -593,7 +593,7 @@ export function AdminArbitrageManager({
       className={cx(
         "space-y-5",
         !expanded &&
-          "relative left-1/2 w-[calc(100vw-17rem)] -translate-x-1/2",
+          "w-full md:relative md:left-1/2 md:w-[calc(100vw-17rem)] md:-translate-x-1/2",
       )}
     >
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
@@ -612,7 +612,7 @@ export function AdminArbitrageManager({
               Sellfinity refreshes the exact Amazon price, finds the closest eBay equivalent,
               verifies identity, and calculates competitive profitability.
             </p>
-            <form onSubmit={addAmazon} className="mt-4 flex max-w-2xl gap-2">
+            <form onSubmit={addAmazon} className="mt-4 flex max-w-2xl flex-col gap-2 sm:flex-row">
               <Input
                 value={amazonInput}
                 onChange={(event) => setAmazonInput(event.target.value)}
@@ -793,7 +793,7 @@ export function AdminArbitrageManager({
             <input type="hidden" name="sort" value={filters.sortKey} />
             <input type="hidden" name="dir" value={filters.sortDesc ? "desc" : "asc"} />
             <div className="flex flex-wrap gap-2">
-              <div className="min-w-[280px] flex-1">
+              <div className="min-w-0 flex-[1_1_280px]">
                 <Input
                   name="q"
                   defaultValue={filters.query}
@@ -803,7 +803,7 @@ export function AdminArbitrageManager({
               <select
                 name="category"
                 defaultValue={filters.category}
-                className="max-w-[240px] rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
+                className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm sm:max-w-[240px]"
                 aria-label="Category"
               >
                 <option value="ALL">All categories</option>
