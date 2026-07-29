@@ -30,7 +30,12 @@ export function trueProfitCents(
   costCents: number,
   shippingCostCents: number,
 ): number {
-  const variableFees = Math.round(priceCents * (EBAY_FINAL_VALUE_RATE + AD_RATE));
+  // eBay's final-value fee and the advertising allowance are charged and
+  // rounded separately. Keep this identical to estimateMargin/ebayFeeCents so
+  // the 15% floor cannot miss by a cent at rounding boundaries.
+  const variableFees =
+    Math.round(priceCents * EBAY_FINAL_VALUE_RATE) +
+    Math.round(priceCents * AD_RATE);
   return (
     priceCents - variableFees - EBAY_PER_ORDER_FEE_CENTS - costCents - shippingCostCents
   );

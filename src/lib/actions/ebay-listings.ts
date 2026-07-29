@@ -18,7 +18,7 @@ import {
   type TrackInput,
   type TrackResult,
 } from "@/lib/mirror/track";
-import { aiSuggestedListingPriceCents } from "@/lib/listings/cleanup";
+import { arbitrageSuggestedPriceCents } from "@/lib/arbitrage/pricing";
 import { estimateMargin } from "@/lib/fees";
 import {
   assessProductMatch,
@@ -556,11 +556,12 @@ export async function cleanupEbayListings(
           data: { productId: product.id },
         });
       }
-      const newPriceCents = aiSuggestedListingPriceCents(
+      const newPriceCents = arbitrageSuggestedPriceCents(
         exact.priceCents,
-        exact.shippingCostCents,
+        listing.priceCents,
         item.ebayRecommendedPriceCents,
         item.averageCompetitorPriceCents,
+        exact.shippingCostCents,
       );
       if (newPriceCents !== listing.priceCents) {
         await client.updateListing(ebayListingId, {
@@ -797,11 +798,12 @@ export async function cleanupListingSourcesBatch(): Promise<SourceCleanupBatchRe
           },
         })
       : null;
-    const priceCents = aiSuggestedListingPriceCents(
+    const priceCents = arbitrageSuggestedPriceCents(
       recoverable.product.costCents,
-      recoverable.product.shippingCostCents,
+      recoverable.priceCents,
       market?.bestSellingPriceCents,
       market?.averageCompetitorPriceCents,
+      recoverable.product.shippingCostCents,
     );
     await db.listing.update({
       where: { id: recoverable.id },

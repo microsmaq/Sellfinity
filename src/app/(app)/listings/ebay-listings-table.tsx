@@ -15,9 +15,9 @@ import {
   startListingHealthSync,
 } from "@/lib/actions/ebay-listings";
 import {
-  aiSuggestedListingPriceCents,
   trueProfitCents,
 } from "@/lib/listings/cleanup";
+import { arbitrageSuggestedPriceCents } from "@/lib/arbitrage/pricing";
 import { formatCents, parseDollarsToCents } from "@/lib/money";
 import { Badge, Button, Card, cx } from "@/components/ui";
 import { PremiumProgress, type PremiumProgressStatus } from "@/components/premium-progress";
@@ -717,11 +717,12 @@ export function EbayListingsTable({
                   ...row,
                   market: result.market,
                   suggestedPriceCents: row.match
-                    ? aiSuggestedListingPriceCents(
+                    ? arbitrageSuggestedPriceCents(
                         row.match.amazonPriceCents,
-                        row.match.shippingCostCents,
+                        row.priceCents,
                         result.market.bestSellingPriceCents,
                         result.market.averageCompetitorPriceCents,
+                        row.match.shippingCostCents,
                       )
                     : null,
                 }
@@ -729,8 +730,11 @@ export function EbayListingsTable({
                   ...row,
                   market: null,
                   suggestedPriceCents: row.match
-                    ? aiSuggestedListingPriceCents(
+                    ? arbitrageSuggestedPriceCents(
                         row.match.amazonPriceCents,
+                        row.priceCents,
+                        null,
+                        null,
                         row.match.shippingCostCents,
                       )
                     : null,

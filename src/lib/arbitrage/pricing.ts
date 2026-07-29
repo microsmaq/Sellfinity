@@ -5,22 +5,21 @@ function positive(value?: number | null): number | null {
 }
 
 /**
- * eBay's recommendation is the preferred market anchor. When eBay does not
- * provide one, use the lower observable price between the matched eBay item
- * and the competitor average, as requested by the catalog administrator.
+ * Use the lowest valid observable eBay market price so the recommendation
+ * remains competitive. The downstream pricing function still raises this
+ * anchor when necessary to preserve the hard profitability floor.
  */
 export function arbitrageMarketAnchorCents(
   ebayPriceCents: number,
   ebayRecommendedPriceCents?: number | null,
   averageCompetitorPriceCents?: number | null,
 ): number {
-  const recommended = positive(ebayRecommendedPriceCents);
-  if (recommended) return recommended;
-  const fallbackPrices = [
+  const marketPrices = [
     positive(ebayPriceCents),
     positive(averageCompetitorPriceCents),
+    positive(ebayRecommendedPriceCents),
   ].filter((value): value is number => value !== null);
-  return fallbackPrices.length > 0 ? Math.min(...fallbackPrices) : ebayPriceCents;
+  return marketPrices.length > 0 ? Math.min(...marketPrices) : ebayPriceCents;
 }
 
 export function arbitrageSuggestedPriceCents(
