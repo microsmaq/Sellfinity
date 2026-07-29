@@ -31,7 +31,7 @@ export default async function LandingPage() {
 
   return (
     <main className="flex-1">
-      <nav className="mx-auto flex max-w-5xl items-center justify-between px-6 py-5">
+      <nav className="mx-auto flex max-w-5xl items-center justify-between px-4 py-4 sm:px-6 sm:py-5">
         <span className="text-lg font-semibold tracking-tight">
           Sell<span className="text-indigo-600">finity</span>
         </span>
@@ -51,11 +51,11 @@ export default async function LandingPage() {
         </div>
       </nav>
 
-      <section className="mx-auto max-w-5xl px-6 pb-16 pt-20 text-center">
-        <h1 className="mx-auto max-w-3xl text-5xl font-semibold tracking-tight text-slate-900">
+      <section className="mx-auto max-w-5xl px-4 pb-12 pt-12 text-center sm:px-6 sm:pb-16 sm:pt-20">
+        <h1 className="mx-auto max-w-3xl text-4xl font-semibold tracking-tight text-slate-900 sm:text-5xl">
           eBay reselling on autopilot
         </h1>
-        <p className="mx-auto mt-5 max-w-2xl text-lg text-slate-600">
+        <p className="mx-auto mt-5 max-w-2xl text-base text-slate-600 sm:text-lg">
           Find winning products, list them in one click, keep stock in sync, and
           know exactly what you profited — one tool instead of four.
         </p>
@@ -69,7 +69,7 @@ export default async function LandingPage() {
         </div>
       </section>
 
-      <section className="mx-auto grid max-w-5xl gap-4 px-6 pb-24 sm:grid-cols-2">
+      <section className="mx-auto grid max-w-5xl gap-4 px-4 pb-16 sm:grid-cols-2 sm:px-6 sm:pb-24">
         {features.map((f) => (
           <div
             key={f.title}

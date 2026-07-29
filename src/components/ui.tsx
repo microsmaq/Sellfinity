@@ -25,8 +25,8 @@ export function Button({
   return (
     <button
       className={cx(
-        "inline-flex items-center justify-center gap-1.5 rounded-lg font-medium transition-colors disabled:cursor-not-allowed",
-        size === "sm" ? "px-2.5 py-1.5 text-xs" : "px-4 py-2 text-sm",
+        "inline-flex min-h-11 items-center justify-center gap-1.5 rounded-lg font-medium transition-colors disabled:cursor-not-allowed sm:min-h-0",
+        size === "sm" ? "px-2.5 py-2 text-xs sm:py-1.5" : "px-4 py-2 text-sm",
         buttonVariants[variant],
         className,
       )}
@@ -124,7 +124,7 @@ export function PageHeader({
         </h1>
         {subtitle && <p className="mt-1 text-sm text-slate-500">{subtitle}</p>}
       </div>
-      {actions && <div className="flex items-center gap-2">{actions}</div>}
+      {actions && <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">{actions}</div>}
     </div>
   );
 }
