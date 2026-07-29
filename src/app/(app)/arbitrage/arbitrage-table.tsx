@@ -13,6 +13,7 @@ import type {
   ArbitragePageParams,
 } from "@/lib/arbitrage/store";
 import type { OpportunityRow } from "@/lib/arbitrage/scanner";
+import { assessPriceCompetitiveness } from "@/lib/arbitrage/price-competitiveness";
 import { downloadBase64File } from "@/lib/download";
 import { formatCents } from "@/lib/money";
 import { Badge, Button, Card, Input, StatCard, cx } from "@/components/ui";
@@ -100,6 +101,12 @@ function FinderRow({
   onHide: () => void;
 }) {
   const publishable = eligible(row);
+  const competitiveness = assessPriceCompetitiveness(
+    row.suggestedListingPriceCents,
+    row.ebayPriceCents,
+    row.avgCompPriceCents,
+    row.ebayRecommendedPriceCents,
+  );
   return (
     <tr className="group border-t border-slate-100 align-top hover:bg-slate-50/70">
       <td className="sticky left-0 z-10 w-12 bg-white px-3 py-5 group-hover:bg-slate-50">
@@ -182,6 +189,12 @@ function FinderRow({
       </td>
       <td className="whitespace-nowrap px-4 py-4 text-right font-semibold text-indigo-700">
         {formatCents(row.suggestedListingPriceCents)}
+      </td>
+      <td className="min-w-[250px] px-4 py-4">
+        <Badge tone={competitiveness.tone}>{competitiveness.label}</Badge>
+        <p className="mt-1.5 text-xs leading-4 text-slate-500">
+          {competitiveness.summary}
+        </p>
       </td>
       <td className="px-4 py-4 text-right"><CellValue value={row.ebaySales30d} /></td>
       <td className="px-4 py-4 text-right"><CellValue value={row.competitorCount} /></td>
@@ -458,7 +471,7 @@ export function ArbitrageTable({
         </div>
 
         <div className={cx("overflow-auto", expanded ? "min-h-0 flex-1" : "max-h-[72vh]")}>
-          <table className="w-full min-w-[2600px] text-sm">
+          <table className="w-full min-w-[2850px] text-sm">
             <thead className="text-xs font-semibold uppercase tracking-wide text-slate-500">
               <tr>
                 <th className="sticky left-0 top-0 z-50 w-12 bg-slate-50 px-3 py-3">
@@ -479,6 +492,7 @@ export function ArbitrageTable({
                 <SortHeader label="Competitor avg" sortKey="avgCompPrice" filters={filters} href={sortHref("avgCompPrice")} />
                 <SortHeader label="eBay recommended" sortKey="recommendedPrice" filters={filters} href={sortHref("recommendedPrice")} />
                 <SortHeader label="Suggested price" sortKey="suggestedPrice" filters={filters} href={sortHref("suggestedPrice")} />
+                <th className="sticky top-0 z-30 bg-slate-50 px-4 py-3 text-left">Price assessment</th>
                 <SortHeader label="Sales / month" sortKey="sales" filters={filters} href={sortHref("sales")} />
                 <SortHeader label="Competition" sortKey="competition" filters={filters} href={sortHref("competition")} />
                 <SortHeader label="Profit after ads" sortKey="profit" filters={filters} href={sortHref("profit")} />
