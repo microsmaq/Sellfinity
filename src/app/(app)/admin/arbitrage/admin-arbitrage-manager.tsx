@@ -7,6 +7,7 @@ import {
   adminAddAmazonItem,
   adminArchiveItem,
   adminPublishItem,
+  adminRecalculateArbitragePricing,
   adminRefreshCatalogBatch,
   adminResearchItem,
   adminScanBestSellers,
@@ -495,6 +496,18 @@ export function AdminArbitrageManager({
     });
   }
 
+  function recalculatePricing() {
+    setScanProgress(null);
+    setRefreshProgress(null);
+    setNotice(null);
+    setOperation("Recalculating competitive pricing");
+    startTransition(async () => {
+      const result = await adminRecalculateArbitragePricing();
+      finish(result);
+      setOperation(null);
+    });
+  }
+
   function stopRefresh() {
     stopRefreshRequested.current = true;
     setNotice({
@@ -648,6 +661,15 @@ export function AdminArbitrageManager({
                   className="border-white/30 bg-white text-slate-900 hover:bg-indigo-50"
                 >
                   ↻ Refresh data
+                </Button>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  disabled={pending}
+                  onClick={recalculatePricing}
+                  className="border-white/30 bg-white text-slate-900 hover:bg-indigo-50"
+                >
+                  $ Recalculate pricing
                 </Button>
               </div>
               <p className="mt-2 max-w-md text-[11px] leading-4 text-indigo-100">

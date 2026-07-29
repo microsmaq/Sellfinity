@@ -14,6 +14,7 @@ import {
 import { publishCatalogProductToUsers } from "@/lib/arbitrage/admin-catalog";
 import type { ScanReport } from "@/lib/arbitrage/scan-types";
 import { getRainforestEfficiencySummary } from "@/lib/mirror/rainforest";
+import { recalculateAllArbitragePricing } from "@/lib/arbitrage/recalculate-pricing";
 
 export type AdminActionResult = {
   ok: boolean;
@@ -33,6 +34,21 @@ export type AdminRefreshBatchResult = AdminActionResult & {
 
 function message(error: unknown): string {
   return error instanceof Error ? error.message.slice(0, 300) : "The operation failed.";
+}
+
+export async function adminRecalculateArbitragePricing(): Promise<AdminActionResult> {
+  await requireAdmin();
+  try {
+    const result = await recalculateAllArbitragePricing();
+    revalidatePath("/admin/arbitrage");
+    revalidatePath("/arbitrage");
+    return {
+      ok: true,
+      message: `Pricing recalculated for ${result.catalogUpdated} catalog products and ${result.researchUpdated} research rows. No API credits used.`,
+    };
+  } catch (error) {
+    return { ok: false, message: message(error) };
+  }
 }
 
 export async function adminAddAmazonItem(
