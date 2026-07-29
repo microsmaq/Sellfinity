@@ -3,6 +3,10 @@ import { db } from "@/lib/db";
 import { estimateMargin } from "@/lib/fees";
 import type { ArbitrageOpportunity } from "./scanner";
 import { arbitrageSuggestedPriceCents } from "./pricing";
+import {
+  AUTO_PUBLISH_MIN_MARGIN_PCT,
+  AUTO_PUBLISH_MIN_MATCH_CONFIDENCE,
+} from "./auto-publish";
 
 export const ADMIN_CATALOG_PAGE_SIZE = 50;
 
@@ -39,6 +43,7 @@ export type AdminCatalogFilters = {
   ebayMatch: "ALL" | "MATCHED" | "UNMATCHED";
   minMargin: number;
   minConfidence: number;
+  qualifiedOnly: boolean;
   sortKey: AdminCatalogSortKey;
   sortDesc: boolean;
   pageSize: number;
@@ -107,6 +112,18 @@ export async function listAdminCatalog(params: {
     ...(filters.minMargin > 0 && { marginPct: { gte: filters.minMargin } }),
     ...(filters.minConfidence > 0 && {
       matchConfidence: { gte: filters.minConfidence },
+    }),
+    ...(filters.qualifiedOnly && {
+      AND: [
+        {
+          ebayItemId: { not: null },
+          suggestedPriceCents: { not: null },
+          matchVerdict: { in: ["MATCH", "LIKELY"] },
+          matchConfidence: { gte: AUTO_PUBLISH_MIN_MATCH_CONFIDENCE },
+          marginPct: { gte: AUTO_PUBLISH_MIN_MARGIN_PCT },
+          estimatedProfitCents: { gt: 0 },
+        },
+      ],
     }),
     ...(query && {
       OR: [

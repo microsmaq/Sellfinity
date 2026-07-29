@@ -539,6 +539,7 @@ export function AdminArbitrageManager({
       | "ebayMatch"
       | "minMargin"
       | "minConfidence"
+      | "qualified"
       | "sort"
       | "dir"
       | "pageSize",
@@ -555,6 +556,7 @@ export function AdminArbitrageManager({
       ebayMatch: filters.ebayMatch,
       minMargin: String(filters.minMargin),
       minConfidence: String(filters.minConfidence),
+      qualified: filters.qualifiedOnly ? "1" : "0",
       sort: filters.sortKey,
       dir: filters.sortDesc ? "desc" : "asc",
       pageSize: String(filters.pageSize),
@@ -863,6 +865,21 @@ export function AdminArbitrageManager({
                 <option value="100">100 per page</option>
               </select>
             </div>
+            <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-emerald-200 bg-emerald-50/70 px-4 py-3 text-sm text-emerald-950 transition hover:border-emerald-300 hover:bg-emerald-50">
+              <input
+                type="checkbox"
+                name="qualified"
+                value="1"
+                defaultChecked={filters.qualifiedOnly}
+                className="mt-0.5 h-4 w-4 rounded border-emerald-400 text-emerald-600 focus:ring-emerald-500"
+              />
+              <span>
+                <span className="font-semibold">Qualified opportunities only</span>
+                <span className="ml-2 text-xs text-emerald-800">
+                  Match or Likely · confidence ≥ 95% · net margin ≥ 15% · positive profit
+                </span>
+              </span>
+            </label>
           </form>
 
           <div className="mt-3 flex flex-wrap gap-1.5">

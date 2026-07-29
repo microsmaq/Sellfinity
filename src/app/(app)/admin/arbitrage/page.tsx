@@ -75,6 +75,8 @@ export default async function AdminArbitragePage({
     ebayMatch,
     minMargin: Math.max(0, Number(params.minMargin ?? 0) || 0),
     minConfidence: Math.max(0, Number(params.minConfidence ?? 0) || 0),
+    qualifiedOnly:
+      params.qualified === "1" || params.qualified === "true",
     sortKey: sortKeys.includes(rawSort as AdminCatalogSortKey)
       ? (rawSort as AdminCatalogSortKey)
       : "newest",
