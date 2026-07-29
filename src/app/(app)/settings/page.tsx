@@ -123,7 +123,11 @@ export default async function SettingsPage({
             </p>
           )}
           <p className="mt-3 text-xs leading-5 text-slate-500">
-            Overage usage is enabled and no credits are held in reserve. Once monthly credits are exhausted, paid lookups are limited to {rainforest.overageDailyLimit} per UTC day and may incur Rainforest overage charges. Cached lookups do not consume additional credits.
+            Overage usage is enabled and no credits are held in reserve.
+            {rainforest.overageDailyLimit
+              ? ` Once monthly credits are exhausted, paid lookups are limited to ${rainforest.overageDailyLimit} per UTC day.`
+              : " There is currently no app-imposed daily request cap."}{" "}
+            Rainforest overage charges may apply. Cached lookups do not consume additional credits.
           </p>
         </Card>
       </div>

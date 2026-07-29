@@ -1060,7 +1060,7 @@ export async function cleanupListingSourcesBatch(): Promise<SourceCleanupBatchRe
           where: { id: listing.id },
           data: {
             // A manually ended listing gets one immediate recovery attempt.
-            // If no source exists, future retries use the normal daily limit.
+            // If no source exists, future retries use normal provider safeguards.
             endedReason: "SOURCE_UNAVAILABLE",
             sourceMatchVerdict: "REJECTED",
             sourceMatchConfidence: current.confidence,

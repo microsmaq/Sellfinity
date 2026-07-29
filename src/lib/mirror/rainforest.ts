@@ -13,8 +13,16 @@ const ACCOUNT_API = "https://api.rainforestapi.com/account";
 const HOUR = 60 * 60 * 1000;
 const DAY = 24 * HOUR;
 const LEASE_MS = 25_000;
-const OVERAGE_DAILY_REQUEST_LIMIT = 300;
 const inFlight = new Map<string, Promise<unknown>>();
+
+/** No app-imposed overage cap by default. Set a positive environment value
+ * later to restore a daily ceiling without another deployment. */
+function overageDailyRequestLimit(): number | null {
+  const configured = Number(process.env.RAINFOREST_OVERAGE_DAILY_LIMIT ?? 0);
+  return Number.isFinite(configured) && configured > 0
+    ? Math.floor(configured)
+    : null;
+}
 
 export type RainforestRequestOptions = {
   workflow?: string;
@@ -136,28 +144,32 @@ export async function getRainforestEfficiencySummary() {
     ...totals,
     account,
     allowOverage: true,
-    overageDailyLimit: OVERAGE_DAILY_REQUEST_LIMIT,
+    overageDailyLimit: overageDailyRequestLimit(),
   };
 }
 
 export function shouldBlockRainforestOverage(
   creditsRemaining: number | null,
   paidRequestsToday: number,
+  dailyLimit: number | null,
 ): boolean {
   return (
+    dailyLimit !== null &&
     creditsRemaining !== null &&
     creditsRemaining <= 0 &&
-    paidRequestsToday >= OVERAGE_DAILY_REQUEST_LIMIT
+    paidRequestsToday >= dailyLimit
   );
 }
 
-/** Included credits may be used without an app-imposed reserve. Once the
- * account reaches overage, retain a bounded daily ceiling as requested. */
+/** A positive optional environment limit can restore a daily overage cap.
+ * With the current default of null, provider usage is tracked but not blocked. */
 async function enforceOverageDailyLimit(
   workflow: string,
   requestType: string,
 ): Promise<void> {
   if (!cacheEnabled()) return;
+  const dailyLimit = overageDailyRequestLimit();
+  if (dailyLimit === null) return;
   const account = await getRainforestAccountUsage();
   if (!account || account.creditsRemaining > 0) return;
   const aggregate = await db.rainforestUsageDaily.aggregate({
@@ -168,11 +180,12 @@ async function enforceOverageDailyLimit(
     shouldBlockRainforestOverage(
       account.creditsRemaining,
       aggregate._sum.providerRequests ?? 0,
+      dailyLimit,
     )
   ) {
     await recordUsage(workflow, requestType, "budgetBlocks");
     throw new Error(
-      `Rainforest overage daily limit reached (${OVERAGE_DAILY_REQUEST_LIMIT}).`,
+      `Rainforest overage daily limit reached (${dailyLimit}).`,
     );
   }
 }
