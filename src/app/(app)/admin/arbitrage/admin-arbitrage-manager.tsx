@@ -21,6 +21,7 @@ import type {
   AdminCatalogSortKey,
   AdminCatalogStatus,
 } from "@/lib/arbitrage/admin-catalog";
+import { assessPriceCompetitiveness } from "@/lib/arbitrage/price-competitiveness";
 import { formatCents } from "@/lib/money";
 import { Badge, Button, Card, Input, StatCard, cx } from "@/components/ui";
 import { PremiumProgress } from "@/components/premium-progress";
@@ -127,6 +128,12 @@ function CatalogRow({
   busy: boolean;
   run: (kind: "research" | "publish" | "archive", id: string) => void;
 }) {
+  const priceAssessment = assessPriceCompetitiveness(
+    row.suggestedPriceCents ?? 0,
+    row.ebayPriceCents ?? 0,
+    row.averageCompetitorPriceCents,
+    row.ebayRecommendedPriceCents,
+  );
   return (
     <tr className="group border-t border-slate-100 align-top hover:bg-slate-50/70">
       <td className="sticky left-0 z-10 min-w-[390px] bg-white px-5 py-4 group-hover:bg-slate-50">
@@ -215,6 +222,12 @@ function CatalogRow({
         {row.suggestedPriceCents === null
           ? <span className="text-slate-400">—</span>
           : formatCents(row.suggestedPriceCents)}
+      </td>
+      <td className="min-w-[250px] px-4 py-4">
+        <Badge tone={priceAssessment.tone}>{priceAssessment.label}</Badge>
+        <p className="mt-1.5 text-xs leading-4 text-slate-500">
+          {priceAssessment.summary}
+        </p>
       </td>
       <td className="px-4 py-4 text-right"><CellValue value={row.estimatedSales30d} /></td>
       <td className="px-4 py-4 text-right"><CellValue value={row.competitorCount} /></td>
@@ -898,7 +911,7 @@ export function AdminArbitrageManager({
               <span>
                 <span className="font-semibold">Qualified opportunities only</span>
                 <span className="ml-2 text-xs text-emerald-800">
-                  Match or Likely · confidence ≥ 95% · net margin ≥ 15% or about $7 profit
+                  Match or Likely · confidence ≥ 95% · competitive price · net margin ≥ 15% or about $7 profit
                 </span>
               </span>
             </label>
@@ -928,7 +941,7 @@ export function AdminArbitrageManager({
             expanded ? "min-h-0 flex-1" : "max-h-[72vh]",
           )}
         >
-          <table className="w-full min-w-[2460px] text-sm">
+          <table className="w-full min-w-[2710px] text-sm">
             <thead className="text-xs font-semibold uppercase tracking-wide text-slate-500">
               <tr>
                 <SortHeader label="Amazon item" sortKey="amazonTitle" filters={filters} href={sortHref("amazonTitle")} align="left" sticky="left" />
@@ -939,6 +952,7 @@ export function AdminArbitrageManager({
                 <SortHeader label="Competitor avg" sortKey="averagePrice" filters={filters} href={sortHref("averagePrice")} />
                 <SortHeader label="eBay recommended" sortKey="recommendedPrice" filters={filters} href={sortHref("recommendedPrice")} />
                 <SortHeader label="Suggested price" sortKey="suggestedPrice" filters={filters} href={sortHref("suggestedPrice")} />
+                <th className="sticky top-0 z-30 bg-slate-50 px-4 py-3 text-left">Price assessment</th>
                 <SortHeader label="Sales / month" sortKey="sales" filters={filters} href={sortHref("sales")} />
                 <SortHeader label="Competition" sortKey="competition" filters={filters} href={sortHref("competition")} />
                 <SortHeader label="Profit after ads" sortKey="profit" filters={filters} href={sortHref("profit")} />

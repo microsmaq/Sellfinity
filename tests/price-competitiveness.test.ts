@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { assessPriceCompetitiveness } from "@/lib/arbitrage/price-competitiveness";
+import {
+  assessPriceCompetitiveness,
+  isCompetitivelyPriced,
+} from "@/lib/arbitrage/price-competitiveness";
 
 describe("arbitrage price competitiveness", () => {
   it("identifies a suggested price at or below every benchmark", () => {
@@ -33,5 +36,21 @@ describe("arbitrage price competitiveness", () => {
       tone: "slate",
       summary: "No valid eBay benchmark is available.",
     });
+  });
+
+  it("only qualifies highly competitive and competitive prices", () => {
+    const labels = [
+      [1_500, true],
+      [1_700, true],
+      [1_850, false],
+      [2_000, false],
+      [2_200, false],
+    ] as const;
+
+    for (const [suggestedPrice, expected] of labels) {
+      expect(isCompetitivelyPriced(
+        assessPriceCompetitiveness(suggestedPrice, 1_600, 1_800, 2_000),
+      )).toBe(expected);
+    }
   });
 });

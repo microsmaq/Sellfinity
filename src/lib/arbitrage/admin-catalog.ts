@@ -4,6 +4,10 @@ import { estimateMargin } from "@/lib/fees";
 import type { ArbitrageOpportunity } from "./scanner";
 import { arbitrageSuggestedPriceCents } from "./pricing";
 import {
+  assessPriceCompetitiveness,
+  isCompetitivelyPriced,
+} from "./price-competitiveness";
+import {
   AUTO_PUBLISH_MIN_MARGIN_PCT,
   AUTO_PUBLISH_MIN_MATCH_CONFIDENCE,
   AUTO_PUBLISH_FLAT_PROFIT_CENTS,
@@ -89,6 +93,42 @@ export type AdminCatalogPage = {
   categories: string[];
   counts: Record<"all" | "published" | "pending" | "noMatch" | "archived", number>;
 };
+
+function suggestedPriceFor(item: {
+  amazonPriceCents: number;
+  amazonShippingCents: number;
+  ebayPriceCents: number | null;
+  ebayRecommendedPriceCents: number | null;
+  averageCompetitorPriceCents: number | null;
+}): number | null {
+  return item.ebayPriceCents
+    ? arbitrageSuggestedPriceCents(
+        item.amazonPriceCents,
+        item.ebayPriceCents,
+        item.ebayRecommendedPriceCents,
+        item.averageCompetitorPriceCents ?? item.ebayPriceCents,
+        item.amazonShippingCents,
+      )
+    : null;
+}
+
+function hasCompetitiveSuggestedPrice(item: {
+  amazonPriceCents: number;
+  amazonShippingCents: number;
+  ebayPriceCents: number | null;
+  ebayRecommendedPriceCents: number | null;
+  averageCompetitorPriceCents: number | null;
+}): boolean {
+  const suggestedPrice = suggestedPriceFor(item);
+  return suggestedPrice !== null && isCompetitivelyPriced(
+    assessPriceCompetitiveness(
+      suggestedPrice,
+      item.ebayPriceCents ?? 0,
+      item.averageCompetitorPriceCents,
+      item.ebayRecommendedPriceCents,
+    ),
+  );
+}
 
 export async function listAdminCatalog(params: {
   page: number;
@@ -181,7 +221,7 @@ export async function listAdminCatalog(params: {
     ...(sortField === "updatedAt" ? [] : [{ updatedAt: "desc" as const }]),
   ] as Prisma.AdminArbitrageProductOrderByWithRelationInput[];
 
-  const [total, all, published, pending, noMatch, archived, categoryRows] =
+  const [databaseTotal, all, published, pending, noMatch, archived, categoryRows] =
     await Promise.all([
       db.adminArbitrageProduct.count({ where }),
       db.adminArbitrageProduct.count(),
@@ -199,16 +239,22 @@ export async function listAdminCatalog(params: {
   // User adoption is derived from seller products, rather than stored on the
   // catalog row. When it is the active sort, rank the complete filtered set
   // before slicing the requested page so pagination remains truthful.
+  const inMemoryPagination =
+    filters.sortKey === "usersListed" || filters.qualifiedOnly;
   let items = await db.adminArbitrageProduct.findMany({
     where,
     orderBy: filters.sortKey === "usersListed" ? { updatedAt: "desc" } : orderBy,
-    ...(filters.sortKey === "usersListed"
+    ...(inMemoryPagination
       ? {}
       : {
           skip: (page - 1) * pageSize,
           take: pageSize,
         }),
   });
+  if (filters.qualifiedOnly) {
+    items = items.filter(hasCompetitiveSuggestedPrice);
+  }
+  const total = filters.qualifiedOnly ? items.length : databaseTotal;
   const adoptionAsins =
     filters.sortKey === "usersListed"
       ? items.map((item) => item.asin)
@@ -237,6 +283,8 @@ export async function listAdminCatalog(params: {
       return b.updatedAt.getTime() - a.updatedAt.getTime();
     });
     items = items.slice((page - 1) * pageSize, page * pageSize);
+  } else if (filters.qualifiedOnly) {
+    items = items.slice((page - 1) * pageSize, page * pageSize);
   }
 
   const asins = items.map((item) => item.asin);
@@ -259,15 +307,7 @@ export async function listAdminCatalog(params: {
 
   return {
     rows: items.map((item) => {
-      const suggestedPrice = item.ebayPriceCents
-        ? arbitrageSuggestedPriceCents(
-            item.amazonPriceCents,
-            item.ebayPriceCents,
-            item.ebayRecommendedPriceCents,
-            item.averageCompetitorPriceCents ?? item.ebayPriceCents,
-            item.amazonShippingCents,
-          )
-        : null;
+      const suggestedPrice = suggestedPriceFor(item);
       const margin = suggestedPrice
         ? estimateMargin(
             suggestedPrice,

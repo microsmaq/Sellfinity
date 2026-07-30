@@ -4,6 +4,13 @@ export type PriceCompetitiveness = {
   summary: string;
 };
 
+export function isCompetitivelyPriced(
+  assessment: PriceCompetitiveness,
+): boolean {
+  return assessment.label === "Highly competitive" ||
+    assessment.label === "Competitive";
+}
+
 type MarketPrice = {
   label: string;
   cents: number | null | undefined;

@@ -6,6 +6,10 @@ import { estimateMargin } from "@/lib/fees";
 import { syncAdminCatalogFromOpportunities } from "./admin-catalog";
 import { arbitrageSuggestedPriceCents } from "./pricing";
 import {
+  assessPriceCompetitiveness,
+  isCompetitivelyPriced,
+} from "./price-competitiveness";
+import {
   AUTO_PUBLISH_FLAT_PROFIT_CENTS,
   AUTO_PUBLISH_MIN_MARGIN_PCT,
 } from "./auto-publish";
@@ -94,6 +98,30 @@ export async function persistOpportunities(
 }
 
 export const DEFAULT_PAGE_SIZE = 25;
+
+function hasCompetitiveSuggestedPrice(item: {
+  amazonPriceCents: number;
+  amazonShippingCents: number;
+  ebayPriceCents: number | null;
+  ebayRecommendedPriceCents: number | null;
+  averageCompetitorPriceCents: number | null;
+}): boolean {
+  const suggestedPrice = arbitrageSuggestedPriceCents(
+    item.amazonPriceCents,
+    item.ebayPriceCents ?? 0,
+    item.ebayRecommendedPriceCents,
+    item.averageCompetitorPriceCents ?? item.ebayPriceCents ?? 0,
+    item.amazonShippingCents,
+  );
+  return isCompetitivelyPriced(
+    assessPriceCompetitiveness(
+      suggestedPrice,
+      item.ebayPriceCents ?? 0,
+      item.averageCompetitorPriceCents,
+      item.ebayRecommendedPriceCents,
+    ),
+  );
+}
 
 export type ArbitragePageParams = {
   page: number; // 1-based
@@ -234,13 +262,13 @@ export async function listArbitragePage(
     ? (params.pageSize ?? DEFAULT_PAGE_SIZE)
     : DEFAULT_PAGE_SIZE;
 
-  const [total, publishedRows, qualified, categoryRows] = await Promise.all([
+  const [databaseTotal, publishedRows, qualifiedCandidates, categoryRows] = await Promise.all([
     db.adminArbitrageProduct.count({ where }),
     db.adminArbitrageProduct.findMany({
       where: { status: "PUBLISHED", ebayItemId: { not: null } },
       select: { asin: true },
     }),
-    db.adminArbitrageProduct.count({
+    db.adminArbitrageProduct.findMany({
       where: {
         status: "PUBLISHED",
         ebayItemId: { not: null },
@@ -252,6 +280,13 @@ export async function listArbitragePage(
         ],
         estimatedProfitCents: { gt: 0 },
       },
+      select: {
+        amazonPriceCents: true,
+        amazonShippingCents: true,
+        ebayPriceCents: true,
+        ebayRecommendedPriceCents: true,
+        averageCompetitorPriceCents: true,
+      },
     }),
     db.adminArbitrageProduct.findMany({
       where: { status: "PUBLISHED" },
@@ -260,17 +295,24 @@ export async function listArbitragePage(
       orderBy: { category: "asc" },
     }),
   ]);
+  const qualified = qualifiedCandidates.filter(hasCompetitiveSuggestedPrice).length;
 
+  const inMemoryPagination =
+    params.sortKey === "usersListed" || params.qualifiedOnly;
   let items = await db.adminArbitrageProduct.findMany({
     where,
     orderBy: orderBy(params),
-    ...(params.sortKey === "usersListed"
+    ...(inMemoryPagination
       ? {}
       : {
           skip: (Math.max(1, params.page) - 1) * pageSize,
           take: pageSize,
         }),
   });
+  if (params.qualifiedOnly) {
+    items = items.filter(hasCompetitiveSuggestedPrice);
+  }
+  const total = params.qualifiedOnly ? items.length : databaseTotal;
 
   const adoptionAsins = items.map((item) => item.asin);
   const activeProducts = adoptionAsins.length
@@ -296,6 +338,9 @@ export async function listArbitragePage(
       if (difference !== 0) return params.sortDesc ? -difference : difference;
       return b.updatedAt.getTime() - a.updatedAt.getTime();
     });
+    const start = (Math.max(1, params.page) - 1) * pageSize;
+    items = items.slice(start, start + pageSize);
+  } else if (params.qualifiedOnly) {
     const start = (Math.max(1, params.page) - 1) * pageSize;
     items = items.slice(start, start + pageSize);
   }
