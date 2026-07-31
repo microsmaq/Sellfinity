@@ -181,15 +181,17 @@ export default async function ListingsPage() {
           </Badge>
         }
       />
-      <ListingsView
-        unlisted={unlisted}
-        listings={rows}
-        ebayConnected={ebayConnected}
-        ebayRows={ebayRows}
-        ebayFetchError={ebayFetchError}
-        improveMainImage={user.improveMainImage}
-        improveListingContent={user.improveListingContent}
-      />
+      <div className="relative left-1/2 w-[calc(100vw-2rem)] -translate-x-1/2 md:w-[calc(100vw-17rem)]">
+        <ListingsView
+          unlisted={unlisted}
+          listings={rows}
+          ebayConnected={ebayConnected}
+          ebayRows={ebayRows}
+          ebayFetchError={ebayFetchError}
+          improveMainImage={user.improveMainImage}
+          improveListingContent={user.improveListingContent}
+        />
+      </div>
     </>
   );
 }
