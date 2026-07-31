@@ -23,8 +23,8 @@ function validMarketPrices(prices: MarketPrice[]): MarketPrice[] {
   );
 }
 
-function comparison(suggestedPriceCents: number, market: MarketPrice): string {
-  const differencePct = ((suggestedPriceCents - market.cents!) / market.cents!) * 100;
+function comparison(priceCents: number, market: MarketPrice): string {
+  const differencePct = ((priceCents - market.cents!) / market.cents!) * 100;
   const roundedDifference = Math.round(Math.abs(differencePct));
 
   if (roundedDifference === 0) return `matches ${market.label}`;
@@ -37,18 +37,20 @@ function comparison(suggestedPriceCents: number, market: MarketPrice): string {
  * price look expensive, while the lowest benchmark identifies clear leaders.
  */
 export function assessPriceCompetitiveness(
-  suggestedPriceCents: number,
+  priceCents: number,
   ebayPriceCents: number,
   averageCompetitorPriceCents?: number | null,
   ebayRecommendedPriceCents?: number | null,
+  aiSuggestedPriceCents?: number | null,
 ): PriceCompetitiveness {
   const prices = validMarketPrices([
     { label: "eBay item", cents: ebayPriceCents },
     { label: "competitor avg", cents: averageCompetitorPriceCents },
     { label: "eBay recommended", cents: ebayRecommendedPriceCents },
+    { label: "AI suggested", cents: aiSuggestedPriceCents },
   ]);
 
-  if (suggestedPriceCents <= 0 || prices.length === 0) {
+  if (priceCents <= 0 || prices.length === 0) {
     return {
       label: "Not rated",
       tone: "slate",
@@ -62,12 +64,12 @@ export function assessPriceCompetitiveness(
   const median = sortedPrices.length % 2 === 0
     ? (sortedPrices[middle - 1] + sortedPrices[middle]) / 2
     : sortedPrices[middle];
-  const premiumToMedian = ((suggestedPriceCents - median) / median) * 100;
+  const premiumToMedian = ((priceCents - median) / median) * 100;
 
   let rating: Pick<PriceCompetitiveness, "label" | "tone">;
-  if (suggestedPriceCents <= lowest) {
+  if (priceCents <= lowest) {
     rating = { label: "Highly competitive", tone: "green" };
-  } else if (suggestedPriceCents <= median) {
+  } else if (priceCents <= median) {
     rating = { label: "Competitive", tone: "indigo" };
   } else if (premiumToMedian <= 5) {
     rating = { label: "Near market", tone: "indigo" };
@@ -79,6 +81,6 @@ export function assessPriceCompetitiveness(
 
   return {
     ...rating,
-    summary: prices.map((price) => comparison(suggestedPriceCents, price)).join(" · "),
+    summary: prices.map((market) => comparison(priceCents, market)).join(" · "),
   };
 }

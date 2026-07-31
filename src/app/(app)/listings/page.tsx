@@ -9,6 +9,7 @@ import { PageHeader, Badge } from "@/components/ui";
 import { ListingsView, type ListingRow, type UnlistedRow } from "./listings-view";
 import type { EbayRow } from "./ebay-listings-table";
 import { backfillRetainedArbitrageResearchForUser } from "@/lib/arbitrage/publish-handoff";
+import { arbitrageSuggestedPriceCents } from "@/lib/arbitrage/pricing";
 
 export const metadata = { title: "Listings — Sellfinity" };
 
@@ -40,6 +41,7 @@ export default async function ListingsPage() {
             shippingCostCents: true,
             supplierStock: true,
             supplierUrl: true,
+            category: true,
           },
         },
       },
@@ -123,19 +125,46 @@ export default async function ListingsPage() {
     ebayEnvConfig()?.env === "PRODUCTION"
       ? "https://www.ebay.com"
       : "https://sandbox.ebay.com";
-  const rows: ListingRow[] = listings.map((l) => ({
-    id: l.id,
-    title: l.title,
-    sku: l.product.sku,
-    imageUrl: parseImageUrls(l.imageUrlsJson)[0] ?? null,
-    priceCents: l.priceCents,
-    quantity: l.quantity,
-    costCents: l.product.costCents,
-    status: l.status as "DRAFT" | "ACTIVE" | "ENDED",
-    ebayListingId: l.ebayListingId,
-    ebayUrl: l.ebayListingId ? `${ebayItemHost}/itm/${l.ebayListingId}` : null,
-    publishedAt: l.publishedAt?.toISOString() ?? null,
-  }));
+  const rows: ListingRow[] = listings.map((l) => {
+    const metric =
+      (l.ebayListingId ? marketMetrics.get(l.ebayListingId) : null) ??
+      marketMetrics.get(l.product.sku) ??
+      null;
+    const suggestedPriceCents = arbitrageSuggestedPriceCents(
+      l.product.costCents,
+      l.priceCents,
+      metric?.bestSellingPriceCents,
+      metric?.averageCompetitorPriceCents,
+      l.product.shippingCostCents,
+    );
+
+    return {
+      id: l.id,
+      title: l.title,
+      sku: l.product.sku,
+      imageUrl: parseImageUrls(l.imageUrlsJson)[0] ?? null,
+      priceCents: l.priceCents,
+      quantity: l.quantity,
+      costCents: l.product.costCents,
+      shippingCostCents: l.product.shippingCostCents,
+      supplierStock: l.product.supplierStock,
+      supplierUrl: l.product.supplierUrl,
+      category: l.product.category,
+      suggestedPriceCents,
+      status: l.status as "DRAFT" | "ACTIVE" | "ENDED",
+      ebayListingId: l.ebayListingId,
+      ebayUrl: l.ebayListingId ? `${ebayItemHost}/itm/${l.ebayListingId}` : null,
+      publishedAt: l.publishedAt?.toISOString() ?? null,
+      createdAt: l.createdAt.toISOString(),
+      sourceMatchVerdict: l.sourceMatchVerdict,
+      sourceMatchConfidence: l.sourceMatchConfidence,
+      sourceMatchReason: l.sourceMatchReason,
+      estimatedSales30d: metric?.estimatedSales30d ?? null,
+      competitorCount: metric?.competitorCount ?? null,
+      averageCompetitorPriceCents: metric?.averageCompetitorPriceCents ?? null,
+      ebayRecommendedPriceCents: metric?.bestSellingPriceCents ?? null,
+    };
+  });
 
   return (
     <>

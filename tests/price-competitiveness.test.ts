@@ -53,4 +53,11 @@ describe("arbitrage price competitiveness", () => {
       )).toBe(expected);
     }
   });
+
+  it("can rate a live listing price against the AI suggested price too", () => {
+    expect(assessPriceCompetitiveness(1_750, 1_750, 1_800, 1_700, 1_650)).toMatchObject({
+      label: "Near market",
+      summary: "matches eBay item · 3% below competitor avg · 3% above eBay recommended · 6% above AI suggested",
+    });
+  });
 });

@@ -17,6 +17,7 @@ import {
 import {
   trueProfitCents,
 } from "@/lib/listings/cleanup";
+import { assessPriceCompetitiveness } from "@/lib/arbitrage/price-competitiveness";
 import { arbitrageSuggestedPriceCents } from "@/lib/arbitrage/pricing";
 import { formatCents, parseDollarsToCents } from "@/lib/money";
 import { Badge, Button, Card, cx } from "@/components/ui";
@@ -91,6 +92,19 @@ function competitiveHealthSortValue(row: EbayRow): number {
       ? -(health.priceDifferencePct ?? 0) * 100
       : health.marginPct ?? health.profitCents ?? 0;
   return rank * 1_000_000 + qualityWithinStatus;
+}
+
+function currentProfit(row: EbayRow): { profitCents: number; marginPct: number } | null {
+  if (!row.match) return null;
+  const profitCents = trueProfitCents(
+    row.priceCents,
+    row.match.amazonPriceCents,
+    row.match.shippingCostCents,
+  );
+  const marginPct = row.priceCents > 0
+    ? Math.round((profitCents / row.priceCents) * 100)
+    : 0;
+  return { profitCents, marginPct };
 }
 
 function formatListingDate(value: string | null): string {
@@ -228,9 +242,18 @@ function ListingSortHeader({
   onSort: (value: ListingSortKey) => void;
 }) {
   return (
-    <th className="px-4 py-3 text-right">
-      <button onClick={() => onSort(value)} className="whitespace-nowrap hover:text-slate-900">
-        {label} {active ? (descending ? "↓" : "↑") : ""}
+    <th className="sticky top-0 z-30 bg-slate-50 px-4 py-3 text-right">
+      <button
+        onClick={() => onSort(value)}
+        className={cx(
+          "inline-flex items-center gap-1 whitespace-nowrap hover:text-indigo-700",
+          active ? "text-indigo-700" : "text-slate-500",
+        )}
+      >
+        {label}
+        <span className="inline-block w-2">
+          {active ? (descending ? "↓" : "↑") : "↕"}
+        </span>
       </button>
     </th>
   );
@@ -239,20 +262,27 @@ function ListingSortHeader({
 function RepriceCell({
   row,
   pending,
+  onDraftPriceChange,
   onReprice,
 }: {
   row: EbayRow;
   pending: boolean;
+  onDraftPriceChange: (priceCents: number) => void;
   onReprice: (priceCents: number) => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [price, setPrice] = useState((row.priceCents / 100).toFixed(2));
+  const [originalPriceCents, setOriginalPriceCents] = useState(row.priceCents);
 
   if (!editing) {
     return (
       <button
         className="font-medium tabular-nums text-slate-900 underline decoration-dotted underline-offset-2 hover:text-indigo-600"
-        onClick={() => setEditing(true)}
+        onClick={() => {
+          setOriginalPriceCents(row.priceCents);
+          setPrice((row.priceCents / 100).toFixed(2));
+          setEditing(true);
+        }}
         title="Adjust price"
       >
         {formatCents(row.priceCents)}
@@ -263,8 +293,13 @@ function RepriceCell({
     <span className="inline-flex items-center gap-1.5">
       <input
         value={price}
-        onChange={(e) => setPrice(e.target.value)}
-        className="w-20 rounded-md border border-slate-300 px-2 py-1 text-xs tabular-nums"
+        onChange={(e) => {
+          const next = e.target.value;
+          setPrice(next);
+          const cents = parseDollarsToCents(next);
+          if (cents !== null) onDraftPriceChange(cents);
+        }}
+        className="w-24 rounded-md border border-slate-300 px-2 py-1 text-right text-xs tabular-nums focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-100"
         aria-label="New price (dollars)"
         autoFocus
       />
@@ -281,7 +316,15 @@ function RepriceCell({
       >
         Save
       </Button>
-      <Button size="sm" variant="ghost" onClick={() => setEditing(false)}>
+      <Button
+        size="sm"
+        variant="ghost"
+        onClick={() => {
+          onDraftPriceChange(originalPriceCents);
+          setPrice((originalPriceCents / 100).toFixed(2));
+          setEditing(false);
+        }}
+      >
         Cancel
       </Button>
     </span>
@@ -311,6 +354,7 @@ export function EbayListingsTable({
   const [page, setPage] = useState(1);
   const [attentionOnly, setAttentionOnly] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [expandedTable, setExpandedTable] = useState(false);
 
   const problems = rows.filter(listingNeedsAttention).length;
   const filteredRows = useMemo(
@@ -328,8 +372,8 @@ export function EbayListingsTable({
           return row.match
             ? row.match.amazonPriceCents + row.match.shippingCostCents
             : null;
-        case "profit": return row.match?.profitCents ?? null;
-        case "margin": return row.match?.marginPct ?? null;
+        case "profit": return currentProfit(row)?.profitCents ?? null;
+        case "margin": return currentProfit(row)?.marginPct ?? null;
         case "demand": return row.market?.estimatedSales30d ?? null;
         case "competition": return row.market?.competitorCount ?? null;
         case "recommendedPrice": return row.market?.bestSellingPriceCents ?? null;
@@ -775,8 +819,8 @@ export function EbayListingsTable({
           amazonUrl: row.match?.amazonUrl ?? null,
           amazonPriceCents: row.match?.amazonPriceCents ?? null,
           amazonShippingCents: row.match?.shippingCostCents ?? null,
-          profitCents: row.match?.profitCents ?? null,
-          marginPct: row.match?.marginPct ?? null,
+          profitCents: currentProfit(row)?.profitCents ?? null,
+          marginPct: currentProfit(row)?.marginPct ?? null,
           estimatedSales30d: row.market?.estimatedSales30d ?? null,
           competitorCount: row.market?.competitorCount ?? null,
           ebayRecommendedPriceCents: row.market?.bestSellingPriceCents ?? null,
@@ -790,7 +834,7 @@ export function EbayListingsTable({
             ? "Unmatched"
             : row.match.unavailable
               ? "Not on Amazon"
-              : row.match.profitCents <= 0
+              : (currentProfit(row)?.profitCents ?? 0) <= 0
                 ? "Unprofitable"
                 : "OK",
         })),
@@ -922,11 +966,48 @@ export function EbayListingsTable({
         </p>
       )}
 
-      <Card className="overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-slate-200 text-left text-xs uppercase tracking-wide text-slate-500">
-              <th className="px-4 py-3">
+      {expandedTable && (
+        <div className="fixed inset-0 z-40 bg-slate-950/35 backdrop-blur-sm" />
+      )}
+      <Card
+        className={cx(
+          "min-w-0 overflow-hidden",
+          expandedTable &&
+            "fixed inset-3 z-50 flex flex-col rounded-2xl border-slate-300 shadow-2xl",
+        )}
+      >
+        <div className="border-b border-slate-200 bg-white px-5 py-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2 className="font-semibold text-slate-900">Active listing intelligence</h2>
+              <p className="mt-0.5 text-xs text-slate-500">
+                Live eBay listings with Amazon source, market benchmarks, match confidence, and profitability.
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-slate-500">
+                {filteredRows.length.toLocaleString()} results
+              </span>
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => setExpandedTable((value) => !value)}
+              >
+                {expandedTable ? "↙ Exit full screen" : "↗ Expand table"}
+              </Button>
+            </div>
+          </div>
+        </div>
+        <div
+          className={cx(
+            "overflow-auto",
+            expandedTable ? "min-h-0 flex-1" : "max-h-[72vh]",
+          )}
+        >
+        <table className="w-full min-w-[2850px] text-sm">
+          <thead className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+            <tr>
+              <th className="sticky left-0 top-0 z-50 w-12 bg-slate-50 px-4 py-3">
                 <input
                   type="checkbox"
                   checked={allVisibleSelected}
@@ -941,7 +1022,7 @@ export function EbayListingsTable({
                   aria-label="Select all listings on this page"
                 />
               </th>
-              <th className="px-4 py-3">
+              <th className="sticky left-12 top-0 z-40 bg-slate-50 px-4 py-3 text-left">
                 <button onClick={() => sortBy("title")} className="hover:text-slate-900">
                   Listing {sortKey === "title" ? (sortDescending ? "↓" : "↑") : ""}
                 </button>
@@ -955,25 +1036,34 @@ export function EbayListingsTable({
               <ListingSortHeader label="eBay market rec." value="recommendedPrice" active={sortKey === "recommendedPrice"} descending={sortDescending} onSort={sortBy} />
               <ListingSortHeader label="Avg. comp price" value="averagePrice" active={sortKey === "averagePrice"} descending={sortDescending} onSort={sortBy} />
               <ListingSortHeader label="AI suggested price" value="suggestedPrice" active={sortKey === "suggestedPrice"} descending={sortDescending} onSort={sortBy} />
+              <th className="sticky top-0 z-30 bg-slate-50 px-4 py-3 text-left">Price assessment</th>
               <ListingSortHeader label="Match confidence" value="matchConfidence" active={sortKey === "matchConfidence"} descending={sortDescending} onSort={sortBy} />
               <ListingSortHeader label="Competitive health" value="competitiveHealth" active={sortKey === "competitiveHealth"} descending={sortDescending} onSort={sortBy} />
-              <th className="px-4 py-3">Status</th>
-              <th className="px-4 py-3" />
+              <th className="sticky top-0 z-30 bg-slate-50 px-4 py-3">Status</th>
+              <th className="sticky right-0 top-0 z-40 bg-slate-50 px-4 py-3" />
             </tr>
           </thead>
           <tbody>
             {visibleRows.map((r) => {
               const problem = listingNeedsAttention(r);
               const health = assessListingHealth(r);
+              const profit = currentProfit(r);
+              const priceAssessment = assessPriceCompetitiveness(
+                r.priceCents,
+                r.priceCents,
+                r.market?.averageCompetitorPriceCents,
+                r.market?.bestSellingPriceCents,
+                r.suggestedPriceCents,
+              );
               return (
                 <tr
                   key={r.ebayListingId}
                   className={cx(
-                    "border-b border-slate-100 last:border-0",
+                    "group border-t border-slate-100 align-top hover:bg-slate-50/70",
                     problem && "bg-red-50/40",
                   )}
                 >
-                  <td className="px-4 py-3">
+                  <td className="sticky left-0 z-10 w-12 bg-white px-4 py-5 group-hover:bg-slate-50">
                     <input
                       type="checkbox"
                       checked={selected.has(r.ebayListingId)}
@@ -981,29 +1071,29 @@ export function EbayListingsTable({
                       aria-label={`Select ${r.title}`}
                     />
                   </td>
-                  <td className="max-w-md px-4 py-3">
-                    <div className="flex items-center gap-3">
+                  <td className="sticky left-12 z-10 min-w-[390px] bg-white px-5 py-4 group-hover:bg-slate-50">
+                    <div className="flex gap-3">
                       {r.imageUrl ? (
                         // eslint-disable-next-line @next/next/no-img-element
                         <img
                           src={r.imageUrl}
                           alt=""
-                          className="h-10 w-10 shrink-0 rounded-lg bg-slate-100 object-cover"
+                          className="h-16 w-16 shrink-0 rounded-lg border border-slate-200 bg-white object-contain"
                         />
                       ) : (
-                        <div className="h-10 w-10 shrink-0 rounded-lg bg-slate-100" />
+                        <div className="h-16 w-16 shrink-0 rounded-lg bg-slate-100" />
                       )}
                       <div className="min-w-0">
                         <a
                           href={r.url}
                           target="_blank"
                           rel="noreferrer"
-                          className="block truncate font-medium text-slate-900 hover:text-indigo-600"
+                          className="line-clamp-3 text-sm font-semibold leading-5 text-slate-900 hover:text-indigo-600"
                           title={r.title}
                         >
                           {r.title}
                         </a>
-                        <p className="text-xs text-slate-500">
+                        <p className="mt-1 text-xs text-slate-500">
                           #{r.ebayListingId}
                           {r.quantity !== null && ` · ${r.quantity} available`}
                         </p>
@@ -1020,6 +1110,15 @@ export function EbayListingsTable({
                     <RepriceCell
                       row={r}
                       pending={pending}
+                      onDraftPriceChange={(priceCents) =>
+                        setRows((prev) =>
+                          prev.map((x) =>
+                            x.ebayListingId === r.ebayListingId
+                              ? { ...x, priceCents }
+                              : x,
+                          ),
+                        )
+                      }
                       onReprice={(priceCents) =>
                         run(
                           r.ebayListingId,
@@ -1064,12 +1163,12 @@ export function EbayListingsTable({
                   <td
                     className={cx(
                       "px-4 py-3 text-right font-medium tabular-nums",
-                      r.match &&
-                        (r.match.profitCents > 0 ? "text-emerald-600" : "text-red-600"),
+                      profit &&
+                        (profit.profitCents > 0 ? "text-emerald-600" : "text-red-600"),
                     )}
                   >
-                    {r.match
-                      ? `${formatCents(r.match.profitCents)} (${r.match.marginPct}%)`
+                    {profit
+                      ? `${formatCents(profit.profitCents)} (${profit.marginPct}%)`
                       : "—"}
                   </td>
                   <td className="px-4 py-3 text-right tabular-nums">
@@ -1128,6 +1227,14 @@ export function EbayListingsTable({
                     )}
                   </td>
                   <td className="px-4 py-3 text-right">
+                    <div title={priceAssessment.summary}>
+                      <Badge tone={priceAssessment.tone}>{priceAssessment.label}</Badge>
+                      <p className="mt-1 max-w-[260px] text-xs leading-4 text-slate-500">
+                        {priceAssessment.summary}
+                      </p>
+                    </div>
+                  </td>
+                  <td className="px-4 py-3 text-right">
                     {r.sourceAssessment ? (
                       <div title={r.sourceAssessment.reason ?? "No verification reason recorded."}>
                         <Badge
@@ -1180,9 +1287,9 @@ export function EbayListingsTable({
                         eBay market rec. {formatCents(health.benchmarkPriceCents)}
                       </p>
                     )}
-                    {health.profitCents !== null && (
+                    {profit !== null && (
                       <p className="whitespace-nowrap text-xs text-slate-500">
-                        {formatCents(health.profitCents)} net · {health.marginPct}%
+                        {formatCents(profit.profitCents)} net · {profit.marginPct}%
                       </p>
                     )}
                   </td>
@@ -1193,13 +1300,13 @@ export function EbayListingsTable({
                       <Badge tone="slate">Unmatched</Badge>
                     ) : r.match.unavailable ? (
                       <Badge tone="red">Not on Amazon</Badge>
-                    ) : r.match.profitCents <= 0 ? (
+                    ) : (profit?.profitCents ?? 0) <= 0 ? (
                       <Badge tone="red">Unprofitable</Badge>
                     ) : (
                       <Badge tone="green">OK</Badge>
                     )}
                   </td>
-                  <td className="whitespace-nowrap px-4 py-3 text-right">
+                  <td className="sticky right-0 whitespace-nowrap bg-white px-4 py-3 text-right group-hover:bg-slate-50">
                     {!r.match && !r.sourceAssessment ? (
                       <Button
                         size="sm"
@@ -1276,7 +1383,7 @@ export function EbayListingsTable({
             })}
             {filteredRows.length === 0 && !fetchError && (
               <tr>
-                <td colSpan={15} className="px-4 py-12 text-center text-slate-500">
+                <td colSpan={16} className="px-4 py-12 text-center text-slate-500">
                   {attentionOnly
                     ? "No active listings currently need attention."
                     : "No active listings found on your eBay account."}
@@ -1285,6 +1392,7 @@ export function EbayListingsTable({
             )}
           </tbody>
         </table>
+        </div>
       </Card>
       <div className="flex items-center justify-center gap-4 text-sm">
         <Button variant="secondary" size="sm" disabled={currentPage <= 1} onClick={() => setPage((current) => current - 1)}>
