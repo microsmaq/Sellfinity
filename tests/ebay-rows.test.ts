@@ -28,6 +28,9 @@ function local(
     publishedAt: new Date("2026-06-15T10:00:00.000Z"),
     product: {
       sku: `SKU-${id}`,
+      title: `Amazon source ${id}`,
+      imageUrlsJson: "[]",
+      category: "Home & Kitchen",
       costCents: overrides.costCents ?? 800,
       shippingCostCents: 0,
       supplierStock: overrides.supplierStock ?? 50,

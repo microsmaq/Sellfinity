@@ -18,6 +18,9 @@ export type LocalListingFacts = {
   publishedAt: Date | null;
   product: {
     sku: string;
+    title: string;
+    imageUrlsJson: string;
+    category: string;
     costCents: number;
     shippingCostCents: number;
     supplierStock: number;
@@ -32,6 +35,19 @@ function firstImage(json: string): string | null {
   } catch {
     return null;
   }
+}
+
+function sourceFacts(listing: LocalListingFacts) {
+  return {
+    title: listing.product.title,
+    sku: listing.product.sku,
+    imageUrl: firstImage(listing.product.imageUrlsJson),
+    category: listing.product.category,
+    priceCents: listing.product.costCents,
+    shippingCostCents: listing.product.shippingCostCents,
+    url: listing.product.supplierUrl,
+    stock: listing.product.supplierStock,
+  };
 }
 
 export function buildEbayRows(
@@ -68,6 +84,7 @@ export function buildEbayRows(
         imageUrl: r.imageUrl,
         quantity: r.quantity,
         listingDate: r.listingDate?.toISOString() ?? null,
+        source: null,
         market: marketMetrics.get(r.ebayListingId) ?? null,
         suggestedPriceCents: null,
         match: null,
@@ -89,6 +106,7 @@ export function buildEbayRows(
         quantity: r.quantity,
         listingDate:
           r.listingDate?.toISOString() ?? localListing.publishedAt?.toISOString() ?? null,
+        source: sourceFacts(localListing),
         market,
         suggestedPriceCents: null,
         match: null,
@@ -120,6 +138,7 @@ export function buildEbayRows(
       quantity: r.quantity,
       listingDate:
         r.listingDate?.toISOString() ?? localListing.publishedAt?.toISOString() ?? null,
+      source: sourceFacts(localListing),
       market,
       suggestedPriceCents: arbitrageSuggestedPriceCents(
         localListing.product.costCents,

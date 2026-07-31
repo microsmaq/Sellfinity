@@ -37,11 +37,13 @@ export default async function ListingsPage() {
         product: {
           select: {
             sku: true,
+            title: true,
+            imageUrlsJson: true,
+            category: true,
             costCents: true,
             shippingCostCents: true,
             supplierStock: true,
             supplierUrl: true,
-            category: true,
           },
         },
       },

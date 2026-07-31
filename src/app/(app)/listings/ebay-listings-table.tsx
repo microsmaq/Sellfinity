@@ -34,6 +34,16 @@ export type EbayRow = {
   imageUrl: string | null;
   quantity: number | null;
   listingDate: string | null;
+  source: {
+    title: string;
+    sku: string;
+    imageUrl: string | null;
+    category: string;
+    priceCents: number;
+    shippingCostCents: number;
+    url: string;
+    stock: number;
+  } | null;
   market: {
     estimatedSales30d: number;
     competitorCount: number;
@@ -61,7 +71,9 @@ export type EbayRow = {
 };
 
 type ListingSortKey =
-  | "title"
+  | "amazonTitle"
+  | "ebayTitle"
+  | "category"
   | "price"
   | "listingDate"
   | "amazonPrice"
@@ -365,7 +377,9 @@ export function EbayListingsTable({
   const sortedRows = useMemo(() => {
     const value = (row: EbayRow): string | number | null => {
       switch (sortKey) {
-        case "title": return row.title.toLowerCase();
+        case "amazonTitle": return (row.source?.title ?? row.title).toLowerCase();
+        case "ebayTitle": return row.title.toLowerCase();
+        case "category": return row.source?.category.toLowerCase() ?? null;
         case "price": return row.priceCents;
         case "listingDate": return row.listingDate ? Date.parse(row.listingDate) : null;
         case "amazonPrice":
@@ -1004,7 +1018,7 @@ export function EbayListingsTable({
             expandedTable ? "min-h-0 flex-1" : "max-h-[72vh]",
           )}
         >
-        <table className="w-full min-w-[2850px] text-sm">
+        <table className="w-full min-w-[3300px] text-sm">
           <thead className="text-xs font-semibold uppercase tracking-wide text-slate-500">
             <tr>
               <th className="sticky left-0 top-0 z-50 w-12 bg-slate-50 px-4 py-3">
@@ -1023,22 +1037,25 @@ export function EbayListingsTable({
                 />
               </th>
               <th className="sticky left-12 top-0 z-40 bg-slate-50 px-4 py-3 text-left">
-                <button onClick={() => sortBy("title")} className="hover:text-slate-900">
-                  Listing {sortKey === "title" ? (sortDescending ? "↓" : "↑") : ""}
+                <button onClick={() => sortBy("amazonTitle")} className="hover:text-indigo-700">
+                  Amazon item {sortKey === "amazonTitle" ? (sortDescending ? "↓" : "↑") : "↕"}
                 </button>
               </th>
-              <ListingSortHeader label="Listing date" value="listingDate" active={sortKey === "listingDate"} descending={sortDescending} onSort={sortBy} />
-              <ListingSortHeader label="My price" value="price" active={sortKey === "price"} descending={sortDescending} onSort={sortBy} />
+              <ListingSortHeader label="Category" value="category" active={sortKey === "category"} descending={sortDescending} onSort={sortBy} />
               <ListingSortHeader label="Amazon landed cost" value="amazonPrice" active={sortKey === "amazonPrice"} descending={sortDescending} onSort={sortBy} />
-              <ListingSortHeader label="Profit / Margin" value="margin" active={sortKey === "margin"} descending={sortDescending} onSort={sortBy} />
-              <ListingSortHeader label="Est. demand" value="demand" active={sortKey === "demand"} descending={sortDescending} onSort={sortBy} />
-              <ListingSortHeader label="Competition" value="competition" active={sortKey === "competition"} descending={sortDescending} onSort={sortBy} />
-              <ListingSortHeader label="eBay market rec." value="recommendedPrice" active={sortKey === "recommendedPrice"} descending={sortDescending} onSort={sortBy} />
-              <ListingSortHeader label="Avg. comp price" value="averagePrice" active={sortKey === "averagePrice"} descending={sortDescending} onSort={sortBy} />
-              <ListingSortHeader label="AI suggested price" value="suggestedPrice" active={sortKey === "suggestedPrice"} descending={sortDescending} onSort={sortBy} />
+              <ListingSortHeader label="Equivalent eBay item" value="ebayTitle" active={sortKey === "ebayTitle"} descending={sortDescending} onSort={sortBy} />
+              <ListingSortHeader label="eBay price" value="price" active={sortKey === "price"} descending={sortDescending} onSort={sortBy} />
+              <ListingSortHeader label="Competitor avg" value="averagePrice" active={sortKey === "averagePrice"} descending={sortDescending} onSort={sortBy} />
+              <ListingSortHeader label="eBay recommended" value="recommendedPrice" active={sortKey === "recommendedPrice"} descending={sortDescending} onSort={sortBy} />
+              <ListingSortHeader label="Suggested price" value="suggestedPrice" active={sortKey === "suggestedPrice"} descending={sortDescending} onSort={sortBy} />
               <th className="sticky top-0 z-30 bg-slate-50 px-4 py-3 text-left">Price assessment</th>
+              <ListingSortHeader label="Sales / month" value="demand" active={sortKey === "demand"} descending={sortDescending} onSort={sortBy} />
+              <ListingSortHeader label="Competition" value="competition" active={sortKey === "competition"} descending={sortDescending} onSort={sortBy} />
+              <ListingSortHeader label="Profit after ads" value="profit" active={sortKey === "profit"} descending={sortDescending} onSort={sortBy} />
+              <ListingSortHeader label="Margin after ads" value="margin" active={sortKey === "margin"} descending={sortDescending} onSort={sortBy} />
               <ListingSortHeader label="Match confidence" value="matchConfidence" active={sortKey === "matchConfidence"} descending={sortDescending} onSort={sortBy} />
               <ListingSortHeader label="Competitive health" value="competitiveHealth" active={sortKey === "competitiveHealth"} descending={sortDescending} onSort={sortBy} />
+              <ListingSortHeader label="Listing date" value="listingDate" active={sortKey === "listingDate"} descending={sortDescending} onSort={sortBy} />
               <th className="sticky top-0 z-30 bg-slate-50 px-4 py-3">Status</th>
               <th className="sticky right-0 top-0 z-40 bg-slate-50 px-4 py-3" />
             </tr>
@@ -1073,128 +1090,43 @@ export function EbayListingsTable({
                   </td>
                   <td className="sticky left-12 z-10 min-w-[390px] bg-white px-5 py-4 group-hover:bg-slate-50">
                     <div className="flex gap-3">
-                      {r.imageUrl ? (
+                      {r.source?.imageUrl || r.imageUrl ? (
                         // eslint-disable-next-line @next/next/no-img-element
                         <img
-                          src={r.imageUrl}
+                          src={r.source?.imageUrl || r.imageUrl || ""}
                           alt=""
                           className="h-16 w-16 shrink-0 rounded-lg border border-slate-200 bg-white object-contain"
                         />
-                      ) : (
-                        <div className="h-16 w-16 shrink-0 rounded-lg bg-slate-100" />
-                      )}
+                      ) : <div className="h-16 w-16 shrink-0 rounded-lg bg-slate-100" />}
                       <div className="min-w-0">
-                        <a
-                          href={r.url}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="line-clamp-3 text-sm font-semibold leading-5 text-slate-900 hover:text-indigo-600"
-                          title={r.title}
-                        >
-                          {r.title}
-                        </a>
-                        <p className="mt-1 text-xs text-slate-500">
-                          #{r.ebayListingId}
-                          {r.quantity !== null && ` · ${r.quantity} available`}
-                        </p>
+                        {r.source ? (
+                          <a href={r.source.url} target="_blank" rel="noreferrer" className="line-clamp-3 text-sm font-semibold leading-5 text-slate-900 hover:text-indigo-600">
+                            {r.source.title}
+                          </a>
+                        ) : <p className="text-sm font-semibold text-slate-500">No tracked Amazon source</p>}
+                        <p className="mt-1 text-xs text-slate-500">{r.source?.sku ?? `eBay #${r.ebayListingId}`}</p>
+                        <div className="mt-1 flex flex-wrap gap-1.5">
+                          {r.source && <Badge tone={r.source.stock > 0 ? "green" : "red"}>{r.source.stock > 0 ? `${r.source.stock} in stock` : "Unavailable"}</Badge>}
+                          {r.sourceAssessment && <Badge tone={r.sourceAssessment.confidence !== null && r.sourceAssessment.confidence >= 95 ? "green" : "amber"}>{r.sourceAssessment.verdict} {r.sourceAssessment.confidence ?? "—"}%</Badge>}
+                        </div>
                       </div>
                     </div>
                   </td>
-                  <td
-                    className="whitespace-nowrap px-4 py-3 text-right text-slate-600"
-                    title={r.listingDate ? new Date(r.listingDate).toLocaleString("en-US") : "Listing date unavailable"}
-                  >
-                    {formatListingDate(r.listingDate)}
+                  <td className="min-w-[170px] px-4 py-4 text-sm text-slate-700">{r.source?.category ?? "—"}</td>
+                  <td className="whitespace-nowrap px-4 py-4 text-right font-semibold tabular-nums">
+                    {r.source ? <>{formatCents(r.source.priceCents + r.source.shippingCostCents)}<p className="mt-0.5 text-[11px] font-normal text-slate-500">{formatCents(r.source.priceCents)}{r.source.shippingCostCents > 0 ? ` + ${formatCents(r.source.shippingCostCents)} shipping` : " · free shipping"}</p></> : "—"}
                   </td>
-                  <td className="px-4 py-3 text-right">
-                    <RepriceCell
-                      row={r}
-                      pending={pending}
-                      onDraftPriceChange={(priceCents) =>
-                        setRows((prev) =>
-                          prev.map((x) =>
-                            x.ebayListingId === r.ebayListingId
-                              ? { ...x, priceCents }
-                              : x,
-                          ),
-                        )
-                      }
-                      onReprice={(priceCents) =>
-                        run(
-                          r.ebayListingId,
-                          () => repriceEbayListing(r.ebayListingId, priceCents),
-                          () =>
-                            setRows((prev) =>
-                              prev.map((x) =>
-                                x.ebayListingId === r.ebayListingId
-                                  ? { ...x, priceCents }
-                                  : x,
-                              ),
-                            ),
-                          "Price updated on eBay.",
-                        )
-                      }
-                    />
+                  <td className="min-w-[310px] px-4 py-4">
+                    <a href={r.url} target="_blank" rel="noreferrer" className="line-clamp-2 text-sm font-medium text-slate-800 hover:text-indigo-600">{r.title}</a>
+                    <p className="mt-1 text-xs text-slate-500">#{r.ebayListingId}{r.quantity !== null && ` · ${r.quantity} available`}</p>
+                    {r.sourceAssessment?.reason && <p className="mt-1 line-clamp-2 text-xs text-slate-500">{r.sourceAssessment.reason}</p>}
                   </td>
-                  <td className="px-4 py-3 text-right tabular-nums">
-                    {r.match ? (
-                      <>
-                        <a
-                          href={r.match.amazonUrl}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="text-indigo-600 hover:underline"
-                        >
-                          {formatCents(
-                            r.match.amazonPriceCents +
-                              r.match.shippingCostCents,
-                          )}
-                        </a>
-                        <p className="mt-0.5 text-[11px] text-slate-500">
-                          {r.match.shippingCostCents > 0
-                            ? `${formatCents(r.match.amazonPriceCents)} + ${formatCents(r.match.shippingCostCents)} ship`
-                            : "Free shipping"}
-                        </p>
-                      </>
-                    ) : (
-                      "—"
-                    )}
+                  <td className="whitespace-nowrap px-4 py-4 text-right">
+                    <RepriceCell row={r} pending={pending} onDraftPriceChange={(priceCents) => setRows((prev) => prev.map((x) => x.ebayListingId === r.ebayListingId ? { ...x, priceCents } : x))} onReprice={(priceCents) => run(r.ebayListingId, () => repriceEbayListing(r.ebayListingId, priceCents), () => setRows((prev) => prev.map((x) => x.ebayListingId === r.ebayListingId ? { ...x, priceCents } : x)), "Price updated on eBay.")} />
                   </td>
-                  <td
-                    className={cx(
-                      "px-4 py-3 text-right font-medium tabular-nums",
-                      profit &&
-                        (profit.profitCents > 0 ? "text-emerald-600" : "text-red-600"),
-                    )}
-                  >
-                    {profit
-                      ? `${formatCents(profit.profitCents)} (${profit.marginPct}%)`
-                      : "—"}
-                  </td>
-                  <td className="px-4 py-3 text-right tabular-nums">
-                    {r.market ? `~${r.market.estimatedSales30d}/mo` : "—"}
-                  </td>
-                  <td className="px-4 py-3 text-right tabular-nums">
-                    {r.market?.competitorCount ?? "—"}
-                  </td>
-                  <td className="px-4 py-3 text-right tabular-nums">
-                    {r.market ? (
-                      <span
-                        title="Sellfinity recommendation derived from the comparable listing with the strongest estimated demand in current eBay market data; it is not an official eBay Seller Hub recommendation."
-                        className="font-medium text-blue-700"
-                      >
-                        {formatCents(r.market.bestSellingPriceCents)}
-                      </span>
-                    ) : (
-                      "—"
-                    )}
-                  </td>
-                  <td className="px-4 py-3 text-right tabular-nums">
-                    {r.market
-                      ? formatCents(r.market.averageCompetitorPriceCents)
-                      : "—"}
-                  </td>
-                  <td className="px-4 py-3 text-right tabular-nums">
+                  <td className="whitespace-nowrap px-4 py-4 text-right tabular-nums">{r.market ? formatCents(r.market.averageCompetitorPriceCents) : "—"}</td>
+                  <td className="whitespace-nowrap px-4 py-4 text-right tabular-nums">{r.market ? <span title="Sellfinity recommendation derived from the strongest comparable eBay listing." className="font-medium text-blue-700">{formatCents(r.market.bestSellingPriceCents)}</span> : "—"}</td>
+                  <td className="whitespace-nowrap px-4 py-4 text-right tabular-nums">
                     {r.suggestedPriceCents !== null && r.match ? (
                       <div
                         className={cx(
@@ -1226,7 +1158,7 @@ export function EbayListingsTable({
                       "—"
                     )}
                   </td>
-                  <td className="px-4 py-3 text-right">
+                  <td className="min-w-[250px] px-4 py-4">
                     <div title={priceAssessment.summary}>
                       <Badge tone={priceAssessment.tone}>{priceAssessment.label}</Badge>
                       <p className="mt-1 max-w-[260px] text-xs leading-4 text-slate-500">
@@ -1234,7 +1166,11 @@ export function EbayListingsTable({
                       </p>
                     </div>
                   </td>
-                  <td className="px-4 py-3 text-right">
+                  <td className="px-4 py-4 text-right tabular-nums">{r.market ? r.market.estimatedSales30d.toLocaleString() : "—"}</td>
+                  <td className="px-4 py-4 text-right tabular-nums">{r.market?.competitorCount?.toLocaleString() ?? "—"}</td>
+                  <td className={cx("whitespace-nowrap px-4 py-4 text-right tabular-nums", profit && (profit.profitCents > 0 ? "font-semibold text-emerald-700" : "text-red-600"))}>{profit ? formatCents(profit.profitCents) : "—"}</td>
+                  <td className={cx("px-4 py-4 text-right tabular-nums", profit && (profit.marginPct >= 15 ? "font-semibold text-emerald-700" : "text-amber-700"))}>{profit ? `${profit.marginPct}%` : "—"}</td>
+                  <td className="px-4 py-4 text-right">
                     {r.sourceAssessment ? (
                       <div title={r.sourceAssessment.reason ?? "No verification reason recorded."}>
                         <Badge
@@ -1267,7 +1203,7 @@ export function EbayListingsTable({
                     )}
                   </td>
                   <td
-                    className="px-4 py-3 text-right"
+                    className="px-4 py-4 text-right"
                     title="Profit includes estimated eBay fees, the Amazon cost, shipping cost, and a 3% promoted-listing rate."
                   >
                     <Badge
@@ -1293,7 +1229,8 @@ export function EbayListingsTable({
                       </p>
                     )}
                   </td>
-                  <td className="px-4 py-3">
+                  <td className="whitespace-nowrap px-4 py-4 text-right text-xs text-slate-500" title={r.listingDate ? new Date(r.listingDate).toLocaleString("en-US") : "Listing date unavailable"}>{formatListingDate(r.listingDate)}</td>
+                  <td className="px-4 py-4">
                     {!r.match && r.sourceAssessment ? (
                       <Badge tone="amber">Review source</Badge>
                     ) : !r.match ? (
@@ -1383,7 +1320,7 @@ export function EbayListingsTable({
             })}
             {filteredRows.length === 0 && !fetchError && (
               <tr>
-                <td colSpan={16} className="px-4 py-12 text-center text-slate-500">
+                <td colSpan={19} className="px-4 py-12 text-center text-slate-500">
                   {attentionOnly
                     ? "No active listings currently need attention."
                     : "No active listings found on your eBay account."}
