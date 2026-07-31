@@ -275,11 +275,13 @@ function RepriceCell({
   row,
   pending,
   onDraftPriceChange,
+  onEditingChange,
   onReprice,
 }: {
   row: EbayRow;
   pending: boolean;
   onDraftPriceChange: (priceCents: number) => void;
+  onEditingChange: (editing: boolean) => void;
   onReprice: (priceCents: number) => void;
 }) {
   const [editing, setEditing] = useState(false);
@@ -293,6 +295,7 @@ function RepriceCell({
         onClick={() => {
           setOriginalPriceCents(row.priceCents);
           setPrice((row.priceCents / 100).toFixed(2));
+          onEditingChange(true);
           setEditing(true);
         }}
         title="Adjust price"
@@ -322,6 +325,7 @@ function RepriceCell({
           const cents = parseDollarsToCents(price);
           if (cents !== null) {
             onReprice(cents);
+            onEditingChange(false);
             setEditing(false);
           }
         }}
@@ -334,6 +338,7 @@ function RepriceCell({
         onClick={() => {
           onDraftPriceChange(originalPriceCents);
           setPrice((originalPriceCents / 100).toFixed(2));
+          onEditingChange(false);
           setEditing(false);
         }}
       >
@@ -367,6 +372,7 @@ export function EbayListingsTable({
   const [attentionOnly, setAttentionOnly] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [expandedTable, setExpandedTable] = useState(false);
+  const [lockedSortOrder, setLockedSortOrder] = useState<string[] | null>(null);
 
   const problems = rows.filter(listingNeedsAttention).length;
   const filteredRows = useMemo(
@@ -375,6 +381,14 @@ export function EbayListingsTable({
   );
 
   const sortedRows = useMemo(() => {
+    if (lockedSortOrder) {
+      const position = new Map(lockedSortOrder.map((id, index) => [id, index]));
+      return [...filteredRows].sort(
+        (left, right) =>
+          (position.get(left.ebayListingId) ?? Number.MAX_SAFE_INTEGER) -
+          (position.get(right.ebayListingId) ?? Number.MAX_SAFE_INTEGER),
+      );
+    }
     const value = (row: EbayRow): string | number | null => {
       switch (sortKey) {
         case "amazonTitle": return (row.source?.title ?? row.title).toLowerCase();
@@ -408,7 +422,7 @@ export function EbayListingsTable({
           : Number(a) - Number(b);
       return sortDescending ? -comparison : comparison;
     });
-  }, [filteredRows, sortKey, sortDescending]);
+  }, [filteredRows, lockedSortOrder, sortKey, sortDescending]);
   const pageCount = Math.max(1, Math.ceil(sortedRows.length / pageSize));
   const currentPage = Math.min(page, pageCount);
   const visibleRows = sortedRows.slice(
@@ -1122,7 +1136,17 @@ export function EbayListingsTable({
                     {r.sourceAssessment?.reason && <p className="mt-1 line-clamp-2 text-xs text-slate-500">{r.sourceAssessment.reason}</p>}
                   </td>
                   <td className="whitespace-nowrap px-4 py-4 text-right">
-                    <RepriceCell row={r} pending={pending} onDraftPriceChange={(priceCents) => setRows((prev) => prev.map((x) => x.ebayListingId === r.ebayListingId ? { ...x, priceCents } : x))} onReprice={(priceCents) => run(r.ebayListingId, () => repriceEbayListing(r.ebayListingId, priceCents), () => setRows((prev) => prev.map((x) => x.ebayListingId === r.ebayListingId ? { ...x, priceCents } : x)), "Price updated on eBay.")} />
+                    <RepriceCell
+                      row={r}
+                      pending={pending}
+                      onEditingChange={(editing) =>
+                        setLockedSortOrder(
+                          editing ? sortedRows.map((row) => row.ebayListingId) : null,
+                        )
+                      }
+                      onDraftPriceChange={(priceCents) => setRows((prev) => prev.map((x) => x.ebayListingId === r.ebayListingId ? { ...x, priceCents } : x))}
+                      onReprice={(priceCents) => run(r.ebayListingId, () => repriceEbayListing(r.ebayListingId, priceCents), () => setRows((prev) => prev.map((x) => x.ebayListingId === r.ebayListingId ? { ...x, priceCents } : x)), "Price updated on eBay.")}
+                    />
                   </td>
                   <td className="whitespace-nowrap px-4 py-4 text-right tabular-nums">{r.market ? formatCents(r.market.averageCompetitorPriceCents) : "—"}</td>
                   <td className="whitespace-nowrap px-4 py-4 text-right tabular-nums">{r.market ? <span title="Sellfinity recommendation derived from the strongest comparable eBay listing." className="font-medium text-blue-700">{formatCents(r.market.bestSellingPriceCents)}</span> : "—"}</td>
