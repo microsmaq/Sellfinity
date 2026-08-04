@@ -34,7 +34,8 @@ keep stock in sync, and know what you actually profited.
 - **Amazon purchase reconciliation** — an optional read-only Gmail connection
   recognizes Amazon confirmations and shipment updates, matches exact ASINs
   to imported eBay sales, and replaces estimated COGS with actual item price,
-  Amazon shipping, tax, and discounts in realized-profit reporting.
+  Amazon shipping, tax, and discounts in realized-profit reporting. Connected
+  accounts are checked daily on Vercel Hobby and can be refreshed on demand.
 
 Plus: email/password auth (bcrypt + DB sessions) and a settings area for the
 eBay seller account connection. Billing is intentionally disabled for now —
