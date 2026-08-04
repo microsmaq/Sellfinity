@@ -34,6 +34,28 @@ export type RemoteOrder = {
   saleDate: Date;
 };
 
+export type RemoteFulfillmentLine = {
+  lineItemId: string;
+  ebayListingId: string;
+  sku: string | null;
+  title: string;
+  quantity: number;
+  salePriceCents: number;
+  shippingChargedCents: number;
+  fulfillmentStatus: "NOT_STARTED" | "IN_PROGRESS";
+  shipByDate: Date | null;
+  variation: string | null;
+};
+
+export type RemoteFulfillmentOrder = {
+  orderId: string;
+  createdAt: Date;
+  buyerUsername: string;
+  paymentStatus: string;
+  fulfillmentStatus: "NOT_STARTED" | "IN_PROGRESS";
+  lines: RemoteFulfillmentLine[];
+};
+
 /** One of the seller's live eBay listings, regardless of how it was created. */
 export type RemoteListing = {
   /** Legacy numeric item id (the one in ebay.com/itm/… URLs). */
@@ -61,6 +83,8 @@ export interface EbayClient {
    * account/tokens to use.
    */
   getOrders(userId: string, since: Date): Promise<RemoteOrder[]>;
+  /** Paid, non-cancelled orders that still contain line items to fulfill. */
+  getUnfulfilledOrders(userId: string): Promise<RemoteFulfillmentOrder[]>;
   /**
    * Every listing currently live on the seller's account — including ones
    * not created through this app.

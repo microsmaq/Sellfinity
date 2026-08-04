@@ -12,6 +12,7 @@ import {
   type ListingUpdate,
   type RemoteListing,
   type RemoteOrder,
+  type RemoteFulfillmentOrder,
 } from "./client";
 import {
   appAccessToken,
@@ -602,6 +603,90 @@ ${innerXml}
       if (page >= totalPages || itemBlocks.length === 0) break;
     }
     return listings;
+  }
+
+  async getUnfulfilledOrders(): Promise<RemoteFulfillmentOrder[]> {
+    type FulfillmentLine = {
+      lineItemId?: string;
+      legacyItemId?: string;
+      sku?: string;
+      title?: string;
+      quantity?: number;
+      lineItemCost?: { value?: string };
+      deliveryCost?: { shippingCost?: { value?: string } };
+      lineItemFulfillmentStatus?: string;
+      lineItemFulfillmentInstructions?: { shipByDate?: string };
+      variationAspects?: { name?: string; value?: string }[];
+    };
+    type FulfillmentOrder = {
+      orderId?: string;
+      creationDate?: string;
+      buyer?: { username?: string };
+      orderPaymentStatus?: string;
+      orderFulfillmentStatus?: string;
+      cancelStatus?: { cancelState?: string };
+      lineItems?: FulfillmentLine[];
+    };
+
+    const orders: RemoteFulfillmentOrder[] = [];
+    const filter = "orderfulfillmentstatus:%7BNOT_STARTED%7CIN_PROGRESS%7D";
+    let offset = 0;
+    for (;;) {
+      const page = await this.request<{ orders?: FulfillmentOrder[]; total?: number }>(
+        "GET",
+        `/sell/fulfillment/v1/order?filter=${filter}&limit=100&offset=${offset}`,
+      );
+      for (const order of page.orders ?? []) {
+        const fulfillmentStatus = order.orderFulfillmentStatus;
+        if (fulfillmentStatus !== "NOT_STARTED" && fulfillmentStatus !== "IN_PROGRESS") continue;
+        if (order.cancelStatus?.cancelState && order.cancelStatus.cancelState !== "NONE_REQUESTED") continue;
+        if (order.orderPaymentStatus === "FULLY_REFUNDED" || order.orderPaymentStatus === "PENDING") continue;
+        if (!order.orderId || !order.creationDate) continue;
+
+        const lines = (order.lineItems ?? []).flatMap((line) => {
+          if (!line.lineItemId || !line.legacyItemId) return [];
+          if (line.lineItemFulfillmentStatus === "FULFILLED") return [];
+          const lineStatus = line.lineItemFulfillmentStatus === "IN_PROGRESS"
+            ? "IN_PROGRESS" as const
+            : "NOT_STARTED" as const;
+          const quantity = Math.max(1, line.quantity ?? 1);
+          const totalLineCents = Math.round(parseFloat(line.lineItemCost?.value ?? "0") * 100);
+          const shipBy = line.lineItemFulfillmentInstructions?.shipByDate;
+          const shipByDate = shipBy ? new Date(shipBy) : null;
+          return [{
+            lineItemId: line.lineItemId,
+            ebayListingId: line.legacyItemId,
+            sku: line.sku ?? null,
+            title: line.title ?? `eBay listing ${line.legacyItemId}`,
+            quantity,
+            salePriceCents: Math.round(totalLineCents / quantity),
+            shippingChargedCents: Math.round(
+              parseFloat(line.deliveryCost?.shippingCost?.value ?? "0") * 100,
+            ),
+            fulfillmentStatus: lineStatus,
+            shipByDate: shipByDate && !Number.isNaN(shipByDate.getTime()) ? shipByDate : null,
+            variation: line.variationAspects?.length
+              ? line.variationAspects
+                  .filter((aspect) => aspect.name && aspect.value)
+                  .map((aspect) => `${aspect.name}: ${aspect.value}`)
+                  .join(" · ") || null
+              : null,
+          }];
+        });
+        if (lines.length === 0) continue;
+        orders.push({
+          orderId: order.orderId,
+          createdAt: new Date(order.creationDate),
+          buyerUsername: order.buyer?.username ?? "eBay buyer",
+          paymentStatus: order.orderPaymentStatus ?? "PAID",
+          fulfillmentStatus,
+          lines,
+        });
+      }
+      offset += 100;
+      if (!page.orders || page.orders.length < 100) break;
+    }
+    return orders.sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
   }
 
   async getOrders(_userId: string, since: Date): Promise<RemoteOrder[]> {

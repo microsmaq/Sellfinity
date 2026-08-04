@@ -13,6 +13,7 @@ import {
   type RemoteListing,
   type ListingUpdate,
   type RemoteOrder,
+  type RemoteFulfillmentOrder,
 } from "./client";
 
 function hashString(s: string): number {
@@ -155,5 +156,34 @@ export class MockEbayClient implements EbayClient {
       }
     }
     return orders.sort((a, b) => a.saleDate.getTime() - b.saleDate.getTime());
+  }
+
+  async getUnfulfilledOrders(userId: string): Promise<RemoteFulfillmentOrder[]> {
+    const since = new Date(Date.now() - 7 * DAY_MS);
+    const orders = await this.getOrders(userId, since);
+    const listings = await db.listing.findMany({
+      where: { userId, ebayListingId: { in: orders.map((order) => order.ebayListingId) } },
+      include: { product: { select: { sku: true } } },
+    });
+    const byEbayId = new Map(listings.map((listing) => [listing.ebayListingId, listing]));
+    return orders.map((order) => ({
+      orderId: order.ebayOrderId,
+      createdAt: order.saleDate,
+      buyerUsername: order.buyerUsername,
+      paymentStatus: "PAID",
+      fulfillmentStatus: "NOT_STARTED" as const,
+      lines: [{
+        lineItemId: order.ebayOrderId,
+        ebayListingId: order.ebayListingId,
+        sku: byEbayId.get(order.ebayListingId)?.product.sku ?? null,
+        title: byEbayId.get(order.ebayListingId)?.title ?? `Listing ${order.ebayListingId}`,
+        quantity: order.quantity,
+        salePriceCents: order.salePriceCents,
+        shippingChargedCents: order.shippingChargedCents,
+        fulfillmentStatus: "NOT_STARTED" as const,
+        shipByDate: null,
+        variation: null,
+      }],
+    }));
   }
 }
