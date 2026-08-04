@@ -31,6 +31,10 @@ keep stock in sync, and know what you actually profited.
 - **Profit tracking** (`/dashboard`) — imports orders with fee/COGS snapshots
   taken at sale time; 30-day KPIs, daily net-profit chart, per-item P&L,
   recent orders.
+- **Amazon purchase reconciliation** — an optional read-only Gmail connection
+  recognizes Amazon confirmations and shipment updates, matches exact ASINs
+  to imported eBay sales, and replaces estimated COGS with actual item price,
+  Amazon shipping, tax, and discounts in realized-profit reporting.
 
 Plus: email/password auth (bcrypt + DB sessions) and a settings area for the
 eBay seller account connection. Billing is intentionally disabled for now —

@@ -16,6 +16,11 @@ function order(overrides: Partial<OrderFacts> = {}): OrderFacts {
 }
 
 describe("summarize", () => {
+  it("uses reconciled Amazon cost instead of the catalog estimate", () => {
+    const totals = summarize([{ quantity: 1, salePriceCents: 5000, shippingChargedCents: 0, ebayFeeCents: 700, cogsCents: 2500, shippingCostCents: 0, actualAmazonCostCents: 3100, status: "PAID", saleDate: new Date() }]);
+    expect(totals.cogsCents).toBe(3100);
+    expect(totals.netCents).toBe(1200);
+  });
   it("totals revenue, fees, costs, and net", () => {
     const t = summarize([order(), order({ quantity: 2, cogsCents: 1200 })]);
     expect(t.orders).toBe(2);

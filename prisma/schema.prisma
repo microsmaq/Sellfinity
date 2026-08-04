@@ -49,6 +49,81 @@ model User {
   mirrorBatches           MirrorBatch[]
   generatedListingImages GeneratedListingImage[]
   ebayConnection          EbayConnection?
+  amazonEmailConnection   AmazonEmailConnection?
+  amazonPurchases         AmazonPurchase[]
+}
+
+// Read-only Gmail connection used to recognize Amazon order confirmation and
+// shipping emails. Tokens are encrypted by the application before storage.
+model AmazonEmailConnection {
+  id                    String    @id @default(cuid())
+  userId                String    @unique
+  provider              String    @default("GOOGLE")
+  status                String    @default("CONNECTED")
+  email                 String?
+  encryptedAccessToken  String?
+  encryptedRefreshToken String?
+  accessTokenExpiresAt  DateTime?
+  connectedAt           DateTime  @default(now())
+  lastSyncedAt          DateTime?
+  lastSyncError         String?
+  processedMessageIdsJson String @default("[]")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// An Amazon purchase recovered from a user-authorized confirmation or
+// shipment email. The raw email is never retained.
+model AmazonPurchase {
+  id                    String    @id @default(cuid())
+  userId                String
+  amazonOrderId         String
+  sourceMessageId       String
+  purchasedAt           DateTime?
+  status                String    @default("ORDERED")
+  subtotalCents         Int?
+  shippingCents         Int       @default(0)
+  taxCents              Int       @default(0)
+  discountCents         Int       @default(0)
+  totalCents            Int?
+  currency              String    @default("USD")
+  trackingNumber        String?
+  carrier               String?
+  expectedDeliveryAt    DateTime?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  user  User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  items AmazonPurchaseItem[]
+
+  @@unique([userId, amazonOrderId])
+  @@unique([userId, sourceMessageId])
+  @@index([userId, purchasedAt])
+  @@index([userId, status])
+}
+
+model AmazonPurchaseItem {
+  id                       String   @id @default(cuid())
+  purchaseId               String
+  asin                     String?
+  title                    String
+  quantity                 Int      @default(1)
+  unitPriceCents           Int?
+  lineTotalCents           Int?
+  allocatedShippingCents   Int      @default(0)
+  allocatedTaxCents        Int      @default(0)
+  allocatedDiscountCents   Int      @default(0)
+  amazonUrl                String?
+  matchedOrderId           String?  @unique
+  matchConfidence          Int?
+  matchReason              String?
+  createdAt                DateTime @default(now())
+
+  purchase    AmazonPurchase @relation(fields: [purchaseId], references: [id], onDelete: Cascade)
+  matchedOrder Order?         @relation(fields: [matchedOrderId], references: [id], onDelete: SetNull)
+
+  @@index([purchaseId])
+  @@index([asin])
 }
 
 // Amazon-first catalog curated by Sellfinity administrators. User-facing
@@ -330,8 +405,14 @@ model Order {
   saleDate             DateTime
   createdAt            DateTime @default(now())
 
+  // Reconciled Amazon fulfillment data. Catalog COGS remains the estimate;
+  // realized dashboards use the linked purchase item's allocated actual cost.
+  sourcingStatus       String   @default("NOT_PURCHASED")
+  amazonMatchedAt      DateTime?
+
   user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
   listing Listing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+  amazonPurchaseItem AmazonPurchaseItem?
 
   @@unique([userId, ebayOrderId])
   @@index([userId, saleDate])

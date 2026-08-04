@@ -38,6 +38,13 @@ For one transactional summary email after every publishing batch, verify the
 example `Sellfinity <updates@sellfinity.app>`), and
 `APP_URL=https://www.sellfinity.app` in Vercel.
 
+For optional Amazon purchase detection through Gmail, create a Google OAuth
+web application, enable Gmail API, add
+`https://www.sellfinity.app/api/amazon-email/callback` as an authorized
+redirect URI, and set `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and a stable
+32+ character `EMAIL_TOKEN_ENCRYPTION_KEY`. The OAuth consent screen must be
+approved for the read-only Gmail scope before general availability.
+
 ## 3. Domain (~10 min + DNS propagation)
 
 1. Vercel project → Settings → Domains → add `sellfinity.app` (and

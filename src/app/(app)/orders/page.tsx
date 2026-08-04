@@ -6,6 +6,7 @@ import { estimateMargin } from "@/lib/fees";
 import { parseImageUrls } from "@/lib/types";
 import { Badge, PageHeader } from "@/components/ui";
 import { OrdersView, type FulfillmentOrderRow } from "./orders-view";
+import { actualAmazonCost } from "@/lib/amazon-email/sync";
 
 export const metadata = { title: "Orders to fulfill — Sellfinity" };
 export const dynamic = "force-dynamic";
@@ -17,6 +18,15 @@ export default async function OrdersPage() {
   const ebayConnected = !!connection && connection.status !== "DISCONNECTED";
   let rows: FulfillmentOrderRow[] = [];
   let fetchError: string | null = null;
+  const purchaseHistory = await db.order.findMany({
+    where: { userId: user.id, amazonPurchaseItem: { isNot: null } },
+    include: { listing: { include: { product: true } }, amazonPurchaseItem: { include: { purchase: true } } },
+    orderBy: { amazonMatchedAt: "desc" },
+    take: 200,
+  });
+  const amazonPurchases = await db.amazonPurchase.findMany({
+    where: { userId: user.id }, include: { items: true }, orderBy: [{ purchasedAt: "desc" }, { createdAt: "desc" }], take: 200,
+  });
 
   if (ebayConnected) {
     try {
@@ -70,7 +80,26 @@ export default async function OrdersPage() {
         actions={<Badge tone={ebayConnected ? "green" : "amber"}>{ebayConnected ? "Live from eBay" : "eBay not connected"}</Badge>}
       />
       <div className="relative left-1/2 w-[calc(100vw-2rem)] -translate-x-1/2 md:w-[calc(100vw-17rem)]">
-        <OrdersView orders={rows} fetchError={fetchError ?? (!ebayConnected ? "Connect eBay in Settings first." : null)} />
+        <OrdersView
+          orders={rows}
+          fetchError={fetchError ?? (!ebayConnected ? "Connect eBay in Settings first." : null)}
+          purchaseHistory={purchaseHistory.flatMap((order) => order.amazonPurchaseItem ? [{
+            id: order.id, ebayOrderId: order.ebayOrderId, ebayTitle: order.listing.title,
+            amazonOrderId: order.amazonPurchaseItem.purchase.amazonOrderId, amazonTitle: order.amazonPurchaseItem.title,
+            amazonUrl: order.amazonPurchaseItem.amazonUrl, purchasedAt: order.amazonPurchaseItem.purchase.purchasedAt?.toISOString() ?? null,
+            sourcingStatus: order.sourcingStatus, trackingNumber: order.amazonPurchaseItem.purchase.trackingNumber,
+            revenueCents: order.salePriceCents * order.quantity + order.shippingChargedCents, ebayFeeCents: order.ebayFeeCents,
+            actualAmazonCostCents: actualAmazonCost(order.amazonPurchaseItem), estimatedAmazonCostCents: order.cogsCents + order.shippingCostCents,
+            confidence: order.amazonPurchaseItem.matchConfidence,
+          }] : [])}
+          amazonPurchases={amazonPurchases.map((purchase) => ({
+            id: purchase.id, amazonOrderId: purchase.amazonOrderId, purchasedAt: purchase.purchasedAt?.toISOString() ?? null,
+            status: purchase.status, subtotalCents: purchase.subtotalCents, shippingCents: purchase.shippingCents,
+            taxCents: purchase.taxCents, discountCents: purchase.discountCents, totalCents: purchase.totalCents,
+            trackingNumber: purchase.trackingNumber, carrier: purchase.carrier,
+            items: purchase.items.map((item) => ({ id: item.id, asin: item.asin, title: item.title, quantity: item.quantity, unitPriceCents: item.unitPriceCents, amazonUrl: item.amazonUrl, matched: !!item.matchedOrderId })),
+          }))}
+        />
       </div>
     </>
   );

@@ -10,6 +10,7 @@ export type OrderFacts = {
   cogsCents: number;
   status: string;
   saleDate: Date;
+  actualAmazonCostCents?: number | null;
 };
 
 export type Totals = {
@@ -32,7 +33,7 @@ export function summarize(orders: OrderFacts[]): Totals {
       continue;
     }
     const revenue = o.salePriceCents * o.quantity + o.shippingChargedCents;
-    const costs = o.cogsCents + o.shippingCostCents;
+    const costs = o.actualAmazonCostCents ?? (o.cogsCents + o.shippingCostCents);
     t.orders++;
     t.units += o.quantity;
     t.revenueCents += revenue;
@@ -70,7 +71,7 @@ export function dailySeries(orders: OrderFacts[], days: number, now = new Date()
     if (!point) continue;
     const revenue = o.salePriceCents * o.quantity + o.shippingChargedCents;
     point.revenueCents += revenue;
-    point.netCents += revenue - o.ebayFeeCents - o.cogsCents - o.shippingCostCents;
+    point.netCents += revenue - o.ebayFeeCents - (o.actualAmazonCostCents ?? (o.cogsCents + o.shippingCostCents));
   }
   return [...points.values()];
 }

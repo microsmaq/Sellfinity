@@ -1,0 +1,18 @@
+"use client";
+import { useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
+import { Button, Card, Badge } from "@/components/ui";
+import { disconnectAmazonEmail, syncAmazonEmailsNow } from "@/lib/actions/amazon-email";
+
+export function AmazonEmailConnectionCard({ configured, connection }: { configured: boolean; connection: { email: string | null; lastSyncedAt: string | null; lastSyncError: string | null } | null }) {
+  const router = useRouter(); const [pending, startTransition] = useTransition(); const [message, setMessage] = useState<string | null>(null);
+  return <Card className="p-6">
+    <div className="flex flex-wrap items-start justify-between gap-4"><div><h2 className="text-sm font-semibold text-slate-900">Amazon purchase detection</h2><p className="mt-1 max-w-xl text-xs leading-5 text-slate-500">Connect Gmail read-only to recognize Amazon confirmations and shipment updates. Sellfinity stores purchase facts—not email bodies—and uses them to reconcile actual fulfillment costs.</p></div><Badge tone={connection ? "green" : configured ? "amber" : "slate"}>{connection ? "Connected" : configured ? "Ready to connect" : "Not configured"}</Badge></div>
+    {connection && <div className="mt-4 rounded-lg bg-slate-50 p-3 text-xs text-slate-600"><p className="font-medium text-slate-900">{connection.email || "Google account"}</p><p className="mt-1">Last checked: {connection.lastSyncedAt ? new Date(connection.lastSyncedAt).toLocaleString() : "Not yet synced"}</p>{connection.lastSyncError && <p className="mt-1 text-red-600">{connection.lastSyncError}</p>}</div>}
+    {message && <p className="mt-3 rounded-lg bg-indigo-50 px-3 py-2 text-xs text-indigo-700">{message}</p>}
+    <div className="mt-4 flex flex-wrap gap-2">
+      {!connection ? <a href={configured ? "/api/amazon-email/connect" : undefined} aria-disabled={!configured} className={`inline-flex rounded-lg px-4 py-2 text-sm font-medium ${configured ? "bg-indigo-600 text-white hover:bg-indigo-500" : "cursor-not-allowed bg-slate-200 text-slate-500"}`}>Connect Gmail</a> : <><Button disabled={pending} onClick={() => startTransition(async () => { setMessage("Securely checking Amazon emails…"); const result = await syncAmazonEmailsNow(); setMessage("error" in result ? result.error : `Checked ${result.examined} messages · ${result.imported} purchases updated · ${result.matched} matched to eBay sales`); router.refresh(); })}>{pending ? "Checking purchases…" : "Check Amazon purchases"}</Button><Button variant="secondary" disabled={pending} onClick={() => startTransition(async () => { await disconnectAmazonEmail(); router.refresh(); })}>Disconnect</Button></>}
+    </div>
+    {!configured && <p className="mt-3 text-xs text-amber-700">The site owner must configure Google OAuth before accounts can connect.</p>}
+  </Card>;
+}

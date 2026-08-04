@@ -34,6 +34,14 @@ export default function PrivacyPage() {
           touch our servers.
         </p>
         <p>
+          If you choose to connect Gmail for Amazon purchase detection, we use
+          read-only access to identify Amazon order confirmations and shipping
+          updates. We store extracted order facts needed for fulfillment and
+          profit reporting, but do not retain email bodies. You can disconnect
+          Gmail at any time in Settings; existing purchase history remains
+          until you delete your account.
+        </p>
+        <p>
           To delete your account and all associated data, contact support.
           Questions about this policy: support@sellfinity.example.
         </p>

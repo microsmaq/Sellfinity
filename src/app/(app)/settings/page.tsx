@@ -5,6 +5,8 @@ import { Card, PageHeader } from "@/components/ui";
 import { EbayConnectionCard } from "./ebay-connection";
 import { getRainforestEfficiencySummary } from "@/lib/mirror/rainforest";
 import { PublishingPreferences } from "./publishing-preferences";
+import { AmazonEmailConnectionCard } from "./amazon-email-connection";
+import { googleEmailConfig } from "@/lib/amazon-email/oauth";
 
 export const metadata = { title: "Settings — Sellfinity" };
 
@@ -27,9 +29,10 @@ export default async function SettingsPage({
   searchParams: Promise<{ ebay?: string }>;
 }) {
   const user = await requireUser();
-  const [connection, rainforest] = await Promise.all([
+  const [connection, rainforest, amazonEmail] = await Promise.all([
     db.ebayConnection.findUnique({ where: { userId: user.id } }),
     getRainforestEfficiencySummary(),
+    db.amazonEmailConnection.findUnique({ where: { userId: user.id } }),
   ]);
   const oauthConfig = ebayEnvConfig();
   const callback = CALLBACK_MESSAGES[(await searchParams).ebay ?? ""];
@@ -80,6 +83,10 @@ export default async function SettingsPage({
           username={connection?.ebayUsername ?? null}
           connectedAt={connection?.connectedAt?.toISOString() ?? null}
           oauth={oauthConfig ? { env: oauthConfig.env } : null}
+        />
+        <AmazonEmailConnectionCard
+          configured={!!googleEmailConfig()}
+          connection={amazonEmail ? { email: amazonEmail.email, lastSyncedAt: amazonEmail.lastSyncedAt?.toISOString() ?? null, lastSyncError: amazonEmail.lastSyncError } : null}
         />
         <Card className="p-6">
           <div className="flex items-start justify-between gap-4">

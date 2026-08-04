@@ -6,6 +6,7 @@ import { dailySeries, perItem, summarize, windowStartUtc } from "@/lib/orders/st
 import { Card, EmptyState, PageHeader, StatCard } from "@/components/ui";
 import { ProfitChart } from "./profit-chart";
 import { ImportOrdersButton } from "./import-orders-button";
+import { actualAmazonCost } from "@/lib/amazon-email/sync";
 
 export const metadata = { title: "Profit dashboard — Sellfinity" };
 
@@ -15,6 +16,7 @@ export default async function DashboardPage() {
   const orders = await db.order.findMany({
     where: { userId: user.id },
     include: {
+      amazonPurchaseItem: true,
       listing: {
         select: {
           product: { select: { id: true, title: true, sku: true } },
@@ -24,19 +26,25 @@ export default async function DashboardPage() {
     orderBy: { saleDate: "desc" },
   });
 
+  const profitOrders = orders.map((order) => ({
+    ...order,
+    actualAmazonCostCents: order.amazonPurchaseItem ? actualAmazonCost(order.amazonPurchaseItem) : null,
+  }));
+
   const cutoff30 = windowStartUtc(30);
-  const last30 = orders.filter((o) => o.saleDate >= cutoff30);
+  const last30 = profitOrders.filter((o) => o.saleDate >= cutoff30);
   const totals30 = summarize(last30);
-  const totalsAll = summarize(orders);
+  const totalsAll = summarize(profitOrders);
   const series = dailySeries(last30, 30);
   const items = perItem(
-    orders.map((o) => ({
+    profitOrders.map((o) => ({
       ...o,
       productId: o.listing.product.id,
       title: o.listing.product.title,
       sku: o.listing.product.sku,
     })),
   );
+  const exactOrders = profitOrders.filter((order) => order.actualAmazonCostCents !== null).length;
 
   const marginPct =
     totals30.revenueCents > 0
@@ -47,7 +55,7 @@ export default async function DashboardPage() {
     <>
       <PageHeader
         title="Profit dashboard"
-        subtitle="Revenue, fees, and cost of goods across your eBay sales — what you actually kept."
+        subtitle="Estimated profit until an Amazon purchase is matched; then actual item, shipping, tax, and discount costs are used."
         actions={<ImportOrdersButton />}
       />
 
@@ -77,6 +85,7 @@ export default async function DashboardPage() {
             <StatCard
               label="Goods + shipping (30d)"
               value={formatCents(totals30.cogsCents)}
+              sub={`${exactOrders} of ${orders.length} orders use verified purchase costs`}
               tone="negative"
             />
             <StatCard
@@ -165,7 +174,8 @@ export default async function DashboardPage() {
                 <tbody>
                   {orders.slice(0, 15).map((o) => {
                     const revenue = o.salePriceCents * o.quantity + o.shippingChargedCents;
-                    const net = revenue - o.ebayFeeCents - o.cogsCents - o.shippingCostCents;
+                    const amazonCost = o.amazonPurchaseItem ? actualAmazonCost(o.amazonPurchaseItem) : null;
+                    const net = revenue - o.ebayFeeCents - (amazonCost ?? (o.cogsCents + o.shippingCostCents));
                     return (
                       <tr key={o.id} className="border-b border-slate-100 last:border-0">
                         <td className="px-4 py-3 whitespace-nowrap">
@@ -184,6 +194,7 @@ export default async function DashboardPage() {
                           className={`px-4 py-3 text-right font-medium tabular-nums ${net >= 0 ? "text-emerald-600" : "text-red-600"}`}
                         >
                           {o.status === "REFUNDED" ? "Refunded" : formatCents(net)}
+                          {o.status !== "REFUNDED" && <span className="ml-1 text-[10px] font-normal text-slate-400">{amazonCost === null ? "est." : "actual"}</span>}
                         </td>
                       </tr>
                     );
