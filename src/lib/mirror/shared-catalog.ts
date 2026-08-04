@@ -90,7 +90,25 @@ export async function getSharedAmazonProduct(url: string): Promise<ScrapedProduc
   const existing = await db.adminArbitrageProduct.findUnique({ where: { asin } });
   if (existing) {
     const stored = sharedRowToScrapedProduct(existing);
-    return stored.inStock && stored.priceCents > 0 ? stored : null;
+    if (!stored.inStock || stored.priceCents <= 0) return null;
+    if (stored.imageUrls.length > 0) return stored;
+
+    // Rows created before complete shared snapshots were introduced can have
+    // valid price/match data but no Amazon image. Enrich that ASIN once on
+    // demand instead of creating an image-less draft that eBay will reject.
+    const enriched = await getScraper().scrape(existing.amazonUrl || normalizedUrl);
+    if (!enriched || enriched.imageUrls.length === 0) return null;
+    const saved = await db.adminArbitrageProduct.upsert({
+      where: { asin },
+      create: {
+        asin,
+        ...sharedAmazonSnapshotData(enriched),
+        isAmazonBestSeller: false,
+        status: "PENDING",
+      },
+      update: sharedAmazonSnapshotData(enriched),
+    });
+    return sharedRowToScrapedProduct(saved);
   }
 
   // Lazily promote legacy per-user imports into the shared catalog without
@@ -103,7 +121,7 @@ export async function getSharedAmazonProduct(url: string): Promise<ScrapedProduc
     },
     orderBy: { createdAt: "desc" },
   });
-  if (legacy) {
+  if (legacy && parseImageUrls(legacy.imageUrlsJson).length > 0) {
     const legacyProduct: ScrapedProduct = {
       sourceId: asin,
       sourceUrl: legacy.supplierUrl,
@@ -132,7 +150,7 @@ export async function getSharedAmazonProduct(url: string): Promise<ScrapedProduc
   }
 
   const product = await getScraper().scrape(normalizedUrl);
-  if (!product) return null;
+  if (!product || product.imageUrls.length === 0) return null;
   const snapshot = sharedAmazonSnapshotData(product);
   const saved = await db.adminArbitrageProduct.upsert({
     where: { asin: product.sourceId },

@@ -4,7 +4,8 @@ import { db } from "@/lib/db";
 import { getEbayClientForUser } from "@/lib/ebay";
 import { EbayApiError, validateListingInput } from "@/lib/ebay/client";
 import { fitEbayDescription } from "@/lib/ebay/description";
-import { parseImageUrls } from "@/lib/types";
+import { getSharedAmazonProduct } from "@/lib/mirror/shared-catalog";
+import { parseImageUrls, serializeImageUrls } from "@/lib/types";
 
 export type PublishOneResult =
   | { ok: true; ebayListingId: string }
@@ -45,12 +46,47 @@ export async function publishListingForUser(
   });
   if (!draft) return { ok: false, error: "The mirrored draft is no longer available." };
 
+  let imageUrls = parseImageUrls(draft.imageUrlsJson);
+  if (imageUrls.length === 0 && draft.product.supplierName === "Amazon") {
+    try {
+      const source = await getSharedAmazonProduct(draft.product.supplierUrl);
+      if (source?.imageUrls.length) {
+        imageUrls = source.imageUrls;
+        await db.$transaction([
+          db.product.update({
+            where: { id: draft.product.id },
+            data: {
+              title: source.title,
+              description: source.description,
+              imageUrlsJson: serializeImageUrls(source.imageUrls),
+              supplierUrl: source.sourceUrl,
+              costCents: source.priceCents,
+              shippingCostCents: source.shippingCostCents,
+              supplierStock: source.inStock ? 50 : 0,
+            },
+          }),
+          db.listing.update({
+            where: { id: draft.id },
+            data: { imageUrlsJson: serializeImageUrls(source.imageUrls) },
+          }),
+        ]);
+      }
+    } catch (error) {
+      return {
+        ok: false,
+        error: `Could not retrieve the required Amazon image: ${
+          error instanceof Error ? error.message : "source lookup failed"
+        }`.slice(0, 300),
+      };
+    }
+  }
+
   const input = {
     title: draft.title,
     description: fitEbayDescription(draft.description),
     priceCents: draft.priceCents,
     quantity: draft.quantity,
-    imageUrls: parseImageUrls(draft.imageUrlsJson),
+    imageUrls,
     sku: draft.product.sku,
     category: draft.product.category,
   };

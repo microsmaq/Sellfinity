@@ -104,6 +104,46 @@ describe("shared Amazon catalog", () => {
     expect(product?.title).toBe("First-seen product");
   });
 
+  it("enriches an older shared row once when its required image is missing", async () => {
+    const incomplete = {
+      ...sharedRow,
+      amazonImageUrl: null,
+      amazonImageUrlsJson: "[]",
+      amazonDescription: "",
+    };
+    const enriched = {
+      sourceId: incomplete.asin,
+      sourceUrl: incomplete.amazonUrl,
+      title: incomplete.amazonTitle,
+      brand: "Recovered Brand",
+      bulletPoints: ["Recovered product detail"],
+      description: "Recovered description",
+      category: incomplete.category,
+      imageUrls: ["https://images.example/recovered.jpg"],
+      priceCents: incomplete.amazonPriceCents,
+      shippingCostCents: incomplete.amazonShippingCents,
+      inStock: true,
+    };
+    mocks.findUnique.mockResolvedValue(incomplete);
+    mocks.scrape.mockResolvedValue(enriched);
+    mocks.upsert.mockImplementation(async ({ update }) => ({
+      ...incomplete,
+      ...update,
+    }));
+
+    const product = await getSharedAmazonProduct(incomplete.amazonUrl);
+
+    expect(mocks.scrape).toHaveBeenCalledTimes(1);
+    expect(mocks.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      where: { asin: incomplete.asin },
+      update: expect.objectContaining({
+        amazonImageUrl: "https://images.example/recovered.jpg",
+        amazonDescription: "Recovered description",
+      }),
+    }));
+    expect(product?.imageUrls).toEqual(["https://images.example/recovered.jpg"]);
+  });
+
   it("promotes a legacy seller import without spending a provider credit", async () => {
     mocks.findUnique.mockResolvedValue(null);
     mocks.productFindFirst.mockResolvedValue({

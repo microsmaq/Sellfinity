@@ -89,6 +89,13 @@ export async function mirrorUrl(
       error: "Not a recognizable Amazon product URL, or the product page is unavailable.",
     };
   }
+  if (scraped.imageUrls.length === 0) {
+    return {
+      url,
+      ok: false,
+      error: "Amazon did not return a usable product image. Refresh the source and try again.",
+    };
+  }
 
   const existing = await db.product.findUnique({
     where: { userId_sku: { userId, sku: scraped.sourceId } },
