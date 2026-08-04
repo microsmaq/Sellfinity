@@ -18,14 +18,17 @@ export function getScraper(): ProductPageScraper {
 const NOMINAL_AMAZON_STOCK = 50;
 
 /**
- * Supplier state for a mirrored Amazon product, via the active scraper —
- * used by inventory sync. With the real scraper this costs one API credit
- * per product per sync.
+ * Supplier state for a mirrored Amazon product, via the durable shared
+ * catalog. Legacy ASINs absent from that catalog trigger one provider lookup
+ * and are persisted, so later sellers and syncs reuse the same snapshot.
  */
 export async function amazonProductState(
   asin: string,
 ): Promise<SupplierProductState> {
-  const scraped = await scraper.scrape(`https://www.amazon.com/dp/${asin}`);
+  // Dynamic import avoids an initialization cycle: shared-catalog uses the
+  // raw scraper only for a first-seen ASIN.
+  const { getSharedAmazonProduct } = await import("./shared-catalog");
+  const scraped = await getSharedAmazonProduct(`https://www.amazon.com/dp/${asin}`);
   if (!scraped) return null;
   return {
     stock: scraped.inStock ? NOMINAL_AMAZON_STOCK : 0,

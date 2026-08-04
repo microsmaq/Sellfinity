@@ -62,6 +62,14 @@ model AdminArbitrageProduct {
   amazonShippingCents        Int       @default(0)
   amazonUrl                  String
   amazonImageUrl             String?
+  // Complete shared Amazon snapshot. The first admin or seller lookup saves
+  // these fields so later mirrors of the same ASIN do not buy another API call.
+  amazonBrand                String    @default("")
+  amazonDescription          String    @default("")
+  amazonBulletPointsJson     String    @default("[]")
+  amazonImageUrlsJson        String    @default("[]")
+  amazonInStock              Boolean   @default(true)
+  amazonRefreshedAt          DateTime?
   category                   String
   isAmazonBestSeller         Boolean   @default(true)
   // PENDING | PUBLISHED | NO_MATCH | ARCHIVED

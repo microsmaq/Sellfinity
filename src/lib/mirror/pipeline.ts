@@ -3,9 +3,9 @@
 // limits and the eBay connection requirement apply unchanged.
 
 import { db } from "@/lib/db";
-import { getScraper } from "./index";
 import type { ProductPageScraper } from "./scraper";
 import { extractAsin } from "./scraper";
+import { sharedCatalogScraper } from "./shared-catalog";
 
 const AMAZON_SUPPLIER_NAME = "Amazon";
 import { generateMirrorDescription, generateSourceTitle } from "./seo";
@@ -42,10 +42,18 @@ export type MirrorOutcome = {
   imageImprovementError?: string;
 };
 
+/** Sellers may paste either a full Amazon product URL or a bare ASIN. */
+export function normalizeAmazonProductInput(input: string): string {
+  const trimmed = input.trim();
+  return /^[A-Z0-9]{10}$/i.test(trimmed)
+    ? `https://www.amazon.com/dp/${trimmed.toUpperCase()}`
+    : trimmed;
+}
+
 export async function mirrorUrl(
   userId: string,
   url: string,
-  scraper: ProductPageScraper = getScraper(),
+  scraper: ProductPageScraper = sharedCatalogScraper,
   opts: {
     /** A known eBay comp price to undercut (e.g. from the arbitrage
      * scanner); without it the market is estimated from the buy price. */
@@ -62,7 +70,8 @@ export async function mirrorUrl(
     improveListingContent?: boolean;
   } = {},
 ): Promise<MirrorOutcome> {
-  const inputAsin = extractAsin(url);
+  const sourceUrl = normalizeAmazonProductInput(url);
+  const inputAsin = extractAsin(sourceUrl);
   if (inputAsin) {
     const alreadyImported = await db.product.findUnique({
       where: { userId_sku: { userId, sku: inputAsin } },
@@ -72,7 +81,7 @@ export async function mirrorUrl(
       return { url, ok: false, error: `Already imported (SKU ${inputAsin}).` };
     }
   }
-  const scraped = await scraper.scrape(url);
+  const scraped = await scraper.scrape(sourceUrl);
   if (!scraped) {
     return {
       url,

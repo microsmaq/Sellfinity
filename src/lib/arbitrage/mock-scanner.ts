@@ -93,6 +93,7 @@ export class MockArbitrageScanner implements ArbitrageScanner {
           priceCents: state.costCents,
           shippingCostCents: 0,
           url: `https://www.amazon.com/dp/${asin}`,
+          imageUrl: product.imageUrls[0],
         },
         margin,
         market: {

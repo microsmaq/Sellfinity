@@ -3,6 +3,7 @@ import { searchEbayProducts, researchEbayMarket } from "@/lib/ebay/market";
 import { estimateMargin } from "@/lib/fees";
 import { getScraper } from "@/lib/mirror";
 import { extractAsin } from "@/lib/mirror/scraper";
+import { sharedAmazonSnapshotData } from "@/lib/mirror/shared-catalog";
 import { arbitrageSuggestedPriceCents } from "./pricing";
 import {
   assessProductMatch,
@@ -27,28 +28,20 @@ export async function addAmazonCatalogProduct(input: string): Promise<string> {
     throw new Error("This Amazon product is unavailable or has no current price.");
   }
 
+  const snapshot = sharedAmazonSnapshotData(product);
+
   const row = await db.adminArbitrageProduct.upsert({
     where: { asin },
     create: {
       asin,
-      amazonTitle: product.title,
-      amazonPriceCents: product.priceCents,
-      amazonShippingCents: product.shippingCostCents,
-      amazonUrl: product.sourceUrl,
-      amazonImageUrl: product.imageUrls[0] ?? null,
-      category: product.category || "Other",
+      ...snapshot,
       // A direct URL is administrator-curated, but is not labeled as a
       // bestseller unless it entered through the bestseller discovery feed.
       isAmazonBestSeller: false,
       status: "PENDING",
     },
     update: {
-      amazonTitle: product.title,
-      amazonPriceCents: product.priceCents,
-      amazonShippingCents: product.shippingCostCents,
-      amazonUrl: product.sourceUrl,
-      amazonImageUrl: product.imageUrls[0] ?? null,
-      category: product.category || "Other",
+      ...snapshot,
       status: "PENDING",
     },
   });
@@ -76,6 +69,8 @@ export async function researchAdminCatalogProduct(id: string): Promise<void> {
     await db.adminArbitrageProduct.update({
       where: { id },
       data: {
+        amazonInStock: false,
+        amazonRefreshedAt: new Date(),
         status: "NO_MATCH",
         matchVerdict: "REJECTED",
         matchConfidence: 100,
@@ -85,6 +80,7 @@ export async function researchAdminCatalogProduct(id: string): Promise<void> {
     });
     return;
   }
+  const sourceSnapshot = sharedAmazonSnapshotData(source);
 
   const candidates = await searchEbayProducts(source.title, 50);
   const attached = candidates.length
@@ -131,12 +127,7 @@ export async function researchAdminCatalogProduct(id: string): Promise<void> {
     await db.adminArbitrageProduct.update({
       where: { id },
       data: {
-        amazonTitle: source.title,
-        amazonPriceCents: source.priceCents,
-        amazonShippingCents: source.shippingCostCents,
-        amazonUrl: source.sourceUrl,
-        amazonImageUrl: source.imageUrls[0] ?? null,
-        category: source.category || item.category,
+        ...sourceSnapshot,
         status: "NO_MATCH",
         ebayItemId: null,
         ebayTitle: null,
@@ -184,11 +175,7 @@ export async function researchAdminCatalogProduct(id: string): Promise<void> {
   await db.adminArbitrageProduct.update({
     where: { id },
     data: {
-      amazonTitle: source.title,
-      amazonPriceCents: source.priceCents,
-      amazonShippingCents: source.shippingCostCents,
-      amazonUrl: source.sourceUrl,
-      amazonImageUrl: source.imageUrls[0] ?? null,
+      ...sourceSnapshot,
       category: source.category || best.candidate.category || item.category,
       status: approved ? "PUBLISHED" : "NO_MATCH",
       ebayItemId: best.candidate.itemId,
@@ -227,6 +214,8 @@ export async function refreshAdminAmazonCost(id: string): Promise<void> {
     await db.adminArbitrageProduct.update({
       where: { id },
       data: {
+        amazonInStock: false,
+        amazonRefreshedAt: new Date(),
         status: "NO_MATCH",
         matchVerdict: "REJECTED",
         matchConfidence: 100,
@@ -236,6 +225,7 @@ export async function refreshAdminAmazonCost(id: string): Promise<void> {
     });
     return;
   }
+  const sourceSnapshot = sharedAmazonSnapshotData(source);
 
   const suggestedPrice = item.ebayPriceCents
     ? arbitrageSuggestedPriceCents(
@@ -256,12 +246,7 @@ export async function refreshAdminAmazonCost(id: string): Promise<void> {
   await db.adminArbitrageProduct.update({
     where: { id },
     data: {
-      amazonTitle: source.title,
-      amazonPriceCents: source.priceCents,
-      amazonShippingCents: source.shippingCostCents,
-      amazonUrl: source.sourceUrl,
-      amazonImageUrl: source.imageUrls[0] ?? item.amazonImageUrl,
-      category: source.category || item.category,
+      ...sourceSnapshot,
       ...(suggestedPrice && margin && {
         suggestedPriceCents: suggestedPrice,
         estimatedProfitCents: margin.estimatedProfitCents,

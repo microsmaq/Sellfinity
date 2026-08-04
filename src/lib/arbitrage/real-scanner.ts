@@ -250,6 +250,7 @@ async function amazonMatch(
       priceCents: source.priceCents,
       shippingCostCents: source.shippingCostCents,
       url: source.url,
+      imageUrl: source.imageUrl,
     },
     margin,
     match: assessment,

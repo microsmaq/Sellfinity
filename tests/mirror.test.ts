@@ -11,7 +11,10 @@ import {
   generateSourceTitle,
 } from "@/lib/mirror/seo";
 import { EBAY_DESCRIPTION_MAX, fitEbayDescription } from "@/lib/ebay/description";
-import { parseUrlLines } from "@/lib/mirror/pipeline";
+import {
+  normalizeAmazonProductInput,
+  parseUrlLines,
+} from "@/lib/mirror/pipeline";
 import { EBAY_TITLE_MAX } from "@/lib/listings/generate";
 
 describe("extractAsin", () => {
@@ -186,5 +189,11 @@ describe("parseUrlLines", () => {
   it("splits, trims, dedupes, and caps", () => {
     const urls = parseUrlLines("  a \n\nb\r\na\nc  ", 2);
     expect(urls).toEqual(["a", "b"]);
+  });
+
+  it("accepts a bare ASIN as a product input", () => {
+    expect(normalizeAmazonProductInput(" b0abcd1234 ")).toBe(
+      "https://www.amazon.com/dp/B0ABCD1234",
+    );
   });
 });

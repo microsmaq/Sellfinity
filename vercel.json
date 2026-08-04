@@ -1,6 +1,14 @@
 {
   "crons": [
     {
+      "path": "/api/cron/amazon-refresh?utc=9",
+      "schedule": "0 9 * * *"
+    },
+    {
+      "path": "/api/cron/amazon-refresh?utc=10",
+      "schedule": "0 10 * * *"
+    },
+    {
       "path": "/api/cron/arbitrage?utc=10",
       "schedule": "0 10 * * *"
     },

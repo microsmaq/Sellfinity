@@ -1,5 +1,6 @@
 export const ARBITRAGE_DAILY_TARGET = 500;
 export const ARBITRAGE_CRON_TIME_ZONE = "America/Los_Angeles";
+export const AMAZON_REFRESH_CRON_HOUR = 2;
 
 export function getLosAngelesCronTime(now: Date) {
   const parts = new Intl.DateTimeFormat("en-CA", {
@@ -21,4 +22,8 @@ export function getLosAngelesCronTime(now: Date) {
 
 export function shouldRunDailyArbitrageCron(now = new Date()) {
   return getLosAngelesCronTime(now).hour === 3;
+}
+
+export function shouldRunDailyAmazonRefreshCron(now = new Date()) {
+  return getLosAngelesCronTime(now).hour === AMAZON_REFRESH_CRON_HOUR;
 }

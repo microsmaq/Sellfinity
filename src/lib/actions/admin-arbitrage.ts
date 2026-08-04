@@ -162,10 +162,15 @@ export async function prepareAdminCatalogRefresh(
       status: { not: "ARCHIVED" },
       ...(parsedMode === "MARKET" && { ebayItemId: { not: null } }),
     },
-    orderBy: [
-      { lastResearchedAt: { sort: "asc", nulls: "first" } },
-      { updatedAt: "asc" },
-    ],
+    orderBy: parsedMode === "AMAZON"
+      ? [
+          { amazonRefreshedAt: { sort: "asc" as const, nulls: "first" as const } },
+          { updatedAt: "asc" as const },
+        ]
+      : [
+          { lastResearchedAt: { sort: "asc" as const, nulls: "first" as const } },
+          { updatedAt: "asc" as const },
+        ],
     take,
     select: { id: true },
   });

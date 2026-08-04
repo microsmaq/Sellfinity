@@ -9,7 +9,6 @@ import {
   type ArbitragePageParams,
 } from "@/lib/arbitrage/store";
 import type { ScanReport } from "@/lib/arbitrage/scan-types";
-import { getScraper } from "@/lib/mirror";
 import { mirrorUrl, type MirrorOutcome } from "@/lib/mirror/pipeline";
 import { researchEbayMarket } from "@/lib/ebay/market";
 import { db } from "@/lib/db";
@@ -449,7 +448,7 @@ export async function mirrorOpportunity(
   const outcome = await mirrorUrl(
     user.id,
     `https://www.amazon.com/dp/${asin}`,
-    getScraper(),
+    undefined,
     {
       marketPriceCents: ebayPriceCents,
       improveMainImage: user.improveMainImage,
@@ -490,7 +489,7 @@ export async function mirrorOpportunities(
     const outcome = await mirrorUrl(
       user.id,
       `https://www.amazon.com/dp/${item.asin}`,
-      getScraper(),
+      undefined,
       {
         marketPriceCents: item.ebayPriceCents,
         improveMainImage: user.improveMainImage,

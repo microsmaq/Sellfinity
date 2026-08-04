@@ -688,7 +688,7 @@ export function AdminArbitrageManager({
               <p className="mt-2 max-w-md text-[11px] leading-4 text-indigo-100">
                 {refreshMode === "MARKET"
                   ? "Refreshes demand, competition, market prices, and profit with no Rainforest calls."
-                  : `Refreshes exact Amazon price and shipping for up to ${refreshCount} products. Cache hits are free; otherwise allow up to ${refreshCount} Rainforest credits.`}
+                  : `Refreshes exact Amazon price and shipping for up to ${refreshCount} products. Cache hits are free; otherwise allow up to ${refreshCount} Rainforest credits. An automatic prioritized refresh also runs daily at 2:00 AM Los Angeles time before the 3:00 AM scan.`}
               </p>
             </div>
             <Button

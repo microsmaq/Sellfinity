@@ -26,6 +26,7 @@ export type ArbitrageOpportunity = {
     priceCents: number;
     shippingCostCents: number;
     url: string;
+    imageUrl?: string;
   };
   /** Selling at the eBay price, buying at the Amazon price, net of eBay fees. */
   margin: MarginEstimate;

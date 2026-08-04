@@ -14,6 +14,7 @@ import {
   AUTO_PUBLISH_MIN_MATCH_CONFIDENCE,
   AUTO_PUBLISH_FLAT_PROFIT_CENTS,
 } from "@/lib/arbitrage/auto-publish";
+import { AUTO_PUBLISH_AMAZON_MAX_AGE_MS } from "@/lib/arbitrage/amazon-refresh-policy";
 import {
   attachArbitrageResearchToListing,
   retainPublishedArbitrageResearch,
@@ -287,8 +288,28 @@ async function createQualifiedArbitrageMirrorBatchForUser(
       ...queuedArbitrageRows.map((row) => row.asin),
     ]),
   ];
+  const freshCatalogRows = await db.adminArbitrageProduct.findMany({
+    where: {
+      status: "PUBLISHED",
+      amazonInStock: true,
+      amazonRefreshedAt: {
+        gte: new Date(Date.now() - AUTO_PUBLISH_AMAZON_MAX_AGE_MS),
+      },
+      matchVerdict: { in: ["MATCH", "LIKELY"] },
+      matchConfidence: { gte: AUTO_PUBLISH_MIN_MATCH_CONFIDENCE },
+      estimatedProfitCents: { gt: 0 },
+      OR: [
+        { marginPct: { gte: AUTO_PUBLISH_MIN_MARGIN_PCT } },
+        { estimatedProfitCents: { gte: AUTO_PUBLISH_FLAT_PROFIT_CENTS } },
+      ],
+    },
+    select: { ebayItemId: true },
+  });
+  const freshEbayIds = freshCatalogRows.flatMap((row) => row.ebayItemId ?? []);
+  if (freshEbayIds.length === 0) return { eligibleCount: 0 };
   const rows = await db.arbitrageItem.findMany({
     where: {
+      ebayItemId: { in: freshEbayIds },
       hiddenBy: { none: { userId } },
       matchVerdict: { in: ["MATCH", "LIKELY"] },
       matchConfidence: { gte: AUTO_PUBLISH_MIN_MATCH_CONFIDENCE },

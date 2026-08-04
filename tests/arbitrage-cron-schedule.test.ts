@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   ARBITRAGE_DAILY_TARGET,
   getLosAngelesCronTime,
+  shouldRunDailyAmazonRefreshCron,
   shouldRunDailyArbitrageCron,
 } from "@/lib/cron/arbitrage-schedule";
 
@@ -32,5 +33,12 @@ describe("daily arbitrage cron schedule", () => {
       hour: 3,
     });
     expect(shouldRunDailyArbitrageCron(scheduled)).toBe(true);
+  });
+
+  it("runs the prioritized Amazon refresh at 2 AM in both clock seasons", () => {
+    expect(shouldRunDailyAmazonRefreshCron(new Date("2026-07-15T09:00:00.000Z"))).toBe(true);
+    expect(shouldRunDailyAmazonRefreshCron(new Date("2026-07-15T10:00:00.000Z"))).toBe(false);
+    expect(shouldRunDailyAmazonRefreshCron(new Date("2026-01-15T10:00:00.000Z"))).toBe(true);
+    expect(shouldRunDailyAmazonRefreshCron(new Date("2026-01-15T09:00:00.000Z"))).toBe(false);
   });
 });

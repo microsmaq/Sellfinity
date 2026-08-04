@@ -5,6 +5,10 @@ import {
   AUTO_PUBLISH_MIN_MATCH_CONFIDENCE,
   isAutoPublishCandidate,
 } from "@/lib/arbitrage/auto-publish";
+import {
+  AUTO_PUBLISH_AMAZON_MAX_AGE_MS,
+  hasFreshAmazonSnapshot,
+} from "@/lib/arbitrage/amazon-refresh-policy";
 
 describe("arbitrage automatic publishing safety gate", () => {
   const qualified = {
@@ -36,5 +40,22 @@ describe("arbitrage automatic publishing safety gate", () => {
     })).toBe(false);
     expect(isAutoPublishCandidate({ ...qualified, profitCents: 0 })).toBe(false);
     expect(isAutoPublishCandidate({ ...qualified, matchVerdict: "REVIEW" })).toBe(false);
+  });
+
+  it("requires an available Amazon snapshot no older than six hours", () => {
+    const now = new Date("2026-08-04T10:00:00.000Z");
+    expect(hasFreshAmazonSnapshot(now, true, now)).toBe(true);
+    expect(hasFreshAmazonSnapshot(
+      new Date(now.getTime() - AUTO_PUBLISH_AMAZON_MAX_AGE_MS),
+      true,
+      now,
+    )).toBe(true);
+    expect(hasFreshAmazonSnapshot(
+      new Date(now.getTime() - AUTO_PUBLISH_AMAZON_MAX_AGE_MS - 1),
+      true,
+      now,
+    )).toBe(false);
+    expect(hasFreshAmazonSnapshot(now, false, now)).toBe(false);
+    expect(hasFreshAmazonSnapshot(null, true, now)).toBe(false);
   });
 });
