@@ -1,0 +1,1 @@
+ALTER TABLE "AmazonEmailConnection" ADD COLUMN "syncVersion" INTEGER NOT NULL DEFAULT 1;

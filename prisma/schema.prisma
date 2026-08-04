@@ -68,6 +68,7 @@ model AmazonEmailConnection {
   lastSyncedAt          DateTime?
   lastSyncError         String?
   processedMessageIdsJson String @default("[]")
+  syncVersion           Int       @default(1)
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 }

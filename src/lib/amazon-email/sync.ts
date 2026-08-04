@@ -6,6 +6,7 @@ import { parseAmazonEmail } from "./parser";
 
 type GmailPart = { mimeType?: string; body?: { data?: string }; parts?: GmailPart[] };
 type GmailMessage = { id: string; internalDate?: string; payload?: { headers?: { name: string; value: string }[] } & GmailPart };
+const AMAZON_EMAIL_SYNC_VERSION = 3;
 
 function decode(data?: string): string {
   if (!data) return "";
@@ -93,7 +94,7 @@ export async function syncAmazonPurchaseEmails(userId: string): Promise<{ examin
   } while (pageToken && ids.length < 500);
   let imported = 0;
   for (const id of ids) {
-    if (processed.has(id)) continue;
+    if (processed.has(id) && connection.syncVersion >= AMAZON_EMAIL_SYNC_VERSION) continue;
     const message = await gmail<GmailMessage>(token, `messages/${id}?format=full`);
     const from = header(message, "from").toLowerCase();
     if (!/@(?:[a-z0-9-]+\.)*amazon\.(?:com|ca|co\.uk)>?$/.test(from.replace(/.*</, ""))) continue;
@@ -103,19 +104,55 @@ export async function syncAmazonPurchaseEmails(userId: string): Promise<{ examin
     const lineBase = parsed.items.reduce((sum, item) => sum + (item.unitPriceCents ?? 0) * item.quantity, 0);
     const prior = await db.amazonPurchase.findUnique({ where: { userId_amazonOrderId: { userId, amazonOrderId: parsed.amazonOrderId } }, include: { items: true } });
     const rank = { ORDERED: 1, SHIPPED: 2, DELIVERED: 3, CANCELLED: 4 } as const;
-    const itemData = parsed.items.map((item) => { const line = (item.unitPriceCents ?? 0) * item.quantity; const ratio = lineBase ? line / lineBase : 1 / Math.max(1, parsed.items.length); const fallbackLine = parsed.items.length === 1 ? parsed.subtotalCents : null; return { ...item, lineTotalCents: item.unitPriceCents === null ? fallbackLine : line, allocatedShippingCents: Math.round(parsed.shippingCents * ratio), allocatedTaxCents: Math.round(parsed.taxCents * ratio), allocatedDiscountCents: Math.round(parsed.discountCents * ratio) }; });
+    const itemData = parsed.items.map((item) => {
+      const line = (item.unitPriceCents ?? 0) * item.quantity;
+      const ratio = lineBase ? line / lineBase : 1 / Math.max(1, parsed.items.length);
+      const usesAllInTotal = item.unitPriceCents === null && parsed.items.length === 1 && parsed.subtotalCents === null && parsed.totalCents !== null;
+      const fallbackLine = parsed.items.length === 1 ? (parsed.subtotalCents ?? parsed.totalCents) : null;
+      return {
+        ...item,
+        lineTotalCents: item.unitPriceCents === null ? fallbackLine : line,
+        allocatedShippingCents: usesAllInTotal ? 0 : Math.round(parsed.shippingCents * ratio),
+        allocatedTaxCents: usesAllInTotal ? 0 : Math.round(parsed.taxCents * ratio),
+        allocatedDiscountCents: usesAllInTotal ? 0 : Math.round(parsed.discountCents * ratio),
+      };
+    });
     if (!prior) {
       await db.amazonPurchase.create({ data: { userId, sourceMessageId: id, amazonOrderId: parsed.amazonOrderId, purchasedAt: parsed.purchasedAt, status: parsed.status, subtotalCents: parsed.subtotalCents, shippingCents: parsed.shippingCents, taxCents: parsed.taxCents, discountCents: parsed.discountCents, totalCents: parsed.totalCents, trackingNumber: parsed.trackingNumber, carrier: parsed.carrier, items: { create: itemData } } });
     } else {
       const status = rank[parsed.status] > rank[prior.status as keyof typeof rank] ? parsed.status : prior.status;
-      await db.amazonPurchase.update({ where: { id: prior.id }, data: { status, trackingNumber: parsed.trackingNumber ?? prior.trackingNumber, carrier: parsed.carrier ?? prior.carrier, totalCents: parsed.totalCents ?? prior.totalCents, ...(!prior.items.length && itemData.length ? { items: { create: itemData } } : {}) } });
+      await db.amazonPurchase.update({ where: { id: prior.id }, data: {
+        status,
+        purchasedAt: prior.purchasedAt ?? parsed.purchasedAt,
+        subtotalCents: prior.subtotalCents ?? parsed.subtotalCents,
+        shippingCents: prior.shippingCents || parsed.shippingCents,
+        taxCents: prior.taxCents || parsed.taxCents,
+        discountCents: prior.discountCents || parsed.discountCents,
+        trackingNumber: parsed.trackingNumber ?? prior.trackingNumber,
+        carrier: parsed.carrier ?? prior.carrier,
+        totalCents: parsed.totalCents ?? prior.totalCents,
+        ...(!prior.items.length && itemData.length ? { items: { create: itemData } } : {}),
+      } });
+      for (const item of itemData) {
+        const existing = prior.items.find((candidate) => item.asin && candidate.asin === item.asin)
+          ?? (prior.items.length === 1 && itemData.length === 1 ? prior.items[0] : null);
+        if (!existing) continue;
+        await db.amazonPurchaseItem.update({ where: { id: existing.id }, data: {
+          unitPriceCents: existing.unitPriceCents ?? item.unitPriceCents,
+          lineTotalCents: existing.lineTotalCents ?? item.lineTotalCents,
+          allocatedShippingCents: existing.allocatedShippingCents || item.allocatedShippingCents,
+          allocatedTaxCents: existing.allocatedTaxCents || item.allocatedTaxCents,
+          allocatedDiscountCents: existing.allocatedDiscountCents || item.allocatedDiscountCents,
+          amazonUrl: existing.amazonUrl ?? item.amazonUrl,
+        } });
+      }
       await db.order.updateMany({ where: { amazonPurchaseItem: { purchaseId: prior.id } }, data: { sourcingStatus: status === "DELIVERED" ? "DELIVERED" : status === "SHIPPED" ? "SHIPPED" : status === "CANCELLED" ? "CANCELLED" : "PURCHASED" } });
     }
     processed.add(id);
     imported++;
   }
   const matched = await reconcile(userId);
-  await db.amazonEmailConnection.update({ where: { userId }, data: { lastSyncedAt: new Date(), lastSyncError: null, processedMessageIdsJson: JSON.stringify([...processed].slice(-1000)) } });
+  await db.amazonEmailConnection.update({ where: { userId }, data: { lastSyncedAt: new Date(), lastSyncError: null, processedMessageIdsJson: JSON.stringify([...processed].slice(-1000)), syncVersion: AMAZON_EMAIL_SYNC_VERSION } });
   return { examined: ids.length, imported, matched };
 }
 
