@@ -69,6 +69,7 @@ model AmazonEmailConnection {
   lastSyncError         String?
   processedMessageIdsJson String @default("[]")
   syncVersion           Int       @default(1)
+  autoUploadTracking    Boolean   @default(false)
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
@@ -410,6 +411,10 @@ model Order {
   // realized dashboards use the linked purchase item's allocated actual cost.
   sourcingStatus       String   @default("NOT_PURCHASED")
   amazonMatchedAt      DateTime?
+  ebayTrackingNumber   String?
+  ebayTrackingCarrier  String?
+  ebayTrackingSyncedAt DateTime?
+  ebayTrackingSyncError String?
 
   user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
   listing Listing @relation(fields: [listingId], references: [id], onDelete: Cascade)

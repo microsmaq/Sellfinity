@@ -13,6 +13,7 @@ import {
   type RemoteListing,
   type RemoteOrder,
   type RemoteFulfillmentOrder,
+  type ShippingFulfillmentInput,
 } from "./client";
 import {
   appAccessToken,
@@ -687,6 +688,19 @@ ${innerXml}
       if (!page.orders || page.orders.length < 100) break;
     }
     return orders.sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+  }
+
+  async createShippingFulfillment(_userId: string, input: ShippingFulfillmentInput): Promise<void> {
+    await this.request(
+      "POST",
+      `/sell/fulfillment/v1/order/${encodeURIComponent(input.orderId)}/shipping_fulfillment`,
+      {
+        lineItems: [{ lineItemId: input.lineItemId, quantity: input.quantity }],
+        shippedDate: (input.shippedDate ?? new Date()).toISOString(),
+        shippingCarrierCode: input.shippingCarrierCode,
+        trackingNumber: input.trackingNumber,
+      },
+    );
   }
 
   async getOrders(_userId: string, since: Date): Promise<RemoteOrder[]> {

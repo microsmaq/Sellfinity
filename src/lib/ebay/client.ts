@@ -56,6 +56,15 @@ export type RemoteFulfillmentOrder = {
   lines: RemoteFulfillmentLine[];
 };
 
+export type ShippingFulfillmentInput = {
+  orderId: string;
+  lineItemId: string;
+  quantity: number;
+  trackingNumber: string;
+  shippingCarrierCode: string;
+  shippedDate?: Date;
+};
+
 /** One of the seller's live eBay listings, regardless of how it was created. */
 export type RemoteListing = {
   /** Legacy numeric item id (the one in ebay.com/itm/… URLs). */
@@ -85,6 +94,8 @@ export interface EbayClient {
   getOrders(userId: string, since: Date): Promise<RemoteOrder[]>;
   /** Paid, non-cancelled orders that still contain line items to fulfill. */
   getUnfulfilledOrders(userId: string): Promise<RemoteFulfillmentOrder[]>;
+  /** Mark one paid order line as shipped and attach carrier tracking. */
+  createShippingFulfillment(userId: string, input: ShippingFulfillmentInput): Promise<void>;
   /**
    * Every listing currently live on the seller's account — including ones
    * not created through this app.

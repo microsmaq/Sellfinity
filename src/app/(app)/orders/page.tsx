@@ -88,6 +88,7 @@ export default async function OrdersPage() {
             amazonOrderId: order.amazonPurchaseItem.purchase.amazonOrderId, amazonTitle: order.amazonPurchaseItem.title,
             amazonUrl: order.amazonPurchaseItem.amazonUrl, purchasedAt: order.amazonPurchaseItem.purchase.purchasedAt?.toISOString() ?? null,
             sourcingStatus: order.sourcingStatus, trackingNumber: order.amazonPurchaseItem.purchase.trackingNumber,
+            trackingSyncedAt: order.ebayTrackingSyncedAt?.toISOString() ?? null, trackingSyncError: order.ebayTrackingSyncError,
             revenueCents: order.salePriceCents * order.quantity + order.shippingChargedCents, ebayFeeCents: order.ebayFeeCents,
             actualAmazonCostCents: actualAmazonCost(order.amazonPurchaseItem), estimatedAmazonCostCents: order.cogsCents + order.shippingCostCents,
             confidence: order.amazonPurchaseItem.matchConfidence,

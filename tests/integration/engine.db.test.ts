@@ -45,6 +45,7 @@ class RecordingEbay implements EbayClient {
   async getUnfulfilledOrders(): Promise<RemoteFulfillmentOrder[]> {
     return [];
   }
+  async createShippingFulfillment() {}
   async getSellerListings(): Promise<RemoteListing[]> {
     return [];
   }

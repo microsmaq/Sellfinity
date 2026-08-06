@@ -86,7 +86,7 @@ export default async function SettingsPage({
         />
         <AmazonEmailConnectionCard
           configured={!!googleEmailConfig()}
-          connection={amazonEmail ? { email: amazonEmail.email, lastSyncedAt: amazonEmail.lastSyncedAt?.toISOString() ?? null, lastSyncError: amazonEmail.lastSyncError } : null}
+          connection={amazonEmail ? { email: amazonEmail.email, lastSyncedAt: amazonEmail.lastSyncedAt?.toISOString() ?? null, lastSyncError: amazonEmail.lastSyncError, autoUploadTracking: amazonEmail.autoUploadTracking } : null}
         />
         <Card className="p-6">
           <div className="flex items-start justify-between gap-4">
