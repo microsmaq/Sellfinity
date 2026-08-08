@@ -5,101 +5,161 @@ import { ebayEnvConfig } from "@/lib/ebay/oauth";
 import { estimateMargin } from "@/lib/fees";
 import { parseImageUrls } from "@/lib/types";
 import { Badge, PageHeader } from "@/components/ui";
-import { OrdersView, type FulfillmentOrderRow } from "./orders-view";
+import { OrdersView, type FulfillmentOrderRow, type FulfillmentStage } from "./orders-view";
 import { actualAmazonCost } from "@/lib/amazon-email/sync";
 
-export const metadata = { title: "Orders to fulfill — Sellfinity" };
+export const metadata = { title: "Fulfillment — Sellfinity" };
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
+
+function fulfillmentStage(status: string, sourcingStatus: string): FulfillmentStage {
+  if (status === "REFUNDED") return "REFUNDED";
+  if (sourcingStatus === "CANCELLED") return "CANCELLED";
+  if (sourcingStatus === "DELIVERED") return "DELIVERED";
+  if (sourcingStatus === "SHIPPED" || status === "SHIPPED") return "IN_TRANSIT";
+  if (sourcingStatus === "PURCHASED") return "PURCHASED";
+  return "AWAITING";
+}
 
 export default async function OrdersPage() {
   const user = await requireUser();
   const connection = await db.ebayConnection.findUnique({ where: { userId: user.id } });
   const ebayConnected = !!connection && connection.status !== "DISCONNECTED";
-  let rows: FulfillmentOrderRow[] = [];
-  let fetchError: string | null = null;
-  const purchaseHistory = await db.order.findMany({
-    where: { userId: user.id, amazonPurchaseItem: { isNot: null } },
-    include: { listing: { include: { product: true } }, amazonPurchaseItem: { include: { purchase: true } } },
-    orderBy: { amazonMatchedAt: "desc" },
-    take: 200,
-  });
-  const amazonPurchases = await db.amazonPurchase.findMany({
-    where: { userId: user.id }, include: { items: true }, orderBy: [{ purchasedAt: "desc" }, { createdAt: "desc" }], take: 200,
+  const storedOrders = await db.order.findMany({
+    where: { userId: user.id },
+    include: {
+      listing: { include: { product: true } },
+      amazonPurchaseItem: { include: { purchase: true } },
+    },
+    orderBy: { saleDate: "desc" },
   });
 
+  let fetchError: string | null = null;
+  let liveOrders: Awaited<ReturnType<Awaited<ReturnType<typeof getEbayClientForUser>>["getUnfulfilledOrders"]>> = [];
   if (ebayConnected) {
     try {
       const client = await getEbayClientForUser(user.id);
-      const orders = await client.getUnfulfilledOrders(user.id);
-      const ebayIds = [...new Set(orders.flatMap((order) => order.lines.map((line) => line.ebayListingId)))];
-      const listings = await db.listing.findMany({
-        where: { userId: user.id, ebayListingId: { in: ebayIds } },
-        include: { product: true },
-      });
-      const byEbayId = new Map(listings.map((listing) => [listing.ebayListingId, listing]));
-      const ebayHost = ebayEnvConfig()?.env === "PRODUCTION" ? "https://www.ebay.com" : "https://sandbox.ebay.com";
-      rows = orders.map((order) => ({
-        orderId: order.orderId,
-        createdAt: order.createdAt.toISOString(),
-        buyerUsername: order.buyerUsername,
-        paymentStatus: order.paymentStatus,
-        fulfillmentStatus: order.fulfillmentStatus,
-        lines: order.lines.map((line) => {
-          const listing = byEbayId.get(line.ebayListingId);
-          const source = listing ? {
-            title: listing.product.title,
-            sku: listing.product.sku,
-            url: listing.product.supplierUrl,
-            imageUrl: parseImageUrls(listing.product.imageUrlsJson)[0] ?? null,
-            unitCostCents: listing.product.costCents,
-            shippingCostCents: listing.product.shippingCostCents,
-            stock: listing.product.supplierStock,
-          } : null;
-          const salePerUnitWithShipping = line.salePriceCents + Math.round(line.shippingChargedCents / line.quantity);
-          const margin = source ? estimateMargin(salePerUnitWithShipping, source.unitCostCents, source.shippingCostCents) : null;
-          return {
-            ...line,
-            ebayUrl: `${ebayHost}/itm/${line.ebayListingId}`,
-            shipByDate: line.shipByDate?.toISOString() ?? null,
-            source,
-            estimatedProfitCents: margin ? margin.estimatedProfitCents * line.quantity : null,
-          };
-        }),
-      }));
+      liveOrders = await client.getUnfulfilledOrders(user.id);
     } catch (error) {
       fetchError = error instanceof Error ? error.message.slice(0, 300) : "eBay lookup failed";
     }
   }
 
+  const liveLineByImportedId: Map<string, {
+    order: (typeof liveOrders)[number];
+    line: (typeof liveOrders)[number]["lines"][number];
+  }> = new Map(
+    liveOrders.flatMap((order) =>
+      order.lines.map((line) => [`${order.orderId}-${line.lineItemId}`, { order, line }] as const),
+    ),
+  );
+  const rows: FulfillmentOrderRow[] = storedOrders.map((order) => {
+    const live = liveLineByImportedId.get(order.ebayOrderId);
+    const purchaseItem = order.amazonPurchaseItem;
+    const purchase = purchaseItem?.purchase;
+    const revenueCents = order.salePriceCents * order.quantity + order.shippingChargedCents;
+    const estimatedCostCents = order.cogsCents + order.shippingCostCents;
+    const verifiedCostCents = purchaseItem ? actualAmazonCost(purchaseItem) : null;
+    const costCents = verifiedCostCents ?? estimatedCostCents;
+    const stage = fulfillmentStage(order.status, order.sourcingStatus);
+    return {
+      id: order.id,
+      ebayOrderId: order.ebayOrderId,
+      ebayListingId: order.listing.ebayListingId,
+      ebayUrl: order.listing.ebayListingId
+        ? `${ebayEnvConfig()?.env === "PRODUCTION" ? "https://www.ebay.com" : "https://sandbox.ebay.com"}/itm/${order.listing.ebayListingId}`
+        : null,
+      title: order.listing.title,
+      imageUrl: parseImageUrls(order.listing.imageUrlsJson)[0] ?? null,
+      buyerUsername: order.buyerUsername,
+      saleDate: order.saleDate.toISOString(),
+      quantity: order.quantity,
+      stage,
+      shipByDate: live?.line.shipByDate?.toISOString() ?? null,
+      variation: live?.line.variation ?? null,
+      amazonTitle: purchaseItem?.title ?? order.listing.product.title,
+      amazonOrderId: purchase?.amazonOrderId ?? null,
+      amazonUrl: purchaseItem?.amazonUrl ?? order.listing.product.supplierUrl,
+      trackingNumber: purchase?.trackingNumber ?? order.ebayTrackingNumber,
+      carrier: purchase?.carrier ?? order.ebayTrackingCarrier,
+      trackingSynced: !!order.ebayTrackingSyncedAt,
+      trackingError: order.ebayTrackingSyncError,
+      revenueCents,
+      ebayFeeCents: order.ebayFeeCents,
+      costCents,
+      costVerified: verifiedCostCents !== null,
+      profitCents: revenueCents - order.ebayFeeCents - costCents,
+      matchConfidence: purchaseItem?.matchConfidence ?? null,
+      needsSource: !purchaseItem && !order.listing.product.supplierUrl,
+    };
+  });
+
+  // A newly paid eBay order can appear before the scheduled importer stores it.
+  const storedIds = new Set(storedOrders.map((order) => order.ebayOrderId));
+  const missingLiveLines = liveOrders.flatMap((order) =>
+    order.lines.filter((line) => !storedIds.has(`${order.orderId}-${line.lineItemId}`)).map((line) => ({ order, line })),
+  );
+  if (missingLiveLines.length) {
+    const listingIds = [...new Set(missingLiveLines.map(({ line }) => line.ebayListingId))];
+    const listings = await db.listing.findMany({
+      where: { userId: user.id, ebayListingId: { in: listingIds } },
+      include: { product: true },
+    });
+    const byEbayId = new Map(listings.map((listing) => [listing.ebayListingId, listing]));
+    for (const { order, line } of missingLiveLines) {
+      const listing = byEbayId.get(line.ebayListingId);
+      const revenueCents = line.salePriceCents * line.quantity + line.shippingChargedCents;
+      const margin = listing
+        ? estimateMargin(
+            line.salePriceCents + Math.round(line.shippingChargedCents / line.quantity),
+            listing.product.costCents,
+            listing.product.shippingCostCents,
+          )
+        : null;
+      rows.push({
+        id: `${order.orderId}-${line.lineItemId}`,
+        ebayOrderId: order.orderId,
+        ebayListingId: line.ebayListingId,
+        ebayUrl: `${ebayEnvConfig()?.env === "PRODUCTION" ? "https://www.ebay.com" : "https://sandbox.ebay.com"}/itm/${line.ebayListingId}`,
+        title: line.title,
+        imageUrl: listing ? parseImageUrls(listing.imageUrlsJson)[0] ?? null : null,
+        buyerUsername: order.buyerUsername,
+        saleDate: order.createdAt.toISOString(),
+        quantity: line.quantity,
+        stage: line.fulfillmentStatus === "IN_PROGRESS" ? "PURCHASED" : "AWAITING",
+        shipByDate: line.shipByDate?.toISOString() ?? null,
+        variation: line.variation,
+        amazonTitle: listing?.product.title ?? null,
+        amazonOrderId: null,
+        amazonUrl: listing?.product.supplierUrl ?? null,
+        trackingNumber: null,
+        carrier: null,
+        trackingSynced: false,
+        trackingError: null,
+        revenueCents,
+        ebayFeeCents: margin ? margin.estimatedFeeCents * line.quantity : 0,
+        costCents: listing ? (listing.product.costCents + listing.product.shippingCostCents) * line.quantity : null,
+        costVerified: false,
+        profitCents: margin ? margin.estimatedProfitCents * line.quantity : null,
+        matchConfidence: null,
+        needsSource: !listing,
+      });
+    }
+  }
+
+  rows.sort((a, b) => new Date(b.saleDate).getTime() - new Date(a.saleDate).getTime());
+
   return (
     <>
       <PageHeader
-        title="Orders to fulfill"
-        subtitle="Paid eBay orders still awaiting shipment, paired with the exact Amazon source needed to fulfill them."
-        actions={<Badge tone={ebayConnected ? "green" : "amber"}>{ebayConnected ? "Live from eBay" : "eBay not connected"}</Badge>}
+        title="Fulfillment"
+        subtitle="Every eBay order in one place—from purchase and tracking through delivery and realized profit."
+        actions={<Badge tone={ebayConnected ? "green" : "amber"}>{ebayConnected ? "Live eBay status" : "eBay not connected"}</Badge>}
       />
       <div className="relative left-1/2 w-[calc(100vw-2rem)] -translate-x-1/2 md:w-[calc(100vw-17rem)]">
         <OrdersView
           orders={rows}
-          fetchError={fetchError ?? (!ebayConnected ? "Connect eBay in Settings first." : null)}
-          purchaseHistory={purchaseHistory.flatMap((order) => order.amazonPurchaseItem ? [{
-            id: order.id, ebayOrderId: order.ebayOrderId, ebayTitle: order.listing.title,
-            amazonOrderId: order.amazonPurchaseItem.purchase.amazonOrderId, amazonTitle: order.amazonPurchaseItem.title,
-            amazonUrl: order.amazonPurchaseItem.amazonUrl, purchasedAt: order.amazonPurchaseItem.purchase.purchasedAt?.toISOString() ?? null,
-            sourcingStatus: order.sourcingStatus, trackingNumber: order.amazonPurchaseItem.purchase.trackingNumber,
-            trackingSyncedAt: order.ebayTrackingSyncedAt?.toISOString() ?? null, trackingSyncError: order.ebayTrackingSyncError,
-            revenueCents: order.salePriceCents * order.quantity + order.shippingChargedCents, ebayFeeCents: order.ebayFeeCents,
-            actualAmazonCostCents: actualAmazonCost(order.amazonPurchaseItem), estimatedAmazonCostCents: order.cogsCents + order.shippingCostCents,
-            confidence: order.amazonPurchaseItem.matchConfidence,
-          }] : [])}
-          amazonPurchases={amazonPurchases.map((purchase) => ({
-            id: purchase.id, amazonOrderId: purchase.amazonOrderId, purchasedAt: purchase.purchasedAt?.toISOString() ?? null,
-            status: purchase.status, subtotalCents: purchase.subtotalCents, shippingCents: purchase.shippingCents,
-            taxCents: purchase.taxCents, discountCents: purchase.discountCents, totalCents: purchase.totalCents,
-            trackingNumber: purchase.trackingNumber, carrier: purchase.carrier,
-            items: purchase.items.map((item) => ({ id: item.id, asin: item.asin, title: item.title, quantity: item.quantity, unitPriceCents: item.unitPriceCents, amazonUrl: item.amazonUrl, matched: !!item.matchedOrderId })),
-          }))}
+          fetchError={fetchError ?? (!ebayConnected ? "Connect eBay in Settings to refresh open orders." : null)}
         />
       </div>
     </>

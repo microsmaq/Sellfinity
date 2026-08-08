@@ -10,7 +10,7 @@ const links = [
   { href: "/arbitrage", label: "Arbitrage finder", icon: "⚖️" },
   { href: "/sourcing", label: "Product sourcing", icon: "🔍" },
   { href: "/listings", label: "Listings", icon: "🏷️" },
-  { href: "/orders", label: "Orders to fulfill", icon: "📦" },
+  { href: "/orders", label: "Fulfillment", icon: "📦" },
   { href: "/inventory", label: "Inventory sync", icon: "🔄" },
   { href: "/settings", label: "Settings", icon: "⚙️" },
 ];

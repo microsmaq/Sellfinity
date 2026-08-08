@@ -16,5 +16,6 @@ export async function importOrdersNow(): Promise<
   const result = await importOrders(user.id);
   revalidatePath("/dashboard");
   revalidatePath("/listings");
+  revalidatePath("/orders");
   return result;
 }
