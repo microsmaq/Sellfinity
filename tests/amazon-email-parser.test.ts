@@ -24,6 +24,16 @@ describe("Amazon purchase email parser", () => {
     expect(parsed?.trackingNumber).toBe("1Z999AA10123456784");
   });
 
+  it("retains Amazon's signed tracking link when the email omits the carrier number", () => {
+    const parsed = parseAmazonEmail({
+      subject: "Shipped: your Amazon.com order",
+      html: `Order 111-2222222-3333333 <a href="https://www.amazon.com/gp/your-account/ship-track?orderId=111-2222222-3333333">Track package</a>`,
+    });
+    expect(parsed?.status).toBe("SHIPPED");
+    expect(parsed?.trackingNumber).toBeNull();
+    expect(parsed?.trackingUrl).toBe("https://www.amazon.com/gp/your-account/ship-track?orderId=111-2222222-3333333");
+  });
+
   it("ignores non-order messages", () => {
     expect(parseAmazonEmail({ subject: "Amazon recommendations", text: "Products you may like" })).toBeNull();
   });

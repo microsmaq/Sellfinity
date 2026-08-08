@@ -98,6 +98,10 @@ model AmazonPurchase {
   currency           String    @default("USD")
   trackingNumber     String?
   carrier            String?
+  trackingUrl        String?
+  trackingResolvedAt DateTime?
+  trackingLookupError String?
+  trackingAsinsJson  String    @default("[]")
   expectedDeliveryAt DateTime?
   createdAt          DateTime  @default(now())
   updatedAt          DateTime  @updatedAt

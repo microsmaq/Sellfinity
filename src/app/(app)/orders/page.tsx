@@ -11,7 +11,7 @@ import { verifiedProfitProtectionDecision } from "@/lib/orders/profit-protection
 
 export const metadata = { title: "Fulfillment — Sellfinity" };
 export const dynamic = "force-dynamic";
-export const maxDuration = 60;
+export const maxDuration = 300;
 
 function fulfillmentStage(status: string, sourcingStatus: string): FulfillmentStage {
   if (status === "REFUNDED") return "REFUNDED";
@@ -91,6 +91,8 @@ export default async function OrdersPage() {
       amazonUrl: purchaseItem?.amazonUrl ?? order.listing.product.supplierUrl,
       trackingNumber: purchase?.trackingNumber ?? order.ebayTrackingNumber,
       carrier: purchase?.carrier ?? order.ebayTrackingCarrier,
+      amazonTrackingUrl: purchase?.trackingUrl ?? null,
+      trackingLookupError: purchase?.trackingLookupError ?? null,
       trackingSynced: !!order.ebayTrackingSyncedAt,
       trackingError: order.ebayTrackingSyncError,
       revenueCents,
@@ -147,6 +149,8 @@ export default async function OrdersPage() {
         amazonUrl: listing?.product.supplierUrl ?? null,
         trackingNumber: null,
         carrier: null,
+        amazonTrackingUrl: null,
+        trackingLookupError: null,
         trackingSynced: false,
         trackingError: null,
         revenueCents,

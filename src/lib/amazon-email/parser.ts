@@ -2,7 +2,7 @@ export type ParsedAmazonItem = { asin: string | null; title: string; quantity: n
 export type ParsedAmazonEmail = {
   amazonOrderId: string; purchasedAt: Date | null; status: "ORDERED" | "SHIPPED" | "DELIVERED" | "CANCELLED";
   subtotalCents: number | null; shippingCents: number; taxCents: number; discountCents: number; totalCents: number | null;
-  trackingNumber: string | null; carrier: string | null; items: ParsedAmazonItem[];
+  trackingNumber: string | null; carrier: string | null; trackingUrl: string | null; items: ParsedAmazonItem[];
 };
 
 function decodeEntities(value: string): string {
@@ -20,6 +20,21 @@ function amount(text: string, labels: string[]): number | null {
   for (const label of labels) {
     const match = text.match(new RegExp(`${label}\\s*:?\\s*(?:USD\\s*)?\\$([0-9,]+(?:\\.[0-9]{2})?)`, "i"));
     if (match) return cents(match[1]);
+  }
+  return null;
+}
+
+function amazonTrackingUrl(html: string): string | null {
+  for (const match of html.matchAll(/<a\b[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi)) {
+    const label = textFromHtml(match[2]).trim();
+    const href = decodeEntities(match[1]).trim();
+    if (!/track(?: your)? package|shipment tracking|track shipment/i.test(label) && !/ship-track|progress-tracker|track(?:ing)?(?:id|number|package)/i.test(href)) continue;
+    try {
+      const parsed = new URL(href);
+      if (parsed.protocol !== "https:") continue;
+      if (!/(^|\.)(?:amazon\.com|a\.co|amzn\.to|ups\.com|fedex\.com|usps\.com)$/i.test(parsed.hostname)) continue;
+      return parsed.toString();
+    } catch { /* Ignore malformed email links. */ }
   }
   return null;
 }
@@ -52,5 +67,6 @@ export function parseAmazonEmail(input: { subject: string; html?: string; text?:
   const total = amount(text, ["Order Total", "Grand Total", "Total"]);
   const tracking = text.match(/(?:tracking(?: number| #)?|tracking id)\s*:?\s*([A-Z0-9-]{8,30})/i)?.[1] ?? null;
   const carrier = text.match(/(?:shipped via|carrier)\s*:?[ ]*(UPS|USPS|FedEx|Amazon Logistics)/i)?.[1] ?? null;
-  return { amazonOrderId: orderId, purchasedAt: input.sentAt ?? null, status, subtotalCents: subtotal, shippingCents: shipping, taxCents: tax, discountCents: discount, totalCents: total, trackingNumber: tracking, carrier, items: [...itemMap.values()] };
+  const trackingUrl = amazonTrackingUrl(html);
+  return { amazonOrderId: orderId, purchasedAt: input.sentAt ?? null, status, subtotalCents: subtotal, shippingCents: shipping, taxCents: tax, discountCents: discount, totalCents: total, trackingNumber: tracking, carrier, trackingUrl, items: [...itemMap.values()] };
 }

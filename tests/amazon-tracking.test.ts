@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { ebayCarrierCode, normalizeTrackingNumber, remoteFulfillmentKey } from "@/lib/amazon-email/tracking-utils";
+import { ebayCarrierCode, normalizeTrackingNumber, remoteFulfillmentKey, trackingAppliesToAsin } from "@/lib/amazon-email/tracking-utils";
+import { trackingFromPage } from "@/lib/amazon-email/tracking-resolver-utils";
 
 describe("Amazon tracking normalization", () => {
   it("removes characters eBay does not accept", () => {
@@ -16,5 +17,30 @@ describe("Amazon tracking normalization", () => {
   it("uses the same composite key stored by eBay order import", () => {
     expect(remoteFulfillmentKey("12-34567-89012", "10001234567890"))
       .toBe("12-34567-89012-10001234567890");
+  });
+
+  it("extracts carrier tracking from a redirected tracking page", () => {
+    expect(trackingFromPage(
+      "https://www.ups.com/track?tracknum=1Z999AA10123456784",
+      "Package shipped with UPS",
+    )).toEqual({ trackingNumber: "1Z999AA10123456784", carrier: "UPS" });
+    expect(trackingFromPage(
+      "https://www.amazon.com/progress-tracker/package",
+      "Your package is out for delivery. Tracking ID: TBA123456789012 Amazon Logistics",
+    )).toEqual({ trackingNumber: "TBA123456789012", carrier: "Amazon Logistics" });
+  });
+
+  it("does not mistake an Amazon order id for a carrier tracking number", () => {
+    expect(trackingFromPage(
+      "https://www.amazon.com/gp/your-account/ship-track?orderId=111-2222222-3333333",
+      "Track package for order 111-2222222-3333333",
+    )).toBeNull();
+  });
+
+  it("attributes split-shipment tracking only to ASINs named in the shipment email", () => {
+    expect(trackingAppliesToAsin('["B0ABC12345"]', 3, "B0ABC12345")).toBe(true);
+    expect(trackingAppliesToAsin('["B0ABC12345"]', 3, "B0OTHER123")).toBe(false);
+    expect(trackingAppliesToAsin("[]", 1, "B0ABC12345")).toBe(true);
+    expect(trackingAppliesToAsin("[]", 2, "B0ABC12345")).toBe(false);
   });
 });

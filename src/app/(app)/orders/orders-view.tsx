@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { Badge, Button, Card, Input, StatCard, cx } from "@/components/ui";
 import { formatCents } from "@/lib/money";
 import { protectOrderMargin, setAutoProfitProtection } from "@/lib/actions/profit-protection";
+import { syncAmazonEmailsNow } from "@/lib/actions/amazon-email";
 
 export type FulfillmentStage = "AWAITING" | "PURCHASED" | "IN_TRANSIT" | "DELIVERED" | "CANCELLED" | "REFUNDED";
 
@@ -26,6 +27,8 @@ export type FulfillmentOrderRow = {
   amazonUrl: string | null;
   trackingNumber: string | null;
   carrier: string | null;
+  amazonTrackingUrl: string | null;
+  trackingLookupError: string | null;
   trackingSynced: boolean;
   trackingError: string | null;
   revenueCents: number;
@@ -81,6 +84,7 @@ export function OrdersView({ orders, fetchError, profitProtectionEnabled, sitewi
   const [pending, startTransition] = useTransition();
   const [protectionEnabled, setProtectionEnabled] = useState(profitProtectionEnabled);
   const [protectionMessage, setProtectionMessage] = useState<string | null>(null);
+  const [refreshMessage, setRefreshMessage] = useState<string | null>(null);
   const [orderOverrides, setOrderOverrides] = useState<Record<string, Partial<FulfillmentOrderRow>>>({});
   const [retryingOrderId, setRetryingOrderId] = useState<string | null>(null);
   const displayOrders = useMemo(() => orders.map((order) => ({ ...order, ...orderOverrides[order.id] })), [orderOverrides, orders]);
@@ -140,6 +144,32 @@ export function OrdersView({ orders, fetchError, profitProtectionEnabled, sitewi
         setProtectionMessage("Could not update the eBay listing. Please try again.");
       } finally {
         setRetryingOrderId(null);
+      }
+    });
+  }
+
+  function refreshFulfillment() {
+    setRefreshMessage("Checking Amazon order, shipment, delivery, and tracking emails…");
+    startTransition(async () => {
+      try {
+        const result = await syncAmazonEmailsNow();
+        if ("error" in result) {
+          setRefreshMessage(result.error ?? "Amazon email refresh failed.");
+          return;
+        }
+        const resolution = result.trackingResolution;
+        const details = [
+          `${result.imported} Amazon update${result.imported === 1 ? "" : "s"}`,
+          `${result.matched} order match${result.matched === 1 ? "" : "es"}`,
+          `${resolution.resolved} tracking number${resolution.resolved === 1 ? "" : "s"} resolved`,
+          `${result.tracking.uploaded} sent to eBay`,
+        ];
+        if (resolution.pending) details.push(`${resolution.pending} tracking link${resolution.pending === 1 ? " needs" : "s need"} Amazon sign-in or another update`);
+        if (result.tracking.failed) details.push(`${result.tracking.failed} eBay update${result.tracking.failed === 1 ? "" : "s"} failed`);
+        setRefreshMessage(`Refresh complete: ${details.join(" · ")}.`);
+        router.refresh();
+      } catch {
+        setRefreshMessage("Could not complete the Amazon and eBay refresh. Please try again.");
       }
     });
   }
@@ -219,8 +249,10 @@ export function OrdersView({ orders, fetchError, profitProtectionEnabled, sitewi
           <select value={sort} onChange={(event) => setSort(event.target.value as typeof sort)} className="min-h-10 rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-700" aria-label="Sort orders">
             <option value="NEWEST">Newest first</option><option value="SHIP_BY">Ship-by date</option><option value="PROFIT">Highest profit</option>
           </select>
-          <Button variant="secondary" disabled={pending} onClick={() => startTransition(() => router.refresh())}>{pending ? "Refreshing…" : "↻ Refresh"}</Button>
+          <Button variant="secondary" disabled={pending} onClick={refreshFulfillment}>{pending ? "Checking email…" : "↻ Refresh Amazon & eBay"}</Button>
         </div>
+
+        {refreshMessage && <p className="border-b border-indigo-100 bg-indigo-50 px-4 py-3 text-sm text-indigo-800" role="status">{refreshMessage}</p>}
 
         {fetchError && <p className="border-b border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">Live status is temporarily unavailable: {fetchError}</p>}
 
@@ -241,7 +273,7 @@ export function OrdersView({ orders, fetchError, profitProtectionEnabled, sitewi
                     <td className="max-w-[330px] px-4 py-4"><div className="flex gap-3">{order.imageUrl ? /* External marketplace image hosts are dynamic. */ // eslint-disable-next-line @next/next/no-img-element
                       <img src={order.imageUrl} alt="" className="h-12 w-12 shrink-0 rounded-lg border border-slate-200 bg-white object-contain" /> : <div className="h-12 w-12 shrink-0 rounded-lg bg-slate-100" />}<div className="min-w-0">{order.ebayUrl ? <a href={order.ebayUrl} target="_blank" rel="noreferrer" className="line-clamp-2 font-medium text-slate-900 hover:text-indigo-700">{order.title}</a> : <p className="line-clamp-2 font-medium text-slate-900">{order.title}</p>}<p className="mt-1 text-xs text-slate-500">{order.buyerUsername} · Qty {order.quantity}</p>{order.variation && <p className="mt-0.5 truncate text-xs text-violet-700">{order.variation}</p>}</div></div></td>
                     <td className="px-4 py-4"><Badge tone={meta.tone}>{meta.label}</Badge>{order.amazonOrderId && <p className="mt-2 text-xs text-slate-500">Amazon #{order.amazonOrderId}</p>}{order.matchConfidence !== null && <p className="mt-0.5 text-[11px] text-slate-400">{order.matchConfidence}% source match</p>}</td>
-                    <td className="max-w-[220px] px-4 py-4">{order.trackingNumber ? <><a href={trackingUrl(order.carrier, order.trackingNumber)} target="_blank" rel="noreferrer" className="break-all font-medium text-indigo-700 hover:underline">{order.trackingNumber}</a><p className="mt-1 text-xs text-slate-500">{order.carrier ?? "Carrier pending"}{order.trackingSynced ? " · sent to eBay" : ""}</p></> : <span className="text-slate-400">Not available yet</span>}{order.trackingError && <p className="mt-1 line-clamp-2 text-xs text-red-600" title={order.trackingError}>{order.trackingError}</p>}</td>
+                    <td className="max-w-[220px] px-4 py-4">{order.trackingNumber ? <><a href={trackingUrl(order.carrier, order.trackingNumber)} target="_blank" rel="noreferrer" className="break-all font-medium text-indigo-700 hover:underline">{order.trackingNumber}</a><p className="mt-1 text-xs text-slate-500">{order.carrier ?? "Carrier pending"}{order.trackingSynced ? " · sent to eBay" : " · waiting for eBay"}</p></> : order.amazonTrackingUrl ? <><a href={order.amazonTrackingUrl} target="_blank" rel="noreferrer" className="font-medium text-indigo-700 hover:underline">Open Amazon tracking ↗</a><p className="mt-1 text-xs text-amber-700">Tracking number pending</p></> : <span className="text-slate-400">Not available yet</span>}{order.trackingLookupError && <p className="mt-1 line-clamp-3 text-xs text-amber-700" title={order.trackingLookupError}>{order.trackingLookupError}</p>}{order.trackingError && <p className="mt-1 line-clamp-2 text-xs text-red-600" title={order.trackingError}>{order.trackingError}</p>}</td>
                     <td className="whitespace-nowrap px-4 py-4 text-right"><p className="font-semibold tabular-nums text-slate-900">{formatCents(order.revenueCents)}</p><p className="mt-1 text-[11px] text-slate-400">eBay sale</p></td>
                     <td className="whitespace-nowrap px-4 py-4 text-right"><p className="font-medium tabular-nums text-slate-700">{order.costCents === null ? "—" : formatCents(order.costCents + order.ebayFeeCents)}</p><p className="mt-1 text-[11px] text-slate-400">{order.costVerified ? "Verified" : "Estimated"} · incl. fees</p></td>
                     <td className="whitespace-nowrap px-4 py-4 text-right">

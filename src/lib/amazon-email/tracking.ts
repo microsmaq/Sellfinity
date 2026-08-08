@@ -1,7 +1,7 @@
 import "server-only";
 import { db } from "@/lib/db";
 import { getEbayClientForUser } from "@/lib/ebay";
-import { ebayCarrierCode, normalizeTrackingNumber, remoteFulfillmentKey } from "./tracking-utils";
+import { ebayCarrierCode, normalizeTrackingNumber, remoteFulfillmentKey, trackingAppliesToAsin } from "./tracking-utils";
 
 export type TrackingUploadResult = {
   eligible: number;
@@ -11,7 +11,7 @@ export type TrackingUploadResult = {
 
 /**
  * Upload Amazon tracking only when attribution is unambiguous:
- * - exactly one item in the Amazon purchase;
+ * - the shipment email names the matched ASIN, or the purchase has one item;
  * - the Amazon ASIN exactly matches the listing source SKU;
  * - the local eBay sale maps to a currently unfulfilled eBay line.
  */
@@ -43,8 +43,8 @@ export async function uploadAmazonTrackingToEbay(userId: string): Promise<Tracki
     const purchase = item.purchase;
     const rawTracking = purchase.trackingNumber;
     if (!rawTracking || !["SHIPPED", "DELIVERED"].includes(purchase.status)) continue;
-    if (purchase.items.length !== 1) continue;
     if (!item.asin || item.asin.toUpperCase() !== order.listing.product.sku.toUpperCase()) continue;
+    if (!trackingAppliesToAsin(purchase.trackingAsinsJson, purchase.items.length, item.asin)) continue;
     const remote = remoteLines.get(order.ebayOrderId);
     if (!remote) continue;
 

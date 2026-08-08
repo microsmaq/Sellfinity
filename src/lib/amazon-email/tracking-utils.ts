@@ -17,3 +17,13 @@ export function ebayCarrierCode(carrier: string | null, trackingNumber: string):
 export function remoteFulfillmentKey(orderId: string, lineItemId: string): string {
   return `${orderId}-${lineItemId}`;
 }
+
+export function trackingAppliesToAsin(trackingAsinsJson: string, purchaseItemCount: number, asin: string): boolean {
+  try {
+    const trackingAsins = JSON.parse(trackingAsinsJson) as unknown;
+    if (Array.isArray(trackingAsins) && trackingAsins.every((value) => typeof value === "string") && trackingAsins.length > 0) {
+      return trackingAsins.some((value) => value.toUpperCase() === asin.toUpperCase());
+    }
+  } catch { /* Fall back to the original single-item safety rule. */ }
+  return purchaseItemCount === 1;
+}

@@ -3,10 +3,11 @@ import { db } from "@/lib/db";
 import { decryptToken, encryptToken } from "./crypto";
 import { googleEmailConfig } from "./oauth";
 import { parseAmazonEmail } from "./parser";
+import { resolveMissingAmazonTracking, type TrackingResolutionResult } from "./tracking-resolver";
 
 type GmailPart = { mimeType?: string; body?: { data?: string }; parts?: GmailPart[] };
 type GmailMessage = { id: string; internalDate?: string; payload?: { headers?: { name: string; value: string }[] } & GmailPart };
-const AMAZON_EMAIL_SYNC_VERSION = 3;
+const AMAZON_EMAIL_SYNC_VERSION = 4;
 
 function decode(data?: string): string {
   if (!data) return "";
@@ -81,7 +82,7 @@ async function reconcile(userId: string): Promise<number> {
   return matched;
 }
 
-export async function syncAmazonPurchaseEmails(userId: string): Promise<{ examined: number; imported: number; matched: number }> {
+export async function syncAmazonPurchaseEmails(userId: string): Promise<{ examined: number; imported: number; matched: number; trackingResolution: TrackingResolutionResult }> {
   const token = await accessToken(userId);
   const connection = await db.amazonEmailConnection.findUniqueOrThrow({ where: { userId } });
   const processed = new Set<string>(JSON.parse(connection.processedMessageIdsJson) as string[]);
@@ -118,7 +119,7 @@ export async function syncAmazonPurchaseEmails(userId: string): Promise<{ examin
       };
     });
     if (!prior) {
-      await db.amazonPurchase.create({ data: { userId, sourceMessageId: id, amazonOrderId: parsed.amazonOrderId, purchasedAt: parsed.purchasedAt, status: parsed.status, subtotalCents: parsed.subtotalCents, shippingCents: parsed.shippingCents, taxCents: parsed.taxCents, discountCents: parsed.discountCents, totalCents: parsed.totalCents, trackingNumber: parsed.trackingNumber, carrier: parsed.carrier, items: { create: itemData } } });
+      await db.amazonPurchase.create({ data: { userId, sourceMessageId: id, amazonOrderId: parsed.amazonOrderId, purchasedAt: parsed.purchasedAt, status: parsed.status, subtotalCents: parsed.subtotalCents, shippingCents: parsed.shippingCents, taxCents: parsed.taxCents, discountCents: parsed.discountCents, totalCents: parsed.totalCents, trackingNumber: parsed.trackingNumber, carrier: parsed.carrier, trackingUrl: parsed.trackingUrl, trackingResolvedAt: parsed.trackingNumber ? new Date() : null, trackingAsinsJson: JSON.stringify(parsed.items.flatMap((item) => item.asin ? [item.asin] : [])), items: { create: itemData } } });
     } else {
       const status = rank[parsed.status] > rank[prior.status as keyof typeof rank] ? parsed.status : prior.status;
       await db.amazonPurchase.update({ where: { id: prior.id }, data: {
@@ -130,6 +131,14 @@ export async function syncAmazonPurchaseEmails(userId: string): Promise<{ examin
         discountCents: prior.discountCents || parsed.discountCents,
         trackingNumber: parsed.trackingNumber ?? prior.trackingNumber,
         carrier: parsed.carrier ?? prior.carrier,
+        trackingUrl: parsed.trackingUrl ?? prior.trackingUrl,
+        ...(parsed.trackingUrl && parsed.trackingUrl !== prior.trackingUrl && {
+          trackingLookupError: null,
+        }),
+        ...((parsed.trackingNumber || parsed.trackingUrl) && parsed.items.length && {
+          trackingAsinsJson: JSON.stringify(parsed.items.flatMap((item) => item.asin ? [item.asin] : [])),
+        }),
+        ...(parsed.trackingNumber && { trackingResolvedAt: new Date(), trackingLookupError: null }),
         totalCents: parsed.totalCents ?? prior.totalCents,
         ...(!prior.items.length && itemData.length ? { items: { create: itemData } } : {}),
       } });
@@ -152,8 +161,9 @@ export async function syncAmazonPurchaseEmails(userId: string): Promise<{ examin
     imported++;
   }
   const matched = await reconcile(userId);
+  const trackingResolution = await resolveMissingAmazonTracking(userId);
   await db.amazonEmailConnection.update({ where: { userId }, data: { lastSyncedAt: new Date(), lastSyncError: null, processedMessageIdsJson: JSON.stringify([...processed].slice(-1000)), syncVersion: AMAZON_EMAIL_SYNC_VERSION } });
-  return { examined: ids.length, imported, matched };
+  return { examined: ids.length, imported, matched, trackingResolution };
 }
 
 export function actualAmazonCost(item: { lineTotalCents: number | null; allocatedShippingCents: number; allocatedTaxCents: number; allocatedDiscountCents: number }): number | null {

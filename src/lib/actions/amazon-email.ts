@@ -16,14 +16,11 @@ export async function syncAmazonEmailsNow() {
     const protection = user.autoProtectVerifiedProfit
       ? await protectVerifiedOrderMargins(user.id)
       : null;
-    const connection = await db.amazonEmailConnection.findUnique({ where: { userId: user.id }, select: { autoUploadTracking: true } });
     let tracking = { eligible: 0, uploaded: 0, failed: 0 };
     let trackingError: string | null = null;
-    if (connection?.autoUploadTracking) {
-      try { tracking = await uploadAmazonTrackingToEbay(user.id); }
-      catch (error) { trackingError = error instanceof Error ? error.message.slice(0, 300) : "eBay tracking update failed"; }
-    }
-    revalidatePath("/orders"); revalidatePath("/dashboard"); revalidatePath("/settings");
+    try { tracking = await uploadAmazonTrackingToEbay(user.id); }
+    catch (error) { trackingError = error instanceof Error ? error.message.slice(0, 300) : "eBay tracking update failed"; }
+    revalidatePath("/dashboard"); revalidatePath("/settings");
     return { ...result, tracking, trackingError, protection };
   } catch (error) {
     const message = error instanceof Error ? error.message.slice(0, 300) : "Amazon email sync failed";
