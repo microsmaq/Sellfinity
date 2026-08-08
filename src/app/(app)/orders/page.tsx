@@ -69,6 +69,7 @@ export default async function OrdersPage() {
       realizedRevenueCents: revenueCents,
       realizedEbayFeeCents: order.ebayFeeCents,
       verifiedAmazonCostCents: verifiedCostCents,
+      sitewideDiscountBps: user.ebaySitewideDiscountBps,
     });
     return {
       id: order.id,
@@ -177,6 +178,7 @@ export default async function OrdersPage() {
           orders={rows}
           fetchError={fetchError ?? (!ebayConnected ? "Connect eBay in Settings to refresh open orders." : null)}
           profitProtectionEnabled={user.autoProtectVerifiedProfit}
+          sitewideDiscountBps={user.ebaySitewideDiscountBps}
         />
       </div>
     </>

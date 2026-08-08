@@ -3,6 +3,7 @@ import { EBAY_PER_ORDER_FEE_CENTS } from "@/lib/fees";
 import {
   VERIFIED_MARGIN_TARGET_BPS,
   VERIFIED_PROFIT_TARGET_CENTS,
+  discountedSalePriceCents,
   isEndedEbayListingError,
   verifiedProfitProtectionDecision,
 } from "@/lib/orders/profit-protection-policy";
@@ -45,6 +46,30 @@ describe("verified profit protection", () => {
     const profit = futureProfit(result.targetPriceCents, 1_300);
     expect(profit * 10_000).toBeGreaterThanOrEqual(result.targetPriceCents * VERIFIED_MARGIN_TARGET_BPS);
     expect(profit).toBeLessThan(VERIFIED_PROFIT_TARGET_CENTS);
+  });
+
+  it("grosses up the listing price for a sitewide discount", () => {
+    const withoutDiscount = verifiedProfitProtectionDecision({
+      currentListingPriceCents: 1_500,
+      orderQuantity: 1,
+      realizedRevenueCents: 1_500,
+      realizedEbayFeeCents: 229,
+      verifiedAmazonCostCents: 1_300,
+    });
+    const withDiscount = verifiedProfitProtectionDecision({
+      currentListingPriceCents: 1_500,
+      orderQuantity: 1,
+      realizedRevenueCents: 1_500,
+      realizedEbayFeeCents: 229,
+      verifiedAmazonCostCents: 1_300,
+      sitewideDiscountBps: 500,
+    });
+
+    expect(withoutDiscount.action).toBe("reprice");
+    expect(withDiscount.action).toBe("reprice");
+    if (withoutDiscount.action !== "reprice" || withDiscount.action !== "reprice") return;
+    expect(withDiscount.targetPriceCents).toBeGreaterThan(withoutDiscount.targetPriceCents);
+    expect(discountedSalePriceCents(withDiscount.targetPriceCents, 500)).toBeGreaterThanOrEqual(withoutDiscount.targetPriceCents);
   });
 
   it("caps an expensive item's target at $7 net instead of requiring 5%", () => {

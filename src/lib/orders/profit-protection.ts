@@ -14,6 +14,8 @@ export async function protectVerifiedOrderMargins(
   options: { ebay?: EbayClient; orderIds?: string[]; maxOrders?: number } = {},
 ): Promise<ProfitProtectionSummary> {
   const summary: ProfitProtectionSummary = { eligible: 0, adjusted: 0, relisted: 0, protected: 0, review: 0, failed: 0 };
+  const user = await db.user.findUnique({ where: { id: userId }, select: { ebaySitewideDiscountBps: true } });
+  if (!user) return summary;
   const orders = await db.order.findMany({
     where: {
       userId,
@@ -43,6 +45,7 @@ export async function protectVerifiedOrderMargins(
       realizedRevenueCents: order.salePriceCents * order.quantity + order.shippingChargedCents,
       realizedEbayFeeCents: order.ebayFeeCents,
       verifiedAmazonCostCents: verifiedCostCents,
+      sitewideDiscountBps: user.ebaySitewideDiscountBps,
     });
     if (decision.action === "not_required") {
       await db.order.update({ where: { id: order.id }, data: {

@@ -12,14 +12,21 @@ export type VerifiedProfitDecision =
   | { action: "already_protected"; realizedProfitCents: number; realizedMarginBps: number; targetPriceCents: number }
   | { action: "reprice"; realizedProfitCents: number; realizedMarginBps: number; targetPriceCents: number };
 
-function futureProfitCents(priceCents: number, unitCostCents: number, variableFeeBps: number): number {
-  const fee = Math.ceil((priceCents * variableFeeBps) / 10_000) + EBAY_PER_ORDER_FEE_CENTS;
-  return priceCents - fee - unitCostCents;
+export function discountedSalePriceCents(listPriceCents: number, discountBps: number): number {
+  const safeDiscountBps = Math.max(0, Math.min(9_000, Math.round(discountBps)));
+  return Math.floor((listPriceCents * (10_000 - safeDiscountBps)) / 10_000);
 }
 
-function clearsFutureFloor(priceCents: number, unitCostCents: number, variableFeeBps: number): boolean {
-  const profit = futureProfitCents(priceCents, unitCostCents, variableFeeBps);
-  return profit >= VERIFIED_PROFIT_TARGET_CENTS || profit * 10_000 >= priceCents * VERIFIED_MARGIN_TARGET_BPS;
+function futureProfitCents(listPriceCents: number, unitCostCents: number, variableFeeBps: number, discountBps: number): number {
+  const salePriceCents = discountedSalePriceCents(listPriceCents, discountBps);
+  const fee = Math.ceil((salePriceCents * variableFeeBps) / 10_000) + EBAY_PER_ORDER_FEE_CENTS;
+  return salePriceCents - fee - unitCostCents;
+}
+
+function clearsFutureFloor(listPriceCents: number, unitCostCents: number, variableFeeBps: number, discountBps: number): boolean {
+  const salePriceCents = discountedSalePriceCents(listPriceCents, discountBps);
+  const profit = futureProfitCents(listPriceCents, unitCostCents, variableFeeBps, discountBps);
+  return profit >= VERIFIED_PROFIT_TARGET_CENTS || profit * 10_000 >= salePriceCents * VERIFIED_MARGIN_TARGET_BPS;
 }
 
 /**
@@ -34,6 +41,7 @@ export function verifiedProfitProtectionDecision(input: {
   realizedRevenueCents: number;
   realizedEbayFeeCents: number;
   verifiedAmazonCostCents: number;
+  sitewideDiscountBps?: number;
 }): VerifiedProfitDecision {
   const realizedProfitCents = input.realizedRevenueCents - input.realizedEbayFeeCents - input.verifiedAmazonCostCents;
   const realizedMarginBps = input.realizedRevenueCents > 0
@@ -50,6 +58,7 @@ export function verifiedProfitProtectionDecision(input: {
     ? Math.ceil((Math.max(0, input.realizedEbayFeeCents - EBAY_PER_ORDER_FEE_CENTS) * 10_000) / input.realizedRevenueCents)
     : 0;
   const variableFeeBps = Math.max(Math.round(EBAY_FINAL_VALUE_RATE * 10_000), observedVariableFeeBps);
+  const discountBps = Math.max(0, Math.min(9_000, Math.round(input.sitewideDiscountBps ?? 0)));
 
   // Solve both targets, then take the cheaper one because the policy is 5%
   // OR $7 net profit. Verify with integer fee rounding before returning.
@@ -61,9 +70,10 @@ export function verifiedProfitProtectionDecision(input: {
     ((unitCostCents + EBAY_PER_ORDER_FEE_CENTS + VERIFIED_PROFIT_TARGET_CENTS) * 10_000) /
       (10_000 - variableFeeBps),
   );
-  let targetPriceCents = Math.min(fivePercentPrice, sevenDollarPrice);
-  while (!clearsFutureFloor(targetPriceCents, unitCostCents, variableFeeBps)) targetPriceCents++;
-  while (targetPriceCents > 0 && clearsFutureFloor(targetPriceCents - 1, unitCostCents, variableFeeBps)) targetPriceCents--;
+  const targetSalePriceCents = Math.min(fivePercentPrice, sevenDollarPrice);
+  let targetPriceCents = Math.ceil((targetSalePriceCents * 10_000) / (10_000 - discountBps));
+  while (!clearsFutureFloor(targetPriceCents, unitCostCents, variableFeeBps, discountBps)) targetPriceCents++;
+  while (targetPriceCents > 0 && clearsFutureFloor(targetPriceCents - 1, unitCostCents, variableFeeBps, discountBps)) targetPriceCents--;
 
   if (targetPriceCents <= input.currentListingPriceCents) {
     return { action: "already_protected", realizedProfitCents, realizedMarginBps, targetPriceCents };

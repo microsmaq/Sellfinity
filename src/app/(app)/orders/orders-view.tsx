@@ -72,7 +72,7 @@ function trackingUrl(carrier: string | null, tracking: string): string {
   return `https://www.google.com/search?q=${encodeURIComponent(`${carrier ?? "package"} ${tracking}`)}`;
 }
 
-export function OrdersView({ orders, fetchError, profitProtectionEnabled }: { orders: FulfillmentOrderRow[]; fetchError: string | null; profitProtectionEnabled: boolean }) {
+export function OrdersView({ orders, fetchError, profitProtectionEnabled, sitewideDiscountBps }: { orders: FulfillmentOrderRow[]; fetchError: string | null; profitProtectionEnabled: boolean; sitewideDiscountBps: number }) {
   const router = useRouter();
   const [query, setQuery] = useState("");
   const [tab, setTab] = useState<Tab>("ALL");
@@ -194,7 +194,7 @@ export function OrdersView({ orders, fetchError, profitProtectionEnabled }: { or
               <h2 className="font-semibold text-slate-950">Verified profit protection</h2>
               <Badge tone={protectionEnabled ? "green" : "slate"}>{protectionEnabled ? "Automatic" : "Optional"}</Badge>
             </div>
-            <p className="mt-1.5 text-sm leading-6 text-slate-600">When a matched Amazon purchase proves an order earned less than both 5% net margin and $7 net profit, Sellfinity raises that active eBay listing for future orders. Expensive items target $7 instead of exceeding the cap; estimated costs never trigger a change.</p>
+            <p className="mt-1.5 text-sm leading-6 text-slate-600">When a matched Amazon purchase proves an order earned less than both 5% net margin and $7 net profit, Sellfinity raises that active eBay listing for future orders. Expensive items target $7 instead of exceeding the cap; estimated costs never trigger a change.{sitewideDiscountBps > 0 ? ` Prices are grossed up for your ${(sitewideDiscountBps / 100).toFixed(2).replace(/\.00$/, "")}% sitewide eBay discount.` : ""}</p>
             {protectionMessage && <p className="mt-2 text-sm font-medium text-indigo-700" role="status">{protectionMessage}</p>}
           </div>
           <Button variant={protectionEnabled ? "secondary" : "primary"} disabled={pending} onClick={toggleProfitProtection} className="shrink-0">

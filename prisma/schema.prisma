@@ -17,28 +17,32 @@ datasource db {
 }
 
 model User {
-  id                   String    @id @default(cuid())
-  email                String    @unique
-  passwordHash         String
-  name                 String
+  id                        String    @id @default(cuid())
+  email                     String    @unique
+  passwordHash              String
+  name                      String
   // USER | ADMIN
-  role                 String    @default("USER")
+  role                      String    @default("USER")
   // FREE | PRO | SCALE
-  plan                 String    @default("FREE")
-  planRenewsAt         DateTime?
+  plan                      String    @default("FREE")
+  planRenewsAt              DateTime?
   // Automatically publish high-confidence profitable Arbitrage Finder matches
   // after a user-initiated scan finishes.
-  autoPublishArbitrage Boolean   @default(false)
+  autoPublishArbitrage      Boolean   @default(false)
   // Apply AI hero-image enhancement to Amazon mirroring and every Arbitrage
   // Finder publishing path, including automatic batches.
-  improveMainImage     Boolean   @default(false)
+  improveMainImage          Boolean   @default(false)
   // Rewrite Amazon source copy into factual, eBay-search-optimized titles and
   // descriptions while retaining Sellfinity's standard HTML template.
-  improveListingContent Boolean  @default(false)
+  improveListingContent     Boolean   @default(false)
   // Reprice active listings after a matched order proves the realized margin
   // missed the 5% / $7 net-profit floor.
-  autoProtectVerifiedProfit Boolean @default(false)
-  createdAt            DateTime  @default(now())
+  autoProtectVerifiedProfit Boolean   @default(false)
+  // Account-wide eBay promotion percentage in basis points (500 = 5%).
+  // Protected list prices are grossed up so the discounted checkout price
+  // still clears the verified-profit target.
+  ebaySitewideDiscountBps   Int       @default(0)
+  createdAt                 DateTime  @default(now())
 
   sessions                Session[]
   products                Product[]
@@ -50,7 +54,7 @@ model User {
   ebayMarketMetrics       EbayMarketMetric[]
   hiddenArbitrageItems    HiddenArbitrageItem[]
   mirrorBatches           MirrorBatch[]
-  generatedListingImages GeneratedListingImage[]
+  generatedListingImages  GeneratedListingImage[]
   ebayConnection          EbayConnection?
   amazonEmailConnection   AmazonEmailConnection?
   amazonPurchases         AmazonPurchase[]
@@ -59,20 +63,20 @@ model User {
 // Read-only Gmail connection used to recognize Amazon order confirmation and
 // shipping emails. Tokens are encrypted by the application before storage.
 model AmazonEmailConnection {
-  id                    String    @id @default(cuid())
-  userId                String    @unique
-  provider              String    @default("GOOGLE")
-  status                String    @default("CONNECTED")
-  email                 String?
-  encryptedAccessToken  String?
-  encryptedRefreshToken String?
-  accessTokenExpiresAt  DateTime?
-  connectedAt           DateTime  @default(now())
-  lastSyncedAt          DateTime?
-  lastSyncError         String?
-  processedMessageIdsJson String @default("[]")
-  syncVersion           Int       @default(1)
-  autoUploadTracking    Boolean   @default(false)
+  id                      String    @id @default(cuid())
+  userId                  String    @unique
+  provider                String    @default("GOOGLE")
+  status                  String    @default("CONNECTED")
+  email                   String?
+  encryptedAccessToken    String?
+  encryptedRefreshToken   String?
+  accessTokenExpiresAt    DateTime?
+  connectedAt             DateTime  @default(now())
+  lastSyncedAt            DateTime?
+  lastSyncError           String?
+  processedMessageIdsJson String    @default("[]")
+  syncVersion             Int       @default(1)
+  autoUploadTracking      Boolean   @default(false)
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
@@ -80,23 +84,23 @@ model AmazonEmailConnection {
 // An Amazon purchase recovered from a user-authorized confirmation or
 // shipment email. The raw email is never retained.
 model AmazonPurchase {
-  id                    String    @id @default(cuid())
-  userId                String
-  amazonOrderId         String
-  sourceMessageId       String
-  purchasedAt           DateTime?
-  status                String    @default("ORDERED")
-  subtotalCents         Int?
-  shippingCents         Int       @default(0)
-  taxCents              Int       @default(0)
-  discountCents         Int       @default(0)
-  totalCents            Int?
-  currency              String    @default("USD")
-  trackingNumber        String?
-  carrier               String?
-  expectedDeliveryAt    DateTime?
-  createdAt             DateTime  @default(now())
-  updatedAt             DateTime  @updatedAt
+  id                 String    @id @default(cuid())
+  userId             String
+  amazonOrderId      String
+  sourceMessageId    String
+  purchasedAt        DateTime?
+  status             String    @default("ORDERED")
+  subtotalCents      Int?
+  shippingCents      Int       @default(0)
+  taxCents           Int       @default(0)
+  discountCents      Int       @default(0)
+  totalCents         Int?
+  currency           String    @default("USD")
+  trackingNumber     String?
+  carrier            String?
+  expectedDeliveryAt DateTime?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
 
   user  User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
   items AmazonPurchaseItem[]
@@ -108,23 +112,23 @@ model AmazonPurchase {
 }
 
 model AmazonPurchaseItem {
-  id                       String   @id @default(cuid())
-  purchaseId               String
-  asin                     String?
-  title                    String
-  quantity                 Int      @default(1)
-  unitPriceCents           Int?
-  lineTotalCents           Int?
-  allocatedShippingCents   Int      @default(0)
-  allocatedTaxCents        Int      @default(0)
-  allocatedDiscountCents   Int      @default(0)
-  amazonUrl                String?
-  matchedOrderId           String?  @unique
-  matchConfidence          Int?
-  matchReason              String?
-  createdAt                DateTime @default(now())
+  id                     String   @id @default(cuid())
+  purchaseId             String
+  asin                   String?
+  title                  String
+  quantity               Int      @default(1)
+  unitPriceCents         Int?
+  lineTotalCents         Int?
+  allocatedShippingCents Int      @default(0)
+  allocatedTaxCents      Int      @default(0)
+  allocatedDiscountCents Int      @default(0)
+  amazonUrl              String?
+  matchedOrderId         String?  @unique
+  matchConfidence        Int?
+  matchReason            String?
+  createdAt              DateTime @default(now())
 
-  purchase    AmazonPurchase @relation(fields: [purchaseId], references: [id], onDelete: Cascade)
+  purchase     AmazonPurchase @relation(fields: [purchaseId], references: [id], onDelete: Cascade)
   matchedOrder Order?         @relation(fields: [matchedOrderId], references: [id], onDelete: SetNull)
 
   @@index([purchaseId])
@@ -135,43 +139,43 @@ model AmazonPurchaseItem {
 // Arbitrage Finder rows are published from this source of truth only after a
 // usable eBay equivalent and market research have been attached.
 model AdminArbitrageProduct {
-  id                         String    @id @default(cuid())
-  asin                       String    @unique
-  amazonTitle                String
-  amazonPriceCents           Int
-  amazonShippingCents        Int       @default(0)
-  amazonUrl                  String
-  amazonImageUrl             String?
+  id                          String    @id @default(cuid())
+  asin                        String    @unique
+  amazonTitle                 String
+  amazonPriceCents            Int
+  amazonShippingCents         Int       @default(0)
+  amazonUrl                   String
+  amazonImageUrl              String?
   // Complete shared Amazon snapshot. The first admin or seller lookup saves
   // these fields so later mirrors of the same ASIN do not buy another API call.
-  amazonBrand                String    @default("")
-  amazonDescription          String    @default("")
-  amazonBulletPointsJson     String    @default("[]")
-  amazonImageUrlsJson        String    @default("[]")
-  amazonInStock              Boolean   @default(true)
-  amazonRefreshedAt          DateTime?
-  category                   String
-  isAmazonBestSeller         Boolean   @default(true)
+  amazonBrand                 String    @default("")
+  amazonDescription           String    @default("")
+  amazonBulletPointsJson      String    @default("[]")
+  amazonImageUrlsJson         String    @default("[]")
+  amazonInStock               Boolean   @default(true)
+  amazonRefreshedAt           DateTime?
+  category                    String
+  isAmazonBestSeller          Boolean   @default(true)
   // PENDING | PUBLISHED | NO_MATCH | ARCHIVED
-  status                     String    @default("PENDING")
-  ebayItemId                 String?   @unique
-  ebayTitle                  String?
-  ebayPriceCents             Int?
-  ebayUrl                    String?
-  ebayImageUrl               String?
-  matchVerdict               String    @default("UNVERIFIED")
-  matchConfidence            Int       @default(0)
-  matchReason                String?
-  estimatedSales30d          Int?
-  competitorCount            Int?
+  status                      String    @default("PENDING")
+  ebayItemId                  String?   @unique
+  ebayTitle                   String?
+  ebayPriceCents              Int?
+  ebayUrl                     String?
+  ebayImageUrl                String?
+  matchVerdict                String    @default("UNVERIFIED")
+  matchConfidence             Int       @default(0)
+  matchReason                 String?
+  estimatedSales30d           Int?
+  competitorCount             Int?
   averageCompetitorPriceCents Int?
-  ebayRecommendedPriceCents  Int?
-  suggestedPriceCents        Int?
-  estimatedProfitCents       Int?
-  marginPct                  Int?
-  lastResearchedAt           DateTime?
-  createdAt                  DateTime  @default(now())
-  updatedAt                  DateTime  @updatedAt
+  ebayRecommendedPriceCents   Int?
+  suggestedPriceCents         Int?
+  estimatedProfitCents        Int?
+  marginPct                   Int?
+  lastResearchedAt            DateTime?
+  createdAt                   DateTime  @default(now())
+  updatedAt                   DateTime  @updatedAt
 
   @@index([status, updatedAt])
   @@index([category])
@@ -183,30 +187,30 @@ model AdminArbitrageProduct {
 // time so progress survives serverless request limits and every outcome is
 // retained for the seller's audit history.
 model MirrorBatch {
-  id             String    @id @default(cuid())
-  userId         String
+  id                    String    @id @default(cuid())
+  userId                String
   // URL_BULK | ARBITRAGE | LISTING_PUBLISH | LISTING_EDIT |
   // PRICE_OPTIMIZATION | AI_OPTIMIZATION | LISTING_END | LISTING_SYNC
-  source         String
+  source                String
   // MANUAL | AUTOMATIC
-  trigger        String    @default("MANUAL")
+  trigger               String    @default("MANUAL")
   // When enabled, the Amazon main photo is edited into an eBay-compliant
   // studio hero image before the listing is published.
-  improveMainImage Boolean @default(false)
+  improveMainImage      Boolean   @default(false)
   // Snapshot the copy preference so an in-flight batch behaves consistently.
-  improveListingContent Boolean @default(false)
+  improveListingContent Boolean   @default(false)
   // PENDING | RUNNING | COMPLETED
-  status         String    @default("PENDING")
-  totalCount     Int
-  succeededCount Int       @default(0)
-  failedCount    Int       @default(0)
+  status                String    @default("PENDING")
+  totalCount            Int
+  succeededCount        Int       @default(0)
+  failedCount           Int       @default(0)
   // PENDING | SENDING | SENT | FAILED
-  emailStatus    String    @default("PENDING")
-  emailSentAt    DateTime?
-  emailError     String?
-  createdAt      DateTime  @default(now())
-  startedAt      DateTime?
-  completedAt    DateTime?
+  emailStatus           String    @default("PENDING")
+  emailSentAt           DateTime?
+  emailError            String?
+  createdAt             DateTime  @default(now())
+  startedAt             DateTime?
+  completedAt           DateTime?
 
   user  User              @relation(fields: [userId], references: [id], onDelete: Cascade)
   items MirrorBatchItem[]
@@ -216,26 +220,26 @@ model MirrorBatch {
 }
 
 model MirrorBatchItem {
-  id                String    @id @default(cuid())
-  batchId           String
-  position          Int
-  inputUrl          String
-  sourceReferenceId String?
+  id                     String    @id @default(cuid())
+  batchId                String
+  position               Int
+  inputUrl               String
+  sourceReferenceId      String?
   // PENDING | PROCESSING | SUCCEEDED | FAILED
-  status            String    @default("PENDING")
-  title             String?
-  sourcePriceCents  Int?
-  listingPriceCents Int?
-  listingId         String?
-  ebayListingId     String?
-  error             String?
+  status                 String    @default("PENDING")
+  title                  String?
+  sourcePriceCents       Int?
+  listingPriceCents      Int?
+  listingId              String?
+  ebayListingId          String?
+  error                  String?
   // NOT_REQUESTED | PENDING | GENERATING | SUCCEEDED | FALLBACK
-  imageImprovementStatus String @default("NOT_REQUESTED")
+  imageImprovementStatus String    @default("NOT_REQUESTED")
   imageImprovementError  String?
-  attempts          Int       @default(0)
-  createdAt         DateTime  @default(now())
-  startedAt         DateTime?
-  completedAt       DateTime?
+  attempts               Int       @default(0)
+  createdAt              DateTime  @default(now())
+  startedAt              DateTime?
+  completedAt            DateTime?
 
   batch MirrorBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
 
@@ -412,11 +416,11 @@ model Order {
 
   // Reconciled Amazon fulfillment data. Catalog COGS remains the estimate;
   // realized dashboards use the linked purchase item's allocated actual cost.
-  sourcingStatus       String   @default("NOT_PURCHASED")
-  amazonMatchedAt      DateTime?
-  ebayTrackingNumber   String?
-  ebayTrackingCarrier  String?
-  ebayTrackingSyncedAt DateTime?
+  sourcingStatus        String    @default("NOT_PURCHASED")
+  amazonMatchedAt       DateTime?
+  ebayTrackingNumber    String?
+  ebayTrackingCarrier   String?
+  ebayTrackingSyncedAt  DateTime?
   ebayTrackingSyncError String?
 
   // Result of applying the verified-cost future-profit protection policy.
@@ -427,8 +431,8 @@ model Order {
   profitProtectionNewPriceCents Int?
   profitProtectionError         String?
 
-  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
-  listing Listing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+  user               User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  listing            Listing             @relation(fields: [listingId], references: [id], onDelete: Cascade)
   amazonPurchaseItem AmazonPurchaseItem?
 
   @@unique([userId, ebayOrderId])
@@ -453,35 +457,35 @@ model SyncRun {
 // A researched arbitrage opportunity: a live eBay listing paired with a
 // cheaper Amazon source. Global (shared by all users); grows as scans run.
 model ArbitrageItem {
-  id                String                @id @default(cuid())
-  ebayItemId        String                @unique
-  ebayTitle         String
-  ebayPriceCents    Int
-  ebayUrl           String
-  imageUrl          String
-  category          String
-  asin              String
-  amazonTitle       String
-  amazonPriceCents  Int
-  amazonShippingCents Int                  @default(0)
-  amazonUrl         String
-  profitCents       Int
-  marginPct         Int
-  feeCents          Int
-  salesEst          Int
-  competitorCount   Int?
-  avgCompPriceCents Int?
+  id                    String                @id @default(cuid())
+  ebayItemId            String                @unique
+  ebayTitle             String
+  ebayPriceCents        Int
+  ebayUrl               String
+  imageUrl              String
+  category              String
+  asin                  String
+  amazonTitle           String
+  amazonPriceCents      Int
+  amazonShippingCents   Int                   @default(0)
+  amazonUrl             String
+  profitCents           Int
+  marginPct             Int
+  feeCents              Int
+  salesEst              Int
+  competitorCount       Int?
+  avgCompPriceCents     Int?
   // Lower-quartile competitive eBay price retained from discovery and copied
   // to the seller's listing market snapshot after publication.
   bestSellingPriceCents Int?
-  matchVerdict      String                @default("UNVERIFIED")
-  matchConfidence   Int                   @default(0)
-  matchReason       String?
-  matchMethod       String                @default("RULES")
-  matchCheckedAt    DateTime?
-  createdAt         DateTime              @default(now())
-  updatedAt         DateTime              @updatedAt
-  hiddenBy          HiddenArbitrageItem[]
+  matchVerdict          String                @default("UNVERIFIED")
+  matchConfidence       Int                   @default(0)
+  matchReason           String?
+  matchMethod           String                @default("RULES")
+  matchCheckedAt        DateTime?
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+  hiddenBy              HiddenArbitrageItem[]
 
   @@index([profitCents])
   @@index([category])

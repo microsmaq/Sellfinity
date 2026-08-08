@@ -10,6 +10,26 @@ export async function setAutoProfitProtection(enabled: boolean) {
   return { enabled };
 }
 
+export async function setEbaySitewideDiscount(percent: number) {
+  const user = await requireUser();
+  if (!Number.isFinite(percent) || percent < 0 || percent > 50) {
+    return { error: "Enter a discount from 0% to 50%." };
+  }
+  const discountBps = Math.round(percent * 100);
+  await db.$transaction([
+    db.user.update({ where: { id: user.id }, data: { ebaySitewideDiscountBps: discountBps } }),
+    db.order.updateMany({
+      where: { userId: user.id, profitProtectionStatus: { not: null } },
+      data: {
+        profitProtectionStatus: null,
+        profitProtectionReviewedAt: null,
+        profitProtectionError: null,
+      },
+    }),
+  ]);
+  return { discountBps };
+}
+
 export async function protectOrderMargin(orderId: string) {
   const user = await requireUser();
   const owned = await db.order.findFirst({ where: { id: orderId, userId: user.id }, select: { id: true } });

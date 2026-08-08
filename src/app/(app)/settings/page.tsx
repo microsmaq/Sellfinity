@@ -7,6 +7,7 @@ import { getRainforestEfficiencySummary } from "@/lib/mirror/rainforest";
 import { PublishingPreferences } from "./publishing-preferences";
 import { AmazonEmailConnectionCard } from "./amazon-email-connection";
 import { googleEmailConfig } from "@/lib/amazon-email/oauth";
+import { ProfitProtectionPreferences } from "./profit-protection-preferences";
 
 export const metadata = { title: "Settings — Sellfinity" };
 
@@ -70,6 +71,8 @@ export default async function SettingsPage({
           initialImproveMainImage={user.improveMainImage}
           initialImproveListingContent={user.improveListingContent}
         />
+
+        <ProfitProtectionPreferences initialDiscountBps={user.ebaySitewideDiscountBps} />
 
         {callback && (
           <p
