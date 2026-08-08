@@ -35,6 +35,9 @@ model User {
   // Rewrite Amazon source copy into factual, eBay-search-optimized titles and
   // descriptions while retaining Sellfinity's standard HTML template.
   improveListingContent Boolean  @default(false)
+  // Reprice active listings after a matched order proves the realized margin
+  // missed the 5% / $7 net-profit floor.
+  autoProtectVerifiedProfit Boolean @default(false)
   createdAt            DateTime  @default(now())
 
   sessions                Session[]
@@ -415,6 +418,14 @@ model Order {
   ebayTrackingCarrier  String?
   ebayTrackingSyncedAt DateTime?
   ebayTrackingSyncError String?
+
+  // Result of applying the verified-cost future-profit protection policy.
+  // ADJUSTED | ALREADY_PROTECTED | REVIEW_REQUIRED | FAILED
+  profitProtectionStatus        String?
+  profitProtectionReviewedAt    DateTime?
+  profitProtectionOldPriceCents Int?
+  profitProtectionNewPriceCents Int?
+  profitProtectionError         String?
 
   user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
   listing Listing @relation(fields: [listingId], references: [id], onDelete: Cascade)

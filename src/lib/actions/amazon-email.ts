@@ -5,6 +5,7 @@ import { db } from "@/lib/db";
 import { syncAmazonPurchaseEmails } from "@/lib/amazon-email/sync";
 import { importOrders } from "@/lib/orders/import";
 import { uploadAmazonTrackingToEbay } from "@/lib/amazon-email/tracking";
+import { protectVerifiedOrderMargins } from "@/lib/orders/profit-protection";
 
 export async function syncAmazonEmailsNow() {
   const user = await requireUser();
@@ -12,6 +13,9 @@ export async function syncAmazonEmailsNow() {
     // Ensure there is a current local eBay sale ledger to match against.
     try { await importOrders(user.id); } catch { /* Email ingestion can still proceed. */ }
     const result = await syncAmazonPurchaseEmails(user.id);
+    const protection = user.autoProtectVerifiedProfit
+      ? await protectVerifiedOrderMargins(user.id)
+      : null;
     const connection = await db.amazonEmailConnection.findUnique({ where: { userId: user.id }, select: { autoUploadTracking: true } });
     let tracking = { eligible: 0, uploaded: 0, failed: 0 };
     let trackingError: string | null = null;
@@ -20,7 +24,7 @@ export async function syncAmazonEmailsNow() {
       catch (error) { trackingError = error instanceof Error ? error.message.slice(0, 300) : "eBay tracking update failed"; }
     }
     revalidatePath("/orders"); revalidatePath("/dashboard"); revalidatePath("/settings");
-    return { ...result, tracking, trackingError };
+    return { ...result, tracking, trackingError, protection };
   } catch (error) {
     const message = error instanceof Error ? error.message.slice(0, 300) : "Amazon email sync failed";
     await db.amazonEmailConnection.updateMany({ where: { userId: user.id }, data: { lastSyncError: message } });

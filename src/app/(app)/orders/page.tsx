@@ -7,6 +7,7 @@ import { parseImageUrls } from "@/lib/types";
 import { Badge, PageHeader } from "@/components/ui";
 import { OrdersView, type FulfillmentOrderRow, type FulfillmentStage } from "./orders-view";
 import { actualAmazonCost } from "@/lib/amazon-email/sync";
+import { verifiedProfitProtectionDecision } from "@/lib/orders/profit-protection-policy";
 
 export const metadata = { title: "Fulfillment — Sellfinity" };
 export const dynamic = "force-dynamic";
@@ -62,6 +63,13 @@ export default async function OrdersPage() {
     const verifiedCostCents = purchaseItem ? actualAmazonCost(purchaseItem) : null;
     const costCents = verifiedCostCents ?? estimatedCostCents;
     const stage = fulfillmentStage(order.status, order.sourcingStatus);
+    const protectionDecision = verifiedCostCents === null ? null : verifiedProfitProtectionDecision({
+      currentListingPriceCents: order.listing.priceCents,
+      orderQuantity: order.quantity,
+      realizedRevenueCents: revenueCents,
+      realizedEbayFeeCents: order.ebayFeeCents,
+      verifiedAmazonCostCents: verifiedCostCents,
+    });
     return {
       id: order.id,
       ebayOrderId: order.ebayOrderId,
@@ -91,6 +99,10 @@ export default async function OrdersPage() {
       profitCents: revenueCents - order.ebayFeeCents - costCents,
       matchConfidence: purchaseItem?.matchConfidence ?? null,
       needsSource: !purchaseItem && !order.listing.product.supplierUrl,
+      profitProtectionStatus: order.profitProtectionStatus,
+      profitProtectionNewPriceCents: order.profitProtectionNewPriceCents,
+      profitProtectionError: order.profitProtectionError,
+      suggestedProtectedPriceCents: protectionDecision?.action === "reprice" ? protectionDecision.targetPriceCents : null,
     };
   });
 
@@ -143,6 +155,10 @@ export default async function OrdersPage() {
         profitCents: margin ? margin.estimatedProfitCents * line.quantity : null,
         matchConfidence: null,
         needsSource: !listing,
+        profitProtectionStatus: null,
+        profitProtectionNewPriceCents: null,
+        profitProtectionError: null,
+        suggestedProtectedPriceCents: null,
       });
     }
   }
@@ -160,6 +176,7 @@ export default async function OrdersPage() {
         <OrdersView
           orders={rows}
           fetchError={fetchError ?? (!ebayConnected ? "Connect eBay in Settings to refresh open orders." : null)}
+          profitProtectionEnabled={user.autoProtectVerifiedProfit}
         />
       </div>
     </>

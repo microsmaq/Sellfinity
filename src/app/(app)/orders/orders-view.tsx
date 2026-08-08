@@ -4,6 +4,7 @@ import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Badge, Button, Card, Input, StatCard, cx } from "@/components/ui";
 import { formatCents } from "@/lib/money";
+import { protectOrderMargin, setAutoProfitProtection } from "@/lib/actions/profit-protection";
 
 export type FulfillmentStage = "AWAITING" | "PURCHASED" | "IN_TRANSIT" | "DELIVERED" | "CANCELLED" | "REFUNDED";
 
@@ -34,6 +35,10 @@ export type FulfillmentOrderRow = {
   profitCents: number | null;
   matchConfidence: number | null;
   needsSource: boolean;
+  profitProtectionStatus: string | null;
+  profitProtectionNewPriceCents: number | null;
+  profitProtectionError: string | null;
+  suggestedProtectedPriceCents: number | null;
 };
 
 type Tab = "ALL" | "NEEDS_ACTION" | "PURCHASED" | "IN_TRANSIT" | "DELIVERED" | "EXCEPTIONS";
@@ -52,9 +57,10 @@ function displayDate(value: string): string {
 }
 
 function tabMatches(order: FulfillmentOrderRow, tab: Tab): boolean {
+  const protectionNeedsReview = order.profitProtectionStatus === "REVIEW_REQUIRED" || order.profitProtectionStatus === "FAILED";
   if (tab === "ALL") return true;
-  if (tab === "NEEDS_ACTION") return order.stage === "AWAITING" || order.needsSource || !!order.trackingError;
-  if (tab === "EXCEPTIONS") return order.stage === "CANCELLED" || order.stage === "REFUNDED" || !!order.trackingError;
+  if (tab === "NEEDS_ACTION") return order.stage === "AWAITING" || order.needsSource || !!order.trackingError || protectionNeedsReview;
+  if (tab === "EXCEPTIONS") return order.stage === "CANCELLED" || order.stage === "REFUNDED" || !!order.trackingError || protectionNeedsReview;
   return order.stage === tab;
 }
 
@@ -66,13 +72,61 @@ function trackingUrl(carrier: string | null, tracking: string): string {
   return `https://www.google.com/search?q=${encodeURIComponent(`${carrier ?? "package"} ${tracking}`)}`;
 }
 
-export function OrdersView({ orders, fetchError }: { orders: FulfillmentOrderRow[]; fetchError: string | null }) {
+export function OrdersView({ orders, fetchError, profitProtectionEnabled }: { orders: FulfillmentOrderRow[]; fetchError: string | null; profitProtectionEnabled: boolean }) {
   const router = useRouter();
   const [query, setQuery] = useState("");
   const [tab, setTab] = useState<Tab>("ALL");
   const [sort, setSort] = useState<"NEWEST" | "SHIP_BY" | "PROFIT">("NEWEST");
   const [renderedAt] = useState(() => Date.now());
   const [pending, startTransition] = useTransition();
+  const [protectionEnabled, setProtectionEnabled] = useState(profitProtectionEnabled);
+  const [protectionMessage, setProtectionMessage] = useState<string | null>(null);
+
+  function toggleProfitProtection() {
+    const nextEnabled = !protectionEnabled;
+    setProtectionEnabled(nextEnabled);
+    setProtectionMessage(null);
+    startTransition(async () => {
+      try {
+        const result = await setAutoProfitProtection(nextEnabled);
+        if (!nextEnabled) {
+          setProtectionMessage("Automatic protection is off. You can still protect individual orders.");
+        } else {
+          const summary = result.summary;
+          setProtectionMessage(summary && summary.adjusted > 0
+            ? `${summary.adjusted} future ${summary.adjusted === 1 ? "listing price was" : "listing prices were"} adjusted.`
+            : "Protection is on. No listing prices needed adjustment right now.");
+        }
+        router.refresh();
+      } catch {
+        setProtectionEnabled(!nextEnabled);
+        setProtectionMessage("Could not update profit protection. Please try again.");
+      }
+    });
+  }
+
+  function protectOneOrder(orderId: string) {
+    setProtectionMessage(null);
+    startTransition(async () => {
+      try {
+        const result = await protectOrderMargin(orderId);
+        if ("error" in result) {
+          setProtectionMessage(result.error ?? "Could not protect this order.");
+        } else if (result.summary.adjusted > 0) {
+          setProtectionMessage("The future listing price was adjusted.");
+        } else if (result.summary.protected > 0) {
+          setProtectionMessage("This listing already meets the protected target.");
+        } else if (result.summary.review > 0 || result.summary.failed > 0) {
+          setProtectionMessage("The price could not be changed automatically. Review the listing details below.");
+        } else {
+          setProtectionMessage("No price adjustment was needed.");
+        }
+        router.refresh();
+      } catch {
+        setProtectionMessage("Could not update the eBay listing. Please try again.");
+      }
+    });
+  }
 
   const tabCounts = useMemo(() => ({
     ALL: orders.length,
@@ -117,6 +171,22 @@ export function OrdersView({ orders, fetchError }: { orders: FulfillmentOrderRow
         <StatCard label="Verified profit" value={formatCents(realizedProfit)} sub={`${formatCents(revenue)} total revenue`} tone={realizedProfit >= 0 ? "positive" : "negative"} />
       </div>
 
+      <Card className="overflow-hidden border-indigo-200 bg-gradient-to-r from-indigo-50/80 via-white to-emerald-50/60">
+        <div className="flex flex-col gap-4 p-5 lg:flex-row lg:items-center lg:justify-between">
+          <div className="max-w-3xl">
+            <div className="flex flex-wrap items-center gap-2">
+              <h2 className="font-semibold text-slate-950">Verified profit protection</h2>
+              <Badge tone={protectionEnabled ? "green" : "slate"}>{protectionEnabled ? "Automatic" : "Optional"}</Badge>
+            </div>
+            <p className="mt-1.5 text-sm leading-6 text-slate-600">When a matched Amazon purchase proves an order earned less than both 5% net margin and $7 net profit, Sellfinity raises that active eBay listing for future orders. Expensive items target $7 instead of exceeding the cap; estimated costs never trigger a change.</p>
+            {protectionMessage && <p className="mt-2 text-sm font-medium text-indigo-700" role="status">{protectionMessage}</p>}
+          </div>
+          <Button variant={protectionEnabled ? "secondary" : "primary"} disabled={pending} onClick={toggleProfitProtection} className="shrink-0">
+            {pending ? "Updating…" : protectionEnabled ? "Turn off automatic" : "Protect future orders"}
+          </Button>
+        </div>
+      </Card>
+
       <Card className="overflow-hidden">
         <div className="overflow-x-auto border-b border-slate-200 bg-slate-50/70 px-3 pt-3">
           <div className="flex min-w-max gap-1" role="tablist" aria-label="Fulfillment status">
@@ -147,6 +217,8 @@ export function OrdersView({ orders, fetchError }: { orders: FulfillmentOrderRow
               {filtered.map((order) => {
                 const meta = stageMeta[order.stage];
                 const overdue = order.stage === "AWAITING" && order.shipByDate && new Date(order.shipByDate).getTime() < renderedAt;
+                const protectionFailed = order.profitProtectionStatus === "FAILED";
+                const protectionReview = order.profitProtectionStatus === "REVIEW_REQUIRED";
                 return (
                   <tr key={order.id} className="border-t border-slate-100 align-top hover:bg-slate-50/70">
                     <td className="whitespace-nowrap px-5 py-4"><p className="font-semibold text-slate-900">#{order.ebayOrderId}</p><p className="mt-1 text-xs text-slate-500">{displayDate(order.saleDate)}</p>{order.shipByDate && <p className={cx("mt-1 text-xs", overdue ? "font-semibold text-red-600" : "text-slate-500")}>Ship by {displayDate(order.shipByDate)}</p>}</td>
@@ -156,8 +228,15 @@ export function OrdersView({ orders, fetchError }: { orders: FulfillmentOrderRow
                     <td className="max-w-[220px] px-4 py-4">{order.trackingNumber ? <><a href={trackingUrl(order.carrier, order.trackingNumber)} target="_blank" rel="noreferrer" className="break-all font-medium text-indigo-700 hover:underline">{order.trackingNumber}</a><p className="mt-1 text-xs text-slate-500">{order.carrier ?? "Carrier pending"}{order.trackingSynced ? " · sent to eBay" : ""}</p></> : <span className="text-slate-400">Not available yet</span>}{order.trackingError && <p className="mt-1 line-clamp-2 text-xs text-red-600" title={order.trackingError}>{order.trackingError}</p>}</td>
                     <td className="whitespace-nowrap px-4 py-4 text-right"><p className="font-semibold tabular-nums text-slate-900">{formatCents(order.revenueCents)}</p><p className="mt-1 text-[11px] text-slate-400">eBay sale</p></td>
                     <td className="whitespace-nowrap px-4 py-4 text-right"><p className="font-medium tabular-nums text-slate-700">{order.costCents === null ? "—" : formatCents(order.costCents + order.ebayFeeCents)}</p><p className="mt-1 text-[11px] text-slate-400">{order.costVerified ? "Verified" : "Estimated"} · incl. fees</p></td>
-                    <td className={cx("whitespace-nowrap px-4 py-4 text-right font-semibold tabular-nums", order.profitCents === null ? "text-slate-400" : order.profitCents >= 0 ? "text-emerald-700" : "text-red-600")}>{order.profitCents === null ? "—" : formatCents(order.profitCents)}</td>
-                    <td className="px-4 py-4">{order.stage === "AWAITING" ? order.amazonUrl ? <a href={order.amazonUrl} target="_blank" rel="noreferrer" className="inline-flex rounded-lg bg-indigo-600 px-3 py-2 text-xs font-semibold text-white hover:bg-indigo-500">Buy on Amazon ↗</a> : <a href="/listings" className="inline-flex rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700">Find source</a> : order.trackingNumber ? <a href={trackingUrl(order.carrier, order.trackingNumber)} target="_blank" rel="noreferrer" className="inline-flex rounded-lg border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50">Track package ↗</a> : <span className="text-xs text-slate-400">No action needed</span>}</td>
+                    <td className="whitespace-nowrap px-4 py-4 text-right">
+                      <p className={cx("font-semibold tabular-nums", order.profitCents === null ? "text-slate-400" : order.profitCents >= 0 ? "text-emerald-700" : "text-red-600")}>{order.profitCents === null ? "—" : formatCents(order.profitCents)}</p>
+                      {order.profitProtectionStatus === "ADJUSTED" && order.profitProtectionNewPriceCents !== null && <p className="mt-1 text-[11px] font-medium text-emerald-700">Future price {formatCents(order.profitProtectionNewPriceCents)}</p>}
+                      {order.profitProtectionStatus === "ALREADY_PROTECTED" && <p className="mt-1 text-[11px] font-medium text-emerald-700">Future price protected</p>}
+                      {(protectionReview || protectionFailed) && <p className={cx("mt-1 max-w-[180px] whitespace-normal text-[11px]", protectionFailed ? "text-red-600" : "text-amber-700")} title={order.profitProtectionError ?? undefined}>{protectionFailed ? "Price update failed" : "Listing review needed"}</p>}
+                    </td>
+                    <td className="px-4 py-4">
+                      {order.stage === "AWAITING" ? order.amazonUrl ? <a href={order.amazonUrl} target="_blank" rel="noreferrer" className="inline-flex rounded-lg bg-indigo-600 px-3 py-2 text-xs font-semibold text-white hover:bg-indigo-500">Buy on Amazon ↗</a> : <a href="/listings" className="inline-flex rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700">Find source</a> : protectionReview ? <a href="/listings" className="inline-flex rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-800">Review listing</a> : (order.suggestedProtectedPriceCents !== null || protectionFailed) ? <Button size="sm" variant={protectionFailed ? "secondary" : "primary"} disabled={pending} onClick={() => protectOneOrder(order.id)}>{protectionFailed ? "Retry protection" : `Protect at ${formatCents(order.suggestedProtectedPriceCents ?? order.profitProtectionNewPriceCents ?? 0)}`}</Button> : order.trackingNumber ? <a href={trackingUrl(order.carrier, order.trackingNumber)} target="_blank" rel="noreferrer" className="inline-flex rounded-lg border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50">Track package ↗</a> : <span className="text-xs text-slate-400">No action needed</span>}
+                    </td>
                   </tr>
                 );
               })}
