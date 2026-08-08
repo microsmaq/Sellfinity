@@ -4,15 +4,16 @@ import { getEbayClientForUser } from "@/lib/ebay";
 import type { EbayClient } from "@/lib/ebay/client";
 import { actualAmazonCost } from "@/lib/amazon-email/sync";
 import { recordListingActivity } from "@/lib/listings/activity-history";
-import { verifiedProfitProtectionDecision } from "./profit-protection-policy";
+import { publishListingForUser } from "@/lib/listings/publish";
+import { isEndedEbayListingError, verifiedProfitProtectionDecision } from "./profit-protection-policy";
 
-export type ProfitProtectionSummary = { eligible: number; adjusted: number; protected: number; review: number; failed: number };
+export type ProfitProtectionSummary = { eligible: number; adjusted: number; relisted: number; protected: number; review: number; failed: number };
 
 export async function protectVerifiedOrderMargins(
   userId: string,
   options: { ebay?: EbayClient; orderIds?: string[]; maxOrders?: number } = {},
 ): Promise<ProfitProtectionSummary> {
-  const summary: ProfitProtectionSummary = { eligible: 0, adjusted: 0, protected: 0, review: 0, failed: 0 };
+  const summary: ProfitProtectionSummary = { eligible: 0, adjusted: 0, relisted: 0, protected: 0, review: 0, failed: 0 };
   const orders = await db.order.findMany({
     where: {
       userId,
@@ -30,6 +31,7 @@ export async function protectVerifiedOrderMargins(
 
   let ebay = options.ebay;
   const latestPriceByListing = new Map<string, number>();
+  const latestEbayIdByListing = new Map<string, string>();
   for (const order of orders) {
     if (!order.amazonPurchaseItem) continue;
     const verifiedCostCents = actualAmazonCost(order.amazonPurchaseItem);
@@ -66,7 +68,78 @@ export async function protectVerifiedOrderMargins(
       continue;
     }
 
-    if (order.listing.status !== "ACTIVE" || !order.listing.ebayListingId) {
+    const recordSuccess = async (ebayListingId: string) => {
+      try {
+        await recordListingActivity({
+          userId,
+          source: "PROFIT_PROTECTION",
+          trigger: "AUTOMATIC",
+          items: [{
+            title: order.listing.title,
+            listingId: order.listingId,
+            ebayListingId,
+            amazonUrl: order.listing.product.supplierUrl,
+            sourcePriceCents: verifiedCostCents,
+            listingPriceCents: decision.targetPriceCents,
+            ok: true,
+          }],
+        });
+      } catch (activityError) {
+        console.error("Could not record profit-protection activity", activityError);
+      }
+    };
+
+    const relistAtProtectedPrice = async (): Promise<string | null> => {
+      await db.listing.update({
+        where: { id: order.listingId },
+        data: {
+          status: "ENDED",
+          endedAt: new Date(),
+          endedReason: "MANUAL",
+          priceCents: decision.targetPriceCents,
+          quantity: Math.max(1, order.listing.quantity),
+        },
+      });
+      const published = await publishListingForUser(userId, order.listingId, {
+        recoverEndedReasons: ["MANUAL"],
+      });
+      if (!published.ok) return published.error;
+      await db.order.update({ where: { id: order.id }, data: {
+        profitProtectionStatus: "RELISTED",
+        profitProtectionReviewedAt: new Date(),
+        profitProtectionOldPriceCents: currentPriceCents,
+        profitProtectionNewPriceCents: decision.targetPriceCents,
+        profitProtectionError: null,
+      } });
+      latestPriceByListing.set(order.listingId, decision.targetPriceCents);
+      latestEbayIdByListing.set(order.listingId, published.ebayListingId);
+      await recordSuccess(published.ebayListingId);
+      summary.adjusted++;
+      summary.relisted++;
+      return null;
+    };
+
+    if (order.listing.status === "ENDED") {
+      try {
+        const relistError = await relistAtProtectedPrice();
+        if (!relistError) continue;
+        throw new Error(relistError);
+      } catch (error) {
+        const message = error instanceof Error ? error.message.slice(0, 500) : "eBay relisting failed";
+        await db.order.update({ where: { id: order.id }, data: {
+          profitProtectionStatus: "FAILED",
+          profitProtectionReviewedAt: new Date(),
+          profitProtectionOldPriceCents: currentPriceCents,
+          profitProtectionNewPriceCents: decision.targetPriceCents,
+          profitProtectionError: message,
+        } });
+        summary.failed++;
+        continue;
+      }
+    }
+
+    const currentEbayListingId = latestEbayIdByListing.get(order.listingId) ?? order.listing.ebayListingId;
+    if (order.listing.status !== "ACTIVE" || !currentEbayListingId) {
       await db.order.update({ where: { id: order.id }, data: {
         profitProtectionStatus: "REVIEW_REQUIRED",
         profitProtectionReviewedAt: new Date(),
@@ -80,7 +153,7 @@ export async function protectVerifiedOrderMargins(
 
     try {
       ebay ??= await getEbayClientForUser(userId);
-      await ebay.updateListing(order.listing.ebayListingId, { priceCents: decision.targetPriceCents });
+      await ebay.updateListing(currentEbayListingId, { priceCents: decision.targetPriceCents });
       await db.$transaction([
         db.listing.update({ where: { id: order.listingId }, data: { priceCents: decision.targetPriceCents } }),
         db.order.update({ where: { id: order.id }, data: {
@@ -92,27 +165,19 @@ export async function protectVerifiedOrderMargins(
         } }),
       ]);
       latestPriceByListing.set(order.listingId, decision.targetPriceCents);
-      try {
-        await recordListingActivity({
-          userId,
-          source: "PROFIT_PROTECTION",
-          trigger: "AUTOMATIC",
-          items: [{
-            title: order.listing.title,
-            listingId: order.listingId,
-            ebayListingId: order.listing.ebayListingId,
-            amazonUrl: order.listing.product.supplierUrl,
-            sourcePriceCents: verifiedCostCents,
-            listingPriceCents: decision.targetPriceCents,
-            ok: true,
-          }],
-        });
-      } catch (activityError) {
-        console.error("Could not record profit-protection activity", activityError);
-      }
+      await recordSuccess(currentEbayListingId);
       summary.adjusted++;
     } catch (error) {
-      const message = error instanceof Error ? error.message.slice(0, 500) : "eBay price update failed";
+      let message = error instanceof Error ? error.message.slice(0, 500) : "eBay price update failed";
+      if (isEndedEbayListingError(message)) {
+        try {
+          const relistError = await relistAtProtectedPrice();
+          if (!relistError) continue;
+          message = `The ended listing could not be relisted: ${relistError}`.slice(0, 500);
+        } catch (relistError) {
+          message = `The ended listing could not be relisted: ${relistError instanceof Error ? relistError.message : "eBay relisting failed"}`.slice(0, 500);
+        }
+      }
       await db.order.update({ where: { id: order.id }, data: {
         profitProtectionStatus: "FAILED",
         profitProtectionReviewedAt: new Date(),

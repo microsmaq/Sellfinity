@@ -112,6 +112,8 @@ export function OrdersView({ orders, fetchError, profitProtectionEnabled }: { or
         const result = await protectOrderMargin(orderId);
         if ("error" in result) {
           setProtectionMessage(result.error ?? "Could not protect this order.");
+        } else if (result.summary.relisted > 0) {
+          setProtectionMessage("The ended item was relisted on eBay at the protected price.");
         } else if (result.summary.adjusted > 0) {
           setProtectionMessage("The future listing price was adjusted.");
         } else if (result.summary.protected > 0) {
@@ -245,6 +247,7 @@ export function OrdersView({ orders, fetchError, profitProtectionEnabled }: { or
                     <td className="whitespace-nowrap px-4 py-4 text-right">
                       <p className={cx("font-semibold tabular-nums", order.profitCents === null ? "text-slate-400" : order.profitCents >= 0 ? "text-emerald-700" : "text-red-600")}>{order.profitCents === null ? "—" : formatCents(order.profitCents)}</p>
                       {order.profitProtectionStatus === "ADJUSTED" && order.profitProtectionNewPriceCents !== null && <p className="mt-1 text-[11px] font-medium text-emerald-700">Future price {formatCents(order.profitProtectionNewPriceCents)}</p>}
+                      {order.profitProtectionStatus === "RELISTED" && order.profitProtectionNewPriceCents !== null && <p className="mt-1 text-[11px] font-medium text-emerald-700">Relisted at {formatCents(order.profitProtectionNewPriceCents)}</p>}
                       {order.profitProtectionStatus === "ALREADY_PROTECTED" && <p className="mt-1 text-[11px] font-medium text-emerald-700">Future price protected</p>}
                       {(protectionReview || protectionFailed) && <p className={cx("mt-1 max-w-[180px] whitespace-normal text-[11px]", protectionFailed ? "text-red-600" : "text-amber-700")} title={order.profitProtectionError ?? undefined}>{protectionFailed ? "Price update failed" : "Listing review needed"}</p>}
                     </td>

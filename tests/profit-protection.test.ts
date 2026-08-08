@@ -3,6 +3,7 @@ import { EBAY_PER_ORDER_FEE_CENTS } from "@/lib/fees";
 import {
   VERIFIED_MARGIN_TARGET_BPS,
   VERIFIED_PROFIT_TARGET_CENTS,
+  isEndedEbayListingError,
   verifiedProfitProtectionDecision,
 } from "@/lib/orders/profit-protection-policy";
 
@@ -13,6 +14,11 @@ function futureProfit(priceCents: number, costCents: number): number {
 }
 
 describe("verified profit protection", () => {
+  it("recognizes eBay's ended-item revision error for relisting", () => {
+    expect(isEndedEbayListingError("You are not allowed to revise an ended item \"318630049908\".")).toBe(true);
+    expect(isEndedEbayListingError("Price must be at least $0.99")).toBe(false);
+  });
+
   it("does nothing when the verified order already earned at least 5%", () => {
     const result = verifiedProfitProtectionDecision({
       currentListingPriceCents: 2_000,

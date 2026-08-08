@@ -3,6 +3,10 @@ import { EBAY_FINAL_VALUE_RATE, EBAY_PER_ORDER_FEE_CENTS } from "@/lib/fees";
 export const VERIFIED_MARGIN_TARGET_BPS = 500;
 export const VERIFIED_PROFIT_TARGET_CENTS = 700;
 
+export function isEndedEbayListingError(message: string): boolean {
+  return /not allowed to revise an ended item|listing (?:has )?ended|ended item/i.test(message);
+}
+
 export type VerifiedProfitDecision =
   | { action: "not_required"; realizedProfitCents: number; realizedMarginBps: number }
   | { action: "already_protected"; realizedProfitCents: number; realizedMarginBps: number; targetPriceCents: number }
