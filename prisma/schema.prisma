@@ -420,7 +420,7 @@ model Order {
   ebayTrackingSyncError String?
 
   // Result of applying the verified-cost future-profit protection policy.
-  // ADJUSTED | ALREADY_PROTECTED | REVIEW_REQUIRED | FAILED
+  // NOT_REQUIRED | ADJUSTED | ALREADY_PROTECTED | REVIEW_REQUIRED | FAILED
   profitProtectionStatus        String?
   profitProtectionReviewedAt    DateTime?
   profitProtectionOldPriceCents Int?

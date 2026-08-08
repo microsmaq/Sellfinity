@@ -10,7 +10,7 @@ export type ProfitProtectionSummary = { eligible: number; adjusted: number; prot
 
 export async function protectVerifiedOrderMargins(
   userId: string,
-  options: { ebay?: EbayClient; orderIds?: string[] } = {},
+  options: { ebay?: EbayClient; orderIds?: string[]; maxOrders?: number } = {},
 ): Promise<ProfitProtectionSummary> {
   const summary: ProfitProtectionSummary = { eligible: 0, adjusted: 0, protected: 0, review: 0, failed: 0 };
   const orders = await db.order.findMany({
@@ -24,6 +24,7 @@ export async function protectVerifiedOrderMargins(
     },
     include: { listing: { include: { product: true } }, amazonPurchaseItem: true },
     orderBy: { saleDate: "desc" },
+    take: options.maxOrders ?? 10,
   });
   if (!orders.length) return summary;
 
@@ -41,7 +42,16 @@ export async function protectVerifiedOrderMargins(
       realizedEbayFeeCents: order.ebayFeeCents,
       verifiedAmazonCostCents: verifiedCostCents,
     });
-    if (decision.action === "not_required") continue;
+    if (decision.action === "not_required") {
+      await db.order.update({ where: { id: order.id }, data: {
+        profitProtectionStatus: "NOT_REQUIRED",
+        profitProtectionReviewedAt: new Date(),
+        profitProtectionOldPriceCents: currentPriceCents,
+        profitProtectionNewPriceCents: currentPriceCents,
+        profitProtectionError: null,
+      } });
+      continue;
+    }
     summary.eligible++;
 
     if (decision.action === "already_protected") {
@@ -82,20 +92,24 @@ export async function protectVerifiedOrderMargins(
         } }),
       ]);
       latestPriceByListing.set(order.listingId, decision.targetPriceCents);
-      await recordListingActivity({
-        userId,
-        source: "PROFIT_PROTECTION",
-        trigger: "AUTOMATIC",
-        items: [{
-          title: order.listing.title,
-          listingId: order.listingId,
-          ebayListingId: order.listing.ebayListingId,
-          amazonUrl: order.listing.product.supplierUrl,
-          sourcePriceCents: verifiedCostCents,
-          listingPriceCents: decision.targetPriceCents,
-          ok: true,
-        }],
-      });
+      try {
+        await recordListingActivity({
+          userId,
+          source: "PROFIT_PROTECTION",
+          trigger: "AUTOMATIC",
+          items: [{
+            title: order.listing.title,
+            listingId: order.listingId,
+            ebayListingId: order.listing.ebayListingId,
+            amazonUrl: order.listing.product.supplierUrl,
+            sourcePriceCents: verifiedCostCents,
+            listingPriceCents: decision.targetPriceCents,
+            ok: true,
+          }],
+        });
+      } catch (activityError) {
+        console.error("Could not record profit-protection activity", activityError);
+      }
       summary.adjusted++;
     } catch (error) {
       const message = error instanceof Error ? error.message.slice(0, 500) : "eBay price update failed";

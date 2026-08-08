@@ -14,9 +14,8 @@ function revalidateProfitViews() {
 export async function setAutoProfitProtection(enabled: boolean) {
   const user = await requireUser();
   await db.user.update({ where: { id: user.id }, data: { autoProtectVerifiedProfit: enabled } });
-  const summary = enabled ? await protectVerifiedOrderMargins(user.id) : null;
   revalidateProfitViews();
-  return { enabled, summary };
+  return { enabled };
 }
 
 export async function protectOrderMargin(orderId: string) {

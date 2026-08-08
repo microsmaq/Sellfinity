@@ -53,7 +53,7 @@ const stageMeta: Record<FulfillmentStage, { label: string; tone: "amber" | "indi
 };
 
 function displayDate(value: string): string {
-  return new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", year: "numeric" }).format(new Date(value));
+  return new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "America/Los_Angeles" }).format(new Date(value));
 }
 
 function tabMatches(order: FulfillmentOrderRow, tab: Tab): boolean {
@@ -88,14 +88,11 @@ export function OrdersView({ orders, fetchError, profitProtectionEnabled }: { or
     setProtectionMessage(null);
     startTransition(async () => {
       try {
-        const result = await setAutoProfitProtection(nextEnabled);
+        await setAutoProfitProtection(nextEnabled);
         if (!nextEnabled) {
           setProtectionMessage("Automatic protection is off. You can still protect individual orders.");
         } else {
-          const summary = result.summary;
-          setProtectionMessage(summary && summary.adjusted > 0
-            ? `${summary.adjusted} future ${summary.adjusted === 1 ? "listing price was" : "listing prices were"} adjusted.`
-            : "Protection is on. No listing prices needed adjustment right now.");
+          setProtectionMessage("Protection is on. Verified orders will be checked automatically; use an order's Protect button for an immediate update.");
         }
         router.refresh();
       } catch {
