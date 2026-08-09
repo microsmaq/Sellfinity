@@ -353,11 +353,13 @@ export function EbayListingsTable({
   fetchError,
   improveMainImage,
   improveListingContent,
+  sitewideDiscountBps,
 }: {
   rows: EbayRow[];
   fetchError: string | null;
   improveMainImage: boolean;
   improveListingContent: boolean;
+  sitewideDiscountBps: number;
 }) {
   const [rows, setRows] = useState(initialRows);
   const [pending, startTransition] = useTransition();
@@ -1085,6 +1087,7 @@ export function EbayListingsTable({
                 r.market?.averageCompetitorPriceCents,
                 r.market?.bestSellingPriceCents,
                 r.suggestedPriceCents,
+                sitewideDiscountBps,
               );
               return (
                 <tr

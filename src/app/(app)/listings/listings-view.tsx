@@ -164,12 +164,14 @@ function PriceQuantityCell({
 
 function ListingMarketRow({
   row,
+  sitewideDiscountBps,
   selected,
   onToggle,
   onLocalChange,
   onUpdateDone,
 }: {
   row: ListingRow;
+  sitewideDiscountBps: number;
   selected: boolean;
   onToggle: () => void;
   onLocalChange: (id: string, update: { priceCents?: number; quantity?: number }) => void;
@@ -183,6 +185,7 @@ function ListingMarketRow({
     row.averageCompetitorPriceCents,
     row.ebayRecommendedPriceCents,
     row.suggestedPriceCents,
+    sitewideDiscountBps,
   );
   const rowDate = row.publishedAt ?? row.createdAt;
 
@@ -312,6 +315,7 @@ export function ListingsView({
   ebayFetchError,
   improveMainImage,
   improveListingContent,
+  sitewideDiscountBps,
 }: {
   unlisted: UnlistedRow[];
   listings: ListingRow[];
@@ -320,6 +324,7 @@ export function ListingsView({
   ebayFetchError: string | null;
   improveMainImage: boolean;
   improveListingContent: boolean;
+  sitewideDiscountBps: number;
 }) {
   const [tab, setTab] = useState<Tab>(ebayConnected ? "ebay" : "unlisted");
   const [listingRows, setListingRows] = useState(listings);
@@ -498,6 +503,7 @@ export function ListingsView({
           fetchError={ebayFetchError}
           improveMainImage={improveMainImage}
           improveListingContent={improveListingContent}
+          sitewideDiscountBps={sitewideDiscountBps}
         />
       ) : (
       <>
@@ -625,6 +631,7 @@ export function ListingsView({
                 <ListingMarketRow
                   key={l.id}
                   row={l}
+                  sitewideDiscountBps={sitewideDiscountBps}
                   selected={selected.has(l.id)}
                   onToggle={() => toggle(l.id)}
                   onLocalChange={(id, update) =>

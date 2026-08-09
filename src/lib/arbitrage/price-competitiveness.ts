@@ -42,7 +42,10 @@ export function assessPriceCompetitiveness(
   averageCompetitorPriceCents?: number | null,
   ebayRecommendedPriceCents?: number | null,
   aiSuggestedPriceCents?: number | null,
+  sitewideDiscountBps = 0,
 ): PriceCompetitiveness {
+  const discountBps = Math.max(0, Math.min(9_000, Math.round(sitewideDiscountBps)));
+  const assessedPriceCents = Math.round(priceCents * (10_000 - discountBps) / 10_000);
   const prices = validMarketPrices([
     { label: "eBay item", cents: ebayPriceCents },
     { label: "competitor avg", cents: averageCompetitorPriceCents },
@@ -50,7 +53,7 @@ export function assessPriceCompetitiveness(
     { label: "AI suggested", cents: aiSuggestedPriceCents },
   ]);
 
-  if (priceCents <= 0 || prices.length === 0) {
+  if (assessedPriceCents <= 0 || prices.length === 0) {
     return {
       label: "Not rated",
       tone: "slate",
@@ -64,12 +67,12 @@ export function assessPriceCompetitiveness(
   const median = sortedPrices.length % 2 === 0
     ? (sortedPrices[middle - 1] + sortedPrices[middle]) / 2
     : sortedPrices[middle];
-  const premiumToMedian = ((priceCents - median) / median) * 100;
+  const premiumToMedian = ((assessedPriceCents - median) / median) * 100;
 
   let rating: Pick<PriceCompetitiveness, "label" | "tone">;
-  if (priceCents <= lowest) {
+  if (assessedPriceCents <= lowest) {
     rating = { label: "Highly competitive", tone: "green" };
-  } else if (priceCents <= median) {
+  } else if (assessedPriceCents <= median) {
     rating = { label: "Competitive", tone: "indigo" };
   } else if (premiumToMedian <= 5) {
     rating = { label: "Near market", tone: "indigo" };
@@ -81,6 +84,11 @@ export function assessPriceCompetitiveness(
 
   return {
     ...rating,
-    summary: prices.map((market) => comparison(priceCents, market)).join(" · "),
+    summary: [
+      ...(discountBps > 0
+        ? [`${(discountBps / 100).toFixed(2).replace(/\.00$/, "")}% sitewide discount → $${(assessedPriceCents / 100).toFixed(2)} buyer price`]
+        : []),
+      ...prices.map((market) => comparison(assessedPriceCents, market)),
+    ].join(" · "),
   };
 }

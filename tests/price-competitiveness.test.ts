@@ -60,4 +60,14 @@ describe("arbitrage price competitiveness", () => {
       summary: "matches eBay item · 3% below competitor avg · 3% above eBay recommended · 6% above AI suggested",
     });
   });
+
+  it("assesses the buyer price after a seller sitewide discount", () => {
+    expect(
+      assessPriceCompetitiveness(2_000, 2_000, 1_850, 1_800, null, 500),
+    ).toEqual({
+      label: "Near market",
+      tone: "indigo",
+      summary: "5% sitewide discount → $19.00 buyer price · 5% below eBay item · 3% above competitor avg · 6% above eBay recommended",
+    });
+  });
 });

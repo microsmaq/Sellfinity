@@ -190,6 +190,7 @@ export default async function ListingsPage() {
           ebayFetchError={ebayFetchError}
           improveMainImage={user.improveMainImage}
           improveListingContent={user.improveListingContent}
+          sitewideDiscountBps={user.ebaySitewideDiscountBps}
         />
       </div>
     </>
