@@ -3,6 +3,7 @@ import { db } from "@/lib/db";
 import { getEbayClientForUser } from "@/lib/ebay";
 import type { EbayClient } from "@/lib/ebay/client";
 import { ebayFeeCents } from "@/lib/fees";
+import { deliveryAddressFingerprint } from "@/lib/amazon-email/address-match";
 
 const LOOKBACK_MS = 30 * 24 * 60 * 60 * 1000;
 
@@ -56,6 +57,8 @@ export async function importOrders(
             shippingCostCents: listing.product.shippingCostCents,
             cogsCents: listing.product.costCents * remote.quantity,
             buyerUsername: remote.buyerUsername,
+            shippingRecipientName: remote.shippingRecipientName ?? null,
+            shippingAddressFingerprint: deliveryAddressFingerprint(remote.shippingAddressLine1, remote.shippingPostalCode),
             saleDate: remote.saleDate,
           },
         }),
@@ -67,6 +70,17 @@ export async function importOrders(
       ]);
     } catch (e) {
       if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") {
+        if (remote.shippingRecipientName || (remote.shippingAddressLine1 && remote.shippingPostalCode)) {
+          await db.order.updateMany({
+            where: { userId, ebayOrderId: remote.ebayOrderId },
+            data: {
+              ...(remote.shippingRecipientName && { shippingRecipientName: remote.shippingRecipientName }),
+              ...(remote.shippingAddressLine1 && remote.shippingPostalCode && {
+                shippingAddressFingerprint: deliveryAddressFingerprint(remote.shippingAddressLine1, remote.shippingPostalCode),
+              }),
+            },
+          });
+        }
         continue; // already imported
       }
       throw e;

@@ -4,10 +4,12 @@ import { decryptToken, encryptToken } from "./crypto";
 import { googleEmailConfig } from "./oauth";
 import { parseAmazonEmail } from "./parser";
 import { resolveMissingAmazonTracking, type TrackingResolutionResult } from "./tracking-resolver";
+import { fulfillmentNamesMatch, fulfillmentTitleSimilarity } from "./title-match";
+import { deliveryAddressFingerprint } from "./address-match";
 
 type GmailPart = { mimeType?: string; body?: { data?: string }; parts?: GmailPart[] };
 type GmailMessage = { id: string; internalDate?: string; payload?: { headers?: { name: string; value: string }[] } & GmailPart };
-const AMAZON_EMAIL_SYNC_VERSION = 4;
+const AMAZON_EMAIL_SYNC_VERSION = 5;
 
 function decode(data?: string): string {
   if (!data) return "";
@@ -25,16 +27,6 @@ function bodies(part?: GmailPart): { html: string; text: string } {
 function header(message: GmailMessage, name: string): string {
   return message.payload?.headers?.find((item) => item.name.toLowerCase() === name.toLowerCase())?.value ?? "";
 }
-function tokens(value: string): Set<string> {
-  return new Set(value.toLowerCase().replace(/[^a-z0-9 ]/g, " ").split(/\s+/).filter((word) => word.length > 2 && !["the", "and", "for", "with", "new", "from"].includes(word)));
-}
-function similarity(a: string, b: string): number {
-  const left = tokens(a); const right = tokens(b);
-  if (!left.size || !right.size) return 0;
-  let overlap = 0; for (const word of left) if (right.has(word)) overlap++;
-  return Math.round((overlap / Math.max(left.size, right.size)) * 100);
-}
-
 async function accessToken(userId: string): Promise<string> {
   const connection = await db.amazonEmailConnection.findUnique({ where: { userId } });
   if (!connection?.encryptedRefreshToken && !connection?.encryptedAccessToken) throw new Error("Connect Gmail first");
@@ -66,9 +58,35 @@ async function reconcile(userId: string): Promise<number> {
     for (const order of orders) {
       if (item.purchase.purchasedAt && item.purchase.purchasedAt < new Date(order.saleDate.getTime() - 3 * 86_400_000)) continue;
       const exactAsin = !!item.asin && item.asin.toUpperCase() === order.listing.product.sku.toUpperCase();
-      const titleScore = similarity(item.title, order.listing.product.title);
+      const titleScore = fulfillmentTitleSimilarity(order.listing.title, item.title);
+      const hasBothRecipientNames = !!order.shippingRecipientName && !!item.purchase.recipientName;
+      const recipientMatches = hasBothRecipientNames
+        ? fulfillmentNamesMatch(order.shippingRecipientName!, item.purchase.recipientName!)
+        : false;
+      const hasBothAddresses = !!order.shippingAddressFingerprint && !!item.purchase.deliveryAddressFingerprint;
+      const addressMatches = hasBothAddresses
+        ? order.shippingAddressFingerprint === item.purchase.deliveryAddressFingerprint
+        : false;
+      // A known address conflict fails closed. A matching delivery address can
+      // safely override a household/recipient-name variation.
+      if (hasBothAddresses && !addressMatches) continue;
+      if (hasBothRecipientNames && !recipientMatches && !addressMatches) continue;
       const score = exactAsin ? 100 : titleScore;
-      if (score >= 62 && (!best || score > best.score)) best = { order, score, reason: exactAsin ? "Exact Amazon ASIN matches the listing source" : "Amazon item title matches the eBay source product" };
+      const candidateDistance = item.purchase.purchasedAt
+        ? Math.abs(item.purchase.purchasedAt.getTime() - order.saleDate.getTime())
+        : Number.MAX_SAFE_INTEGER;
+      const bestDistance = best && item.purchase.purchasedAt
+        ? Math.abs(item.purchase.purchasedAt.getTime() - best.order.saleDate.getTime())
+        : Number.MAX_SAFE_INTEGER;
+      if (score >= 62 && (!best || score > best.score || (score === best.score && candidateDistance < bestDistance))) {
+        best = {
+          order,
+          score,
+          reason: exactAsin
+            ? `Exact Amazon ASIN matches the listing source${addressMatches ? "; delivery address also matches" : recipientMatches ? "; shipping recipient also matches" : ""}`
+            : `Amazon delivery item name matches the eBay order title${addressMatches ? "; delivery address also matches" : recipientMatches ? "; shipping recipient also matches" : ""}`,
+        };
+      }
     }
     if (!best) continue;
     const status = item.purchase.status === "DELIVERED" ? "DELIVERED" : item.purchase.status === "SHIPPED" ? "SHIPPED" : "PURCHASED";
@@ -119,12 +137,14 @@ export async function syncAmazonPurchaseEmails(userId: string): Promise<{ examin
       };
     });
     if (!prior) {
-      await db.amazonPurchase.create({ data: { userId, sourceMessageId: id, amazonOrderId: parsed.amazonOrderId, purchasedAt: parsed.purchasedAt, status: parsed.status, subtotalCents: parsed.subtotalCents, shippingCents: parsed.shippingCents, taxCents: parsed.taxCents, discountCents: parsed.discountCents, totalCents: parsed.totalCents, trackingNumber: parsed.trackingNumber, carrier: parsed.carrier, trackingUrl: parsed.trackingUrl, trackingResolvedAt: parsed.trackingNumber ? new Date() : null, trackingAsinsJson: JSON.stringify(parsed.items.flatMap((item) => item.asin ? [item.asin] : [])), items: { create: itemData } } });
+      await db.amazonPurchase.create({ data: { userId, sourceMessageId: id, amazonOrderId: parsed.amazonOrderId, purchasedAt: parsed.purchasedAt, recipientName: parsed.recipientName, deliveryAddressFingerprint: deliveryAddressFingerprint(parsed.deliveryAddressLine1, parsed.deliveryPostalCode), status: parsed.status, subtotalCents: parsed.subtotalCents, shippingCents: parsed.shippingCents, taxCents: parsed.taxCents, discountCents: parsed.discountCents, totalCents: parsed.totalCents, trackingNumber: parsed.trackingNumber, carrier: parsed.carrier, trackingUrl: parsed.trackingUrl, trackingResolvedAt: parsed.trackingNumber ? new Date() : null, trackingAsinsJson: JSON.stringify(parsed.items.flatMap((item) => item.asin ? [item.asin] : [])), items: { create: itemData } } });
     } else {
       const status = rank[parsed.status] > rank[prior.status as keyof typeof rank] ? parsed.status : prior.status;
       await db.amazonPurchase.update({ where: { id: prior.id }, data: {
         status,
         purchasedAt: prior.purchasedAt ?? parsed.purchasedAt,
+        recipientName: parsed.recipientName ?? prior.recipientName,
+        deliveryAddressFingerprint: deliveryAddressFingerprint(parsed.deliveryAddressLine1, parsed.deliveryPostalCode) ?? prior.deliveryAddressFingerprint,
         subtotalCents: prior.subtotalCents ?? parsed.subtotalCents,
         shippingCents: prior.shippingCents || parsed.shippingCents,
         taxCents: prior.taxCents || parsed.taxCents,
@@ -147,6 +167,8 @@ export async function syncAmazonPurchaseEmails(userId: string): Promise<{ examin
           ?? (prior.items.length === 1 && itemData.length === 1 ? prior.items[0] : null);
         if (!existing) continue;
         await db.amazonPurchaseItem.update({ where: { id: existing.id }, data: {
+          title: item.title || existing.title,
+          quantity: item.quantity || existing.quantity,
           unitPriceCents: existing.unitPriceCents ?? item.unitPriceCents,
           lineTotalCents: existing.lineTotalCents ?? item.lineTotalCents,
           allocatedShippingCents: existing.allocatedShippingCents || item.allocatedShippingCents,

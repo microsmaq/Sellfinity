@@ -31,6 +31,9 @@ export type RemoteOrder = {
    * to the local fee model when absent (the sandbox client omits it). */
   feeCents?: number;
   buyerUsername: string;
+  shippingRecipientName?: string | null;
+  shippingAddressLine1?: string | null;
+  shippingPostalCode?: string | null;
   saleDate: Date;
 };
 
@@ -51,6 +54,9 @@ export type RemoteFulfillmentOrder = {
   orderId: string;
   createdAt: Date;
   buyerUsername: string;
+  shippingRecipientName?: string | null;
+  shippingAddressLine1?: string | null;
+  shippingPostalCode?: string | null;
   paymentStatus: string;
   fulfillmentStatus: "NOT_STARTED" | "IN_PROGRESS";
   lines: RemoteFulfillmentLine[];

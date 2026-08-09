@@ -1,6 +1,6 @@
 export type ParsedAmazonItem = { asin: string | null; title: string; quantity: number; unitPriceCents: number | null; amazonUrl: string | null };
 export type ParsedAmazonEmail = {
-  amazonOrderId: string; purchasedAt: Date | null; status: "ORDERED" | "SHIPPED" | "DELIVERED" | "CANCELLED";
+  amazonOrderId: string; purchasedAt: Date | null; recipientName: string | null; deliveryAddressLine1: string | null; deliveryPostalCode: string | null; status: "ORDERED" | "SHIPPED" | "DELIVERED" | "CANCELLED";
   subtotalCents: number | null; shippingCents: number; taxCents: number; discountCents: number; totalCents: number | null;
   trackingNumber: string | null; carrier: string | null; trackingUrl: string | null; items: ParsedAmazonItem[];
 };
@@ -39,6 +39,61 @@ function amazonTrackingUrl(html: string): string | null {
   return null;
 }
 
+function amazonHref(value: string): boolean {
+  try {
+    const parsed = new URL(value);
+    return /(^|\.)amazon\.(?:com|ca|co\.uk)$/i.test(parsed.hostname);
+  } catch {
+    return value.startsWith("/");
+  }
+}
+
+function asinFromHref(value: string): string | null {
+  let decoded = value;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const asin = decoded.match(/(?:\/dp\/|\/gp\/product\/)([A-Z0-9]{10})/i)?.[1];
+    if (asin) return asin.toUpperCase();
+    try {
+      const next = decodeURIComponent(decoded);
+      if (next === decoded) break;
+      decoded = next;
+    } catch {
+      break;
+    }
+  }
+  return null;
+}
+
+function recipientName(text: string): string | null {
+  const patterns = [
+    /(?:ship(?:ping)?|deliver(?:ing|ed)?)\s+to\s*:?\s*(?:\r?\n\s*)?([^\r\n|]{2,80})/i,
+    /(?:recipient|addressee)\s*:\s*([^\r\n|]{2,80})/i,
+  ];
+  for (const pattern of patterns) {
+    const candidate = text.match(pattern)?.[1]
+      ?.replace(/\s{2,}/g, " ")
+      .replace(/\s+(?:order|address|estimated delivery).*$/i, "")
+      .trim();
+    if (candidate && /^[\p{L}][\p{L}\p{M}.'’ -]{1,79}$/u.test(candidate)) return candidate;
+  }
+  return null;
+}
+
+function deliveryAddress(text: string): { line1: string | null; postalCode: string | null } {
+  const block = text.match(/(?:ship(?:ping)?|deliver(?:ing|ed)?)\s+to\s*:?\s*(?:\r?\n\s*)?([\s\S]{0,300})/i)?.[1];
+  if (!block) return { line1: null, postalCode: null };
+  const lines = block
+    .split(/\r?\n/)
+    .map((line) => line.replace(/\s{2,}/g, " ").trim())
+    .filter(Boolean)
+    .slice(0, 6);
+  // The first line is normally the recipient. Find the first subsequent line
+  // beginning with a house number, PO box, or rural-route marker.
+  const line1 = lines.slice(1).find((line) => /^(?:\d+[a-z]?\s|p\.?\s*o\.?\s+box\s|rr\s+\d)/i.test(line)) ?? null;
+  const postalCode = block.match(/\b(\d{5}(?:-\d{4})?)\b/)?.[1] ?? null;
+  return { line1, postalCode };
+}
+
 export function parseAmazonEmail(input: { subject: string; html?: string; text?: string; sentAt?: Date | null }): ParsedAmazonEmail | null {
   const html = input.html || "";
   const text = `${input.subject}\n${input.text || ""}\n${textFromHtml(html)}`;
@@ -49,16 +104,19 @@ export function parseAmazonEmail(input: { subject: string; html?: string; text?:
   const itemMap = new Map<string, ParsedAmazonItem>();
   const anchor = /<a\b[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi;
   for (const match of html.matchAll(anchor)) {
-    let href = decodeEntities(match[1]);
-    try { href = decodeURIComponent(href); } catch { /* Keep the original URL. */ }
-    const asin = href.match(/(?:\/dp\/|\/gp\/product\/)([A-Z0-9]{10})/i)?.[1]?.toUpperCase();
-    if (!asin) continue;
+    const href = decodeEntities(match[1]).trim();
+    const asin = asinFromHref(href);
     const title = (textFromHtml(match[2]).trim() || match[2].match(/\balt=["']([^"']+)["']/i)?.[1] || "").trim();
-    if (title.length < 3 || /amazon|view order|track package/i.test(title)) continue;
+    if (title.length < 8 || /amazon|view (?:your )?order|your orders|track (?:your )?package|order details|shop now|buy again/i.test(title)) continue;
+    // Amazon's newer mail templates wrap product names in signed /gp/r.html
+    // links. Those links often contain no visible ASIN, but the item name is
+    // still useful and is intentionally retained for eBay-title matching.
+    if (!asin && (!amazonHref(href) || !/\/gp\/r\.html|\/gp\/f\.html|\/hz\//i.test(href))) continue;
     const nearby = textFromHtml(html.slice(match.index || 0, (match.index || 0) + 800));
     const price = cents(nearby.match(/\$([0-9,]+(?:\.[0-9]{2})?)/)?.[1]);
     const quantity = Number(nearby.match(/(?:Qty|Quantity)\s*:?\s*(\d+)/i)?.[1] || 1);
-    itemMap.set(asin, { asin, title: title.slice(0, 500), quantity, unitPriceCents: price, amazonUrl: `https://www.amazon.com/dp/${asin}` });
+    const key = asin ?? `title:${title.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim()}`;
+    itemMap.set(key, { asin, title: title.slice(0, 500), quantity, unitPriceCents: price, amazonUrl: asin ? `https://www.amazon.com/dp/${asin}` : null });
   }
   const subtotal = amount(text, ["Item\\(s\\) Subtotal", "Subtotal"]);
   const shipping = amount(text, ["Shipping & Handling", "Shipping"]) ?? 0;
@@ -68,5 +126,6 @@ export function parseAmazonEmail(input: { subject: string; html?: string; text?:
   const tracking = text.match(/(?:tracking(?: number| #)?|tracking id)\s*:?\s*([A-Z0-9-]{8,30})/i)?.[1] ?? null;
   const carrier = text.match(/(?:shipped via|carrier)\s*:?[ ]*(UPS|USPS|FedEx|Amazon Logistics)/i)?.[1] ?? null;
   const trackingUrl = amazonTrackingUrl(html);
-  return { amazonOrderId: orderId, purchasedAt: input.sentAt ?? null, status, subtotalCents: subtotal, shippingCents: shipping, taxCents: tax, discountCents: discount, totalCents: total, trackingNumber: tracking, carrier, trackingUrl, items: [...itemMap.values()] };
+  const address = deliveryAddress(text);
+  return { amazonOrderId: orderId, purchasedAt: input.sentAt ?? null, recipientName: recipientName(text), deliveryAddressLine1: address.line1, deliveryPostalCode: address.postalCode, status, subtotalCents: subtotal, shippingCents: shipping, taxCents: tax, discountCents: discount, totalCents: total, trackingNumber: tracking, carrier, trackingUrl, items: [...itemMap.values()] };
 }

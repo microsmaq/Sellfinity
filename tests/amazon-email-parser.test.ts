@@ -34,6 +34,29 @@ describe("Amazon purchase email parser", () => {
     expect(parsed?.trackingUrl).toBe("https://www.amazon.com/gp/your-account/ship-track?orderId=111-2222222-3333333");
   });
 
+  it("retains an Amazon delivery item name from a signed redirect without an ASIN", () => {
+    const parsed = parseAmazonEmail({
+      subject: "Delivered: your Amazon.com order",
+      html: `Order 111-2222222-3333333
+        <a href="https://www.amazon.com/gp/r.html?C=signed-delivery-link">Adjustable Laptop Stand Aluminum Ergonomic Riser</a>`,
+    });
+    expect(parsed?.status).toBe("DELIVERED");
+    expect(parsed?.items[0]).toMatchObject({
+      asin: null,
+      title: "Adjustable Laptop Stand Aluminum Ergonomic Riser",
+    });
+  });
+
+  it("extracts the Amazon shipping recipient", () => {
+    const parsed = parseAmazonEmail({
+      subject: "Your Amazon.com order #111-2222222-3333333",
+      text: "Order 111-2222222-3333333\nShip to:\nMaria D. Santos\n123 Main Street Apt 4\nLos Angeles, CA 90001\nOrder Total: $24.99",
+    });
+    expect(parsed?.recipientName).toBe("Maria D. Santos");
+    expect(parsed?.deliveryAddressLine1).toBe("123 Main Street Apt 4");
+    expect(parsed?.deliveryPostalCode).toBe("90001");
+  });
+
   it("ignores non-order messages", () => {
     expect(parseAmazonEmail({ subject: "Amazon recommendations", text: "Products you may like" })).toBeNull();
   });

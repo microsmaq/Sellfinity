@@ -623,6 +623,7 @@ ${innerXml}
       orderId?: string;
       creationDate?: string;
       buyer?: { username?: string };
+      fulfillmentStartInstructions?: { shippingStep?: { shipTo?: { fullName?: string; contactAddress?: { addressLine1?: string; postalCode?: string } } } }[];
       orderPaymentStatus?: string;
       orderFulfillmentStatus?: string;
       cancelStatus?: { cancelState?: string };
@@ -679,6 +680,15 @@ ${innerXml}
           orderId: order.orderId,
           createdAt: new Date(order.creationDate),
           buyerUsername: order.buyer?.username ?? "eBay buyer",
+          shippingRecipientName: order.fulfillmentStartInstructions
+            ?.map((instruction) => instruction.shippingStep?.shipTo?.fullName?.trim())
+            .find(Boolean) ?? null,
+          shippingAddressLine1: order.fulfillmentStartInstructions
+            ?.map((instruction) => instruction.shippingStep?.shipTo?.contactAddress?.addressLine1?.trim())
+            .find(Boolean) ?? null,
+          shippingPostalCode: order.fulfillmentStartInstructions
+            ?.map((instruction) => instruction.shippingStep?.shipTo?.contactAddress?.postalCode?.trim())
+            .find(Boolean) ?? null,
           paymentStatus: order.orderPaymentStatus ?? "PAID",
           fulfillmentStatus,
           lines,
@@ -708,6 +718,7 @@ ${innerXml}
       orderId: string;
       creationDate: string;
       buyer?: { username?: string };
+      fulfillmentStartInstructions?: { shippingStep?: { shipTo?: { fullName?: string; contactAddress?: { addressLine1?: string; postalCode?: string } } } }[];
       lineItems?: {
         lineItemId: string;
         legacyItemId?: string;
@@ -737,6 +748,15 @@ ${innerXml}
               parseFloat(item.deliveryCost?.shippingCost?.value ?? "0") * 100,
             ),
             buyerUsername: order.buyer?.username ?? "unknown",
+            shippingRecipientName: order.fulfillmentStartInstructions
+              ?.map((instruction) => instruction.shippingStep?.shipTo?.fullName?.trim())
+              .find(Boolean) ?? null,
+            shippingAddressLine1: order.fulfillmentStartInstructions
+              ?.map((instruction) => instruction.shippingStep?.shipTo?.contactAddress?.addressLine1?.trim())
+              .find(Boolean) ?? null,
+            shippingPostalCode: order.fulfillmentStartInstructions
+              ?.map((instruction) => instruction.shippingStep?.shipTo?.contactAddress?.postalCode?.trim())
+              .find(Boolean) ?? null,
             saleDate: new Date(order.creationDate),
           });
         }

@@ -89,6 +89,8 @@ model AmazonPurchase {
   amazonOrderId      String
   sourceMessageId    String
   purchasedAt        DateTime?
+  recipientName      String?
+  deliveryAddressFingerprint String?
   status             String    @default("ORDERED")
   subtotalCents      Int?
   shippingCents      Int       @default(0)
@@ -415,6 +417,8 @@ model Order {
   // PAID | SHIPPED | REFUNDED
   status               String   @default("PAID")
   buyerUsername        String
+  shippingRecipientName String?
+  shippingAddressFingerprint String?
   saleDate             DateTime
   createdAt            DateTime @default(now())
 
