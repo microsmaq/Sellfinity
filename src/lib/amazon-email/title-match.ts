@@ -61,3 +61,41 @@ export function fulfillmentNamesMatch(ebayRecipient: string, amazonRecipient: st
   return ebay.every((token) => amazon.has(token))
     || [...amazon].every((token) => new Set(ebay).has(token));
 }
+
+export type FulfillmentIdentityEvidence = {
+  compatible: boolean;
+  strength: number;
+  addressMatches: boolean;
+  recipientMatches: boolean;
+};
+
+/**
+ * Delivery identity outranks product identity when repeated ASINs exist:
+ * address match (2) > recipient-only match (1) > unavailable identity (0).
+ * Known conflicts fail closed, except that an exact address may legitimately
+ * use another member of the same household as the named recipient.
+ */
+export function fulfillmentIdentityEvidence(input: {
+  ebayRecipientName?: string | null;
+  amazonRecipientName?: string | null;
+  ebayAddressFingerprint?: string | null;
+  amazonAddressFingerprint?: string | null;
+}): FulfillmentIdentityEvidence {
+  const hasBothAddresses = !!input.ebayAddressFingerprint && !!input.amazonAddressFingerprint;
+  const addressMatches = hasBothAddresses
+    ? input.ebayAddressFingerprint === input.amazonAddressFingerprint
+    : false;
+  const hasBothNames = !!input.ebayRecipientName && !!input.amazonRecipientName;
+  const recipientMatches = hasBothNames
+    ? fulfillmentNamesMatch(input.ebayRecipientName!, input.amazonRecipientName!)
+    : false;
+
+  const compatible = !(hasBothAddresses && !addressMatches)
+    && !(hasBothNames && !recipientMatches && !addressMatches);
+  return {
+    compatible,
+    strength: (addressMatches ? 2 : 0) + (recipientMatches ? 1 : 0),
+    addressMatches,
+    recipientMatches,
+  };
+}

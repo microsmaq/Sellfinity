@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { fulfillmentNamesMatch, fulfillmentTitleSimilarity } from "@/lib/amazon-email/title-match";
+import { fulfillmentIdentityEvidence, fulfillmentNamesMatch, fulfillmentTitleSimilarity } from "@/lib/amazon-email/title-match";
 
 describe("Amazon delivery to eBay order title matching", () => {
   it("matches a concise eBay title to a longer Amazon delivery item name", () => {
@@ -34,5 +34,42 @@ describe("Amazon and eBay recipient matching", () => {
 
   it("rejects different recipients", () => {
     expect(fulfillmentNamesMatch("Maria Santos", "John Peterson")).toBe(false);
+  });
+});
+
+describe("repeated-ASIN delivery identity priority", () => {
+  it("ranks a delivery address match above a recipient-only match", () => {
+    const address = fulfillmentIdentityEvidence({
+      ebayRecipientName: "Household Member",
+      amazonRecipientName: "Maria Santos",
+      ebayAddressFingerprint: "same-address",
+      amazonAddressFingerprint: "same-address",
+    });
+    const recipient = fulfillmentIdentityEvidence({
+      ebayRecipientName: "Maria Santos",
+      amazonRecipientName: "Maria D. Santos",
+    });
+    expect(address.compatible).toBe(true);
+    expect(address.strength).toBeGreaterThan(recipient.strength);
+  });
+
+  it("rejects a known delivery-address conflict even when names match", () => {
+    const evidence = fulfillmentIdentityEvidence({
+      ebayRecipientName: "Maria Santos",
+      amazonRecipientName: "Maria Santos",
+      ebayAddressFingerprint: "address-one",
+      amazonAddressFingerprint: "address-two",
+    });
+    expect(evidence.compatible).toBe(false);
+  });
+
+  it("ranks both address and recipient agreement highest", () => {
+    const evidence = fulfillmentIdentityEvidence({
+      ebayRecipientName: "Maria Santos",
+      amazonRecipientName: "Maria D. Santos",
+      ebayAddressFingerprint: "same-address",
+      amazonAddressFingerprint: "same-address",
+    });
+    expect(evidence).toMatchObject({ compatible: true, strength: 3, addressMatches: true, recipientMatches: true });
   });
 });

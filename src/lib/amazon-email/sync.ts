@@ -4,7 +4,7 @@ import { decryptToken, encryptToken } from "./crypto";
 import { googleEmailConfig } from "./oauth";
 import { parseAmazonEmail } from "./parser";
 import { resolveMissingAmazonTracking, type TrackingResolutionResult } from "./tracking-resolver";
-import { fulfillmentNamesMatch, fulfillmentTitleSimilarity } from "./title-match";
+import { fulfillmentIdentityEvidence, fulfillmentTitleSimilarity } from "./title-match";
 import { deliveryAddressFingerprint } from "./address-match";
 
 type GmailPart = { mimeType?: string; body?: { data?: string }; parts?: GmailPart[] };
@@ -53,24 +53,28 @@ async function reconcile(userId: string): Promise<number> {
     db.order.findMany({ where: { userId, amazonPurchaseItem: null }, include: { listing: { include: { product: true } } }, orderBy: { saleDate: "desc" } }),
   ]);
   let matched = 0;
-  for (const item of items) {
-    let best: { order: typeof orders[number]; score: number; reason: string } | null = null;
+  // Records containing delivery identity must claim their order before a
+  // same-ASIN record whose email did not expose a recipient or address.
+  const prioritizedItems = [...items].sort((left, right) => {
+    const identityCount = (item: typeof items[number]) =>
+      (item.purchase.deliveryAddressFingerprint ? 2 : 0) + (item.purchase.recipientName ? 1 : 0);
+    const evidenceDifference = identityCount(right) - identityCount(left);
+    if (evidenceDifference) return evidenceDifference;
+    return (left.purchase.purchasedAt?.getTime() ?? 0) - (right.purchase.purchasedAt?.getTime() ?? 0);
+  });
+  for (const item of prioritizedItems) {
+    let best: { order: typeof orders[number]; score: number; identityStrength: number; reason: string } | null = null;
     for (const order of orders) {
       if (item.purchase.purchasedAt && item.purchase.purchasedAt < new Date(order.saleDate.getTime() - 3 * 86_400_000)) continue;
       const exactAsin = !!item.asin && item.asin.toUpperCase() === order.listing.product.sku.toUpperCase();
       const titleScore = fulfillmentTitleSimilarity(order.listing.title, item.title);
-      const hasBothRecipientNames = !!order.shippingRecipientName && !!item.purchase.recipientName;
-      const recipientMatches = hasBothRecipientNames
-        ? fulfillmentNamesMatch(order.shippingRecipientName!, item.purchase.recipientName!)
-        : false;
-      const hasBothAddresses = !!order.shippingAddressFingerprint && !!item.purchase.deliveryAddressFingerprint;
-      const addressMatches = hasBothAddresses
-        ? order.shippingAddressFingerprint === item.purchase.deliveryAddressFingerprint
-        : false;
-      // A known address conflict fails closed. A matching delivery address can
-      // safely override a household/recipient-name variation.
-      if (hasBothAddresses && !addressMatches) continue;
-      if (hasBothRecipientNames && !recipientMatches && !addressMatches) continue;
+      const identity = fulfillmentIdentityEvidence({
+        ebayRecipientName: order.shippingRecipientName,
+        amazonRecipientName: item.purchase.recipientName,
+        ebayAddressFingerprint: order.shippingAddressFingerprint,
+        amazonAddressFingerprint: item.purchase.deliveryAddressFingerprint,
+      });
+      if (!identity.compatible) continue;
       const score = exactAsin ? 100 : titleScore;
       const candidateDistance = item.purchase.purchasedAt
         ? Math.abs(item.purchase.purchasedAt.getTime() - order.saleDate.getTime())
@@ -78,13 +82,18 @@ async function reconcile(userId: string): Promise<number> {
       const bestDistance = best && item.purchase.purchasedAt
         ? Math.abs(item.purchase.purchasedAt.getTime() - best.order.saleDate.getTime())
         : Number.MAX_SAFE_INTEGER;
-      if (score >= 62 && (!best || score > best.score || (score === best.score && candidateDistance < bestDistance))) {
+      const isBetter = !best
+        || identity.strength > best.identityStrength
+        || (identity.strength === best.identityStrength && score > best.score)
+        || (identity.strength === best.identityStrength && score === best.score && candidateDistance < bestDistance);
+      if (score >= 62 && isBetter) {
         best = {
           order,
           score,
+          identityStrength: identity.strength,
           reason: exactAsin
-            ? `Exact Amazon ASIN matches the listing source${addressMatches ? "; delivery address also matches" : recipientMatches ? "; shipping recipient also matches" : ""}`
-            : `Amazon delivery item name matches the eBay order title${addressMatches ? "; delivery address also matches" : recipientMatches ? "; shipping recipient also matches" : ""}`,
+            ? `Exact Amazon ASIN matches the listing source${identity.addressMatches ? "; delivery address takes priority" : identity.recipientMatches ? "; shipping recipient takes priority" : ""}`
+            : `Amazon delivery item name matches the eBay order title${identity.addressMatches ? "; delivery address takes priority" : identity.recipientMatches ? "; shipping recipient takes priority" : ""}`,
         };
       }
     }
