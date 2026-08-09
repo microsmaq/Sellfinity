@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { buildEbayRows, type LocalListingFacts } from "@/lib/listings/ebay-rows";
 import type { RemoteListing } from "@/lib/ebay/client";
+import { discountedEbayPriceCents } from "@/lib/fees";
 
 function remote(id: string, priceCents = 2000): RemoteListing {
   return {
@@ -128,5 +129,14 @@ describe("buildEbayRows", () => {
     const ok = rows.find((r) => r.ebayListingId === "ok")!;
     expect(ok.match!.profitCents).toBeGreaterThan(0);
     expect(ok.match!.unavailable).toBe(false);
+  });
+
+  it("uses the sitewide discount for live profit and suggested list price", () => {
+    const normal = buildEbayRows([remote("1", 3_000)], [local("1")])[0];
+    const discounted = buildEbayRows([remote("1", 3_000)], [local("1")], new Set(), new Map(), 500)[0];
+    expect(discounted.match!.profitCents).toBeLessThan(normal.match!.profitCents);
+    expect(discounted.suggestedPriceCents!).toBeGreaterThan(normal.suggestedPriceCents!);
+    expect(discountedEbayPriceCents(discounted.suggestedPriceCents!, 500))
+      .toBe(normal.suggestedPriceCents);
   });
 });

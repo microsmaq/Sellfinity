@@ -178,7 +178,12 @@ function ListingMarketRow({
   onUpdateDone: (result: BulkResult) => void;
 }) {
   const landedCostCents = row.costCents + row.shippingCostCents;
-  const margin = estimateMargin(row.priceCents, row.costCents, row.shippingCostCents);
+  const margin = estimateMargin(
+    row.priceCents,
+    row.costCents,
+    row.shippingCostCents,
+    sitewideDiscountBps,
+  );
   const competitiveness = assessPriceCompetitiveness(
     row.priceCents,
     row.priceCents,

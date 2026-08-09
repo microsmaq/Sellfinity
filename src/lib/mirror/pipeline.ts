@@ -12,6 +12,7 @@ import { generateMirrorDescription, generateSourceTitle } from "./seo";
 import { LISTING_QUANTITY_CAP } from "@/lib/listings/generate";
 import { suggestPriceCents } from "@/lib/sourcing/scoring";
 import { serializeImageUrls } from "@/lib/types";
+import { grossUpEbayPriceCents } from "@/lib/fees";
 import { improveMainListingImage } from "./improve-main-image";
 import { improveListingContent } from "./improve-listing-content";
 
@@ -104,12 +105,17 @@ export async function mirrorUrl(
     return { url, ok: false, error: `Already imported (SKU ${scraped.sourceId}).` };
   }
 
+  const user = await db.user.findUnique({
+    where: { id: userId },
+    select: { ebaySitewideDiscountBps: true },
+  });
+  const sitewideDiscountBps = user?.ebaySitewideDiscountBps ?? 0;
   const priceCents =
     opts.sourceMarkupPct !== undefined
-      ? sourceMarkupPriceCents(
+      ? grossUpEbayPriceCents(sourceMarkupPriceCents(
           scraped.priceCents + scraped.shippingCostCents,
           opts.sourceMarkupPct,
-        )
+        ), sitewideDiscountBps)
       : suggestPriceCents({
           marketPriceCents:
             opts.marketPriceCents ??
@@ -118,7 +124,7 @@ export async function mirrorUrl(
             ),
           costCents: scraped.priceCents,
           shippingCostCents: scraped.shippingCostCents,
-        });
+        }, sitewideDiscountBps);
   const supplierStock = scraped.inStock ? NOMINAL_IN_STOCK : 0;
 
   const contentImprovement = opts.improveListingContent

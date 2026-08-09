@@ -1,4 +1,4 @@
-import { EBAY_FINAL_VALUE_RATE, EBAY_PER_ORDER_FEE_CENTS } from "@/lib/fees";
+import { discountedEbayPriceCents, EBAY_FINAL_VALUE_RATE, EBAY_PER_ORDER_FEE_CENTS } from "@/lib/fees";
 
 export const VERIFIED_MARGIN_TARGET_BPS = 500;
 export const VERIFIED_PROFIT_TARGET_CENTS = 700;
@@ -13,8 +13,7 @@ export type VerifiedProfitDecision =
   | { action: "reprice"; realizedProfitCents: number; realizedMarginBps: number; targetPriceCents: number };
 
 export function discountedSalePriceCents(listPriceCents: number, discountBps: number): number {
-  const safeDiscountBps = Math.max(0, Math.min(9_000, Math.round(discountBps)));
-  return Math.floor((listPriceCents * (10_000 - safeDiscountBps)) / 10_000);
+  return discountedEbayPriceCents(listPriceCents, discountBps);
 }
 
 function futureProfitCents(listPriceCents: number, unitCostCents: number, variableFeeBps: number, discountBps: number): number {

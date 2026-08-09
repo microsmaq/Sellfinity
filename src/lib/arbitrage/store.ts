@@ -211,10 +211,17 @@ export async function listArbitragePage(
   userId: string,
   params: ArbitragePageParams,
 ): Promise<ArbitragePage> {
-  const hiddenRows = await db.hiddenArbitrageItem.findMany({
-    where: { userId },
-    select: { ebayItemId: true },
-  });
+  const [hiddenRows, user] = await Promise.all([
+    db.hiddenArbitrageItem.findMany({
+      where: { userId },
+      select: { ebayItemId: true },
+    }),
+    db.user.findUnique({
+      where: { id: userId },
+      select: { ebaySitewideDiscountBps: true },
+    }),
+  ]);
+  const sitewideDiscountBps = user?.ebaySitewideDiscountBps ?? 0;
   const ownedProducts = params.unlistedOnly
     ? await db.product.findMany({
         where: { userId },
@@ -404,11 +411,13 @@ export async function listArbitragePage(
         i.ebayRecommendedPriceCents,
         i.averageCompetitorPriceCents ?? i.ebayPriceCents ?? 0,
         i.amazonShippingCents,
+        sitewideDiscountBps,
       );
       const currentMargin = estimateMargin(
         suggestedPrice,
         i.amazonPriceCents,
         i.amazonShippingCents,
+        sitewideDiscountBps,
       );
       return {
         asin: i.asin,

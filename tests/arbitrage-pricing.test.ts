@@ -3,7 +3,7 @@ import {
   arbitrageMarketAnchorCents,
   arbitrageSuggestedPriceCents,
 } from "@/lib/arbitrage/pricing";
-import { estimateMargin } from "@/lib/fees";
+import { discountedEbayPriceCents, estimateMargin } from "@/lib/fees";
 
 describe("arbitrage market pricing", () => {
   it("uses the lowest matched, average, or recommended eBay price", () => {
@@ -67,5 +67,12 @@ describe("arbitrage market pricing", () => {
         expect(margin.marginPct).toBeGreaterThanOrEqual(15);
       }
     }
+  });
+
+  it("grosses up seller suggestions so the discounted buyer price stays competitive", () => {
+    const base = arbitrageSuggestedPriceCents(1_000, 2_000, 1_900, 2_100, 0);
+    const discounted = arbitrageSuggestedPriceCents(1_000, 2_000, 1_900, 2_100, 0, 500);
+    expect(discounted).toBeGreaterThan(base);
+    expect(discountedEbayPriceCents(discounted, 500)).toBe(base);
   });
 });

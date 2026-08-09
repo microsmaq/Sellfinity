@@ -14,7 +14,7 @@ import {
   AI_TARGET_MARGIN,
   trueProfitCents,
 } from "@/lib/listings/cleanup";
-import { EBAY_FINAL_VALUE_RATE, EBAY_PER_ORDER_FEE_CENTS } from "@/lib/fees";
+import { discountedEbayPriceCents, EBAY_FINAL_VALUE_RATE, EBAY_PER_ORDER_FEE_CENTS } from "@/lib/fees";
 
 describe("trueProfitCents", () => {
   it("subtracts FVF, ad rate, per-order fee, cost, and shipping", () => {
@@ -69,6 +69,14 @@ describe("targetPriceCents", () => {
 
   it("accounts for shipping cost", () => {
     expect(targetPriceCents(1000, 500)).toBeGreaterThan(targetPriceCents(1000, 0));
+  });
+
+  it("raises the list price enough to preserve the target after a sitewide discount", () => {
+    const discountedTarget = targetPriceCents(1_000, 0, 500);
+    expect(discountedTarget).toBeGreaterThan(targetPriceCents(1_000, 0));
+    const buyerPrice = discountedEbayPriceCents(discountedTarget, 500);
+    const profit = trueProfitCents(discountedTarget, 1_000, 0, 500);
+    expect(profit / buyerPrice >= TARGET_MARGIN - 0.005 || profit >= TARGET_PROFIT_CENTS).toBe(true);
   });
 });
 
@@ -158,5 +166,11 @@ describe("aiSuggestedListingPriceCents", () => {
     expect(trueProfitCents(suggested, 5000, 0)).toBeLessThanOrEqual(700);
     expect(trueProfitCents(suggested, 5000, 0)).toBeGreaterThanOrEqual(699);
     expect(suggested).toBeLessThan(7316);
+  });
+
+  it("grosses up the list price while preserving the intended buyer price", () => {
+    const base = aiSuggestedListingPriceCents(2_000, 0, 3_999, 4_299);
+    const discounted = aiSuggestedListingPriceCents(2_000, 0, 3_999, 4_299, 500);
+    expect(discountedEbayPriceCents(discounted, 500)).toBe(base);
   });
 });

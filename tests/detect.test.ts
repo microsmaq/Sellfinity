@@ -91,4 +91,11 @@ describe("detectIssues", () => {
     const types = issues.map((i) => i.type).sort();
     expect(types).toEqual(["COST_RISE", "STOCK_DRIFT"]);
   });
+
+  it("detects a loss caused by the seller sitewide discount", () => {
+    const state = { stock: 100, costCents: 1_400 };
+    expect(detectIssues(healthyListing, product, state)).toEqual([]);
+    const discountedIssues = detectIssues(healthyListing, product, state, 500);
+    expect(discountedIssues.map((issue) => issue.type)).toContain("COST_RISE");
+  });
 });

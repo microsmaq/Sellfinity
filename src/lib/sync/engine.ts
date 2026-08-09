@@ -63,10 +63,14 @@ export async function runSync(
     provider: getSupplierProvider(),
     ebay: await getEbayClientForUser(userId),
   };
-  const listings = await db.listing.findMany({
-    where: { userId, status: "ACTIVE" },
-    include: { product: true },
-  });
+  const [listings, user] = await Promise.all([
+    db.listing.findMany({
+      where: { userId, status: "ACTIVE" },
+      include: { product: true },
+    }),
+    db.user.findUnique({ where: { id: userId }, select: { ebaySitewideDiscountBps: true } }),
+  ]);
+  const sitewideDiscountBps = user?.ebaySitewideDiscountBps ?? 0;
 
   const run = await db.syncRun.create({ data: { userId } });
   let issuesFound = 0;
@@ -93,6 +97,7 @@ export async function runSync(
       { priceCents: listing.priceCents, quantity: listing.quantity },
       { shippingCostCents: listing.product.shippingCostCents },
       state,
+      sitewideDiscountBps,
     );
 
     const types = new Set(detected.map((d) => d.type));
@@ -186,10 +191,15 @@ export async function fixIssue(
   if (!issue) return "Issue not found or already resolved";
 
   const state = await deps.provider.getProductState(issue.listing.product.supplierProductId);
+  const user = await db.user.findUnique({
+    where: { id: userId },
+    select: { ebaySitewideDiscountBps: true },
+  });
   const detected = detectIssues(
     { priceCents: issue.listing.priceCents, quantity: issue.listing.quantity },
     { shippingCostCents: issue.listing.product.shippingCostCents },
     state,
+    user?.ebaySitewideDiscountBps ?? 0,
   );
   const current = detected.find((d) => d.type === issue.type);
 

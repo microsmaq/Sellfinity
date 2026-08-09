@@ -28,7 +28,7 @@ export default async function MirrorPage({
     <>
       <PageHeader
         title="Amazon mirroring"
-        subtitle="Publish Amazon products directly to eBay in tracked batches with SEO content and a 30% source-price markup."
+        subtitle={`Publish Amazon products directly to eBay in tracked batches with SEO content and a 30% source-price markup${user.ebaySitewideDiscountBps > 0 ? ` after your ${(user.ebaySitewideDiscountBps / 100).toFixed(2).replace(/\.00$/, "")}% sitewide discount` : ""}.`}
         actions={
           <Badge tone={ebayConnected ? "green" : "amber"}>
             {ebayConnected ? "eBay connected" : "eBay not connected"}
@@ -36,7 +36,7 @@ export default async function MirrorPage({
         }
       />
       <div className="space-y-6">
-        <MirrorForm ebayConnected={ebayConnected} />
+        <MirrorForm ebayConnected={ebayConnected} sitewideDiscountBps={user.ebaySitewideDiscountBps} />
         <BatchHistory history={history} />
       </div>
     </>

@@ -25,6 +25,7 @@ import { PremiumProgress, type PremiumProgressStatus } from "@/components/premiu
 import { downloadBase64File } from "@/lib/download";
 import { listingNeedsAttention } from "@/lib/listings/attention";
 import { assessListingHealth } from "@/lib/listings/health";
+import { discountedEbayPriceCents } from "@/lib/fees";
 
 export type EbayRow = {
   ebayListingId: string;
@@ -89,8 +90,8 @@ type ListingSortKey =
 
 const PRICE_CLEANUP_BATCH_SIZE = 4;
 
-function competitiveHealthSortValue(row: EbayRow): number {
-  const health = assessListingHealth(row);
+function competitiveHealthSortValue(row: EbayRow, sitewideDiscountBps = 0): number {
+  const health = assessListingHealth(row, sitewideDiscountBps);
   const rank = {
     SOURCE_ISSUE: 1,
     UNPROFITABLE: 2,
@@ -106,15 +107,17 @@ function competitiveHealthSortValue(row: EbayRow): number {
   return rank * 1_000_000 + qualityWithinStatus;
 }
 
-function currentProfit(row: EbayRow): { profitCents: number; marginPct: number } | null {
+function currentProfit(row: EbayRow, sitewideDiscountBps = 0): { profitCents: number; marginPct: number } | null {
   if (!row.match) return null;
   const profitCents = trueProfitCents(
     row.priceCents,
     row.match.amazonPriceCents,
     row.match.shippingCostCents,
+    sitewideDiscountBps,
   );
-  const marginPct = row.priceCents > 0
-    ? Math.round((profitCents / row.priceCents) * 100)
+  const buyerPriceCents = discountedEbayPriceCents(row.priceCents, sitewideDiscountBps);
+  const marginPct = buyerPriceCents > 0
+    ? Math.round((profitCents / buyerPriceCents) * 100)
     : 0;
   return { profitCents, marginPct };
 }
@@ -402,15 +405,15 @@ export function EbayListingsTable({
           return row.match
             ? row.match.amazonPriceCents + row.match.shippingCostCents
             : null;
-        case "profit": return currentProfit(row)?.profitCents ?? null;
-        case "margin": return currentProfit(row)?.marginPct ?? null;
+        case "profit": return currentProfit(row, sitewideDiscountBps)?.profitCents ?? null;
+        case "margin": return currentProfit(row, sitewideDiscountBps)?.marginPct ?? null;
         case "demand": return row.market?.estimatedSales30d ?? null;
         case "competition": return row.market?.competitorCount ?? null;
         case "recommendedPrice": return row.market?.bestSellingPriceCents ?? null;
         case "averagePrice": return row.market?.averageCompetitorPriceCents ?? null;
         case "suggestedPrice": return row.suggestedPriceCents;
         case "matchConfidence": return row.sourceAssessment?.confidence ?? null;
-        case "competitiveHealth": return competitiveHealthSortValue(row);
+        case "competitiveHealth": return competitiveHealthSortValue(row, sitewideDiscountBps);
       }
     };
     return [...filteredRows].sort((left, right) => {
@@ -424,7 +427,7 @@ export function EbayListingsTable({
           : Number(a) - Number(b);
       return sortDescending ? -comparison : comparison;
     });
-  }, [filteredRows, lockedSortOrder, sortKey, sortDescending]);
+  }, [filteredRows, lockedSortOrder, sitewideDiscountBps, sortKey, sortDescending]);
   const pageCount = Math.max(1, Math.ceil(sortedRows.length / pageSize));
   const currentPage = Math.min(page, pageCount);
   const visibleRows = sortedRows.slice(
@@ -797,6 +800,7 @@ export function EbayListingsTable({
                         result.market.bestSellingPriceCents,
                         result.market.averageCompetitorPriceCents,
                         row.match.shippingCostCents,
+                        sitewideDiscountBps,
                       )
                     : null,
                 }
@@ -810,6 +814,7 @@ export function EbayListingsTable({
                         null,
                         null,
                         row.match.shippingCostCents,
+                        sitewideDiscountBps,
                       )
                     : null,
                 };
@@ -849,8 +854,8 @@ export function EbayListingsTable({
           amazonUrl: row.match?.amazonUrl ?? null,
           amazonPriceCents: row.match?.amazonPriceCents ?? null,
           amazonShippingCents: row.match?.shippingCostCents ?? null,
-          profitCents: currentProfit(row)?.profitCents ?? null,
-          marginPct: currentProfit(row)?.marginPct ?? null,
+          profitCents: currentProfit(row, sitewideDiscountBps)?.profitCents ?? null,
+          marginPct: currentProfit(row, sitewideDiscountBps)?.marginPct ?? null,
           estimatedSales30d: row.market?.estimatedSales30d ?? null,
           competitorCount: row.market?.competitorCount ?? null,
           ebayRecommendedPriceCents: row.market?.bestSellingPriceCents ?? null,
@@ -864,7 +869,7 @@ export function EbayListingsTable({
             ? "Unmatched"
             : row.match.unavailable
               ? "Not on Amazon"
-              : (currentProfit(row)?.profitCents ?? 0) <= 0
+              : (currentProfit(row, sitewideDiscountBps)?.profitCents ?? 0) <= 0
                 ? "Unprofitable"
                 : "OK",
         })),
@@ -1079,8 +1084,8 @@ export function EbayListingsTable({
           <tbody>
             {visibleRows.map((r) => {
               const problem = listingNeedsAttention(r);
-              const health = assessListingHealth(r);
-              const profit = currentProfit(r);
+              const health = assessListingHealth(r, sitewideDiscountBps);
+              const profit = currentProfit(r, sitewideDiscountBps);
               const priceAssessment = assessPriceCompetitiveness(
                 r.priceCents,
                 r.priceCents,
@@ -1158,12 +1163,12 @@ export function EbayListingsTable({
                       <div
                         className={cx(
                           "font-medium",
-                          r.market && r.suggestedPriceCents > r.market.averageCompetitorPriceCents
+                          r.market && discountedEbayPriceCents(r.suggestedPriceCents, sitewideDiscountBps) > r.market.averageCompetitorPriceCents
                             ? "text-amber-700"
                             : "text-indigo-700",
                         )}
                         title={
-                          r.market && r.suggestedPriceCents > r.market.averageCompetitorPriceCents
+                          r.market && discountedEbayPriceCents(r.suggestedPriceCents, sitewideDiscountBps) > r.market.averageCompetitorPriceCents
                             ? "The market average is too low to preserve the hard 15% estimated margin floor."
                             : "Closest competitive price that targets 20% margin and never falls below 15%."
                         }
@@ -1175,8 +1180,9 @@ export function EbayListingsTable({
                               r.suggestedPriceCents,
                               r.match.amazonPriceCents,
                               r.match.shippingCostCents,
+                              sitewideDiscountBps,
                             ) /
-                              r.suggestedPriceCents) *
+                              discountedEbayPriceCents(r.suggestedPriceCents, sitewideDiscountBps)) *
                               100,
                           )}% est. margin
                         </p>

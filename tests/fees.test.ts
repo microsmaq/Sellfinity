@@ -4,6 +4,8 @@ import {
   EBAY_PER_ORDER_FEE_CENTS,
   ebayFeeCents,
   estimateMargin,
+  discountedEbayPriceCents,
+  grossUpEbayPriceCents,
   grossRevenueCents,
   netProfitCents,
 } from "@/lib/fees";
@@ -74,5 +76,12 @@ describe("estimateMargin", () => {
 
   it("handles zero market price without dividing by zero", () => {
     expect(estimateMargin(0, 100, 100).marginPct).toBe(0);
+  });
+
+  it("uses discounted checkout proceeds and can gross up a safe list price", () => {
+    expect(discountedEbayPriceCents(20_705, 500)).toBe(19_669);
+    expect(discountedEbayPriceCents(grossUpEbayPriceCents(2_000, 500), 500)).toBe(2_000);
+    expect(estimateMargin(2_000, 1_000, 0, 500).estimatedProfitCents)
+      .toBeLessThan(estimateMargin(2_000, 1_000, 0).estimatedProfitCents);
   });
 });

@@ -120,10 +120,15 @@ export async function matchAndTrackListing(
     });
   });
 
+  const user = await db.user.findUnique({
+    where: { id: userId },
+    select: { ebaySitewideDiscountBps: true },
+  });
   const margin = estimateMargin(
     input.priceCents,
     match.priceCents,
     match.shippingCostCents,
+    user?.ebaySitewideDiscountBps ?? 0,
   );
   return {
     ok: true,

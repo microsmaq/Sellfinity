@@ -92,6 +92,7 @@ function FinderRow({
   onSelect,
   onPublish,
   onHide,
+  sitewideDiscountBps,
 }: {
   row: OpportunityRow;
   selected: boolean;
@@ -99,6 +100,7 @@ function FinderRow({
   onSelect: (checked: boolean) => void;
   onPublish: () => void;
   onHide: () => void;
+  sitewideDiscountBps: number;
 }) {
   const publishable = eligible(row);
   const competitiveness = assessPriceCompetitiveness(
@@ -106,6 +108,8 @@ function FinderRow({
     row.ebayPriceCents,
     row.avgCompPriceCents,
     row.ebayRecommendedPriceCents,
+    null,
+    sitewideDiscountBps,
   );
   return (
     <tr className="group border-t border-slate-100 align-top hover:bg-slate-50/70">
@@ -246,9 +250,11 @@ function FinderRow({
 export function ArbitrageTable({
   data,
   filters,
+  sitewideDiscountBps,
 }: {
   data: ArbitragePage;
   filters: ArbitragePageParams;
+  sitewideDiscountBps: number;
 }) {
   const router = useRouter();
   const [expanded, setExpanded] = useState(false);
@@ -517,6 +523,7 @@ export function ArbitrageTable({
                   })}
                   onPublish={() => publish([row.ebayItemId])}
                   onHide={() => hide(row)}
+                  sitewideDiscountBps={sitewideDiscountBps}
                 />
               ))}
             </tbody>

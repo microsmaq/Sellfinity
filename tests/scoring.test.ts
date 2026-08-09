@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { netProfitCents, ebayFeeCents } from "@/lib/fees";
+import { discountedEbayPriceCents, netProfitCents, ebayFeeCents } from "@/lib/fees";
 import { scoreAndRank, scoreCandidate, suggestPriceCents } from "@/lib/sourcing/scoring";
 import type { SourcingCandidate } from "@/lib/sourcing/provider";
 
@@ -48,6 +48,11 @@ describe("scoreCandidate", () => {
     const open = scoreCandidate(candidate({ competitorCount: 5 }));
     expect(open.score).toBeGreaterThan(crowded.score);
   });
+
+  it("reduces projected profit when a sitewide discount applies", () => {
+    expect(scoreCandidate(candidate(), 500).margin.estimatedProfitCents)
+      .toBeLessThan(scoreCandidate(candidate()).margin.estimatedProfitCents);
+  });
 });
 
 describe("scoreAndRank", () => {
@@ -93,5 +98,13 @@ describe("suggestPriceCents", () => {
       });
       expect(net).toBeGreaterThanOrEqual(99);
     }
+  });
+
+  it("grosses up the list price to preserve the intended discounted buyer price", () => {
+    const input = { marketPriceCents: 2_499, costCents: 600, shippingCostCents: 450 };
+    const base = suggestPriceCents(input);
+    const discounted = suggestPriceCents(input, 500);
+    expect(discounted).toBeGreaterThan(base);
+    expect(discountedEbayPriceCents(discounted, 500)).toBe(base);
   });
 });

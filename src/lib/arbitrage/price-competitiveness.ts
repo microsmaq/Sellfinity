@@ -1,3 +1,5 @@
+import { discountedEbayPriceCents, normalizeSitewideDiscountBps } from "@/lib/fees";
+
 export type PriceCompetitiveness = {
   label: "Highly competitive" | "Competitive" | "Near market" | "Above market" | "High premium" | "Not rated";
   tone: "green" | "indigo" | "amber" | "red" | "slate";
@@ -44,8 +46,8 @@ export function assessPriceCompetitiveness(
   aiSuggestedPriceCents?: number | null,
   sitewideDiscountBps = 0,
 ): PriceCompetitiveness {
-  const discountBps = Math.max(0, Math.min(9_000, Math.round(sitewideDiscountBps)));
-  const assessedPriceCents = Math.round(priceCents * (10_000 - discountBps) / 10_000);
+  const discountBps = normalizeSitewideDiscountBps(sitewideDiscountBps);
+  const assessedPriceCents = discountedEbayPriceCents(priceCents, discountBps);
   const prices = validMarketPrices([
     { label: "eBay item", cents: ebayPriceCents },
     { label: "competitor avg", cents: averageCompetitorPriceCents },

@@ -55,6 +55,7 @@ export function buildEbayRows(
   local: LocalListingFacts[],
   suppressedEbayIds: ReadonlySet<string> = new Set(),
   marketMetrics: ReadonlyMap<string, ListingMarketMetrics> = new Map(),
+  sitewideDiscountBps = 0,
 ): EbayRow[] {
   const byEbayId = new Map(
     local.filter((l) => l.ebayListingId).map((l) => [l.ebayListingId!, l]),
@@ -124,6 +125,7 @@ export function buildEbayRows(
       r.priceCents,
       localListing.product.costCents,
       localListing.product.shippingCostCents,
+      sitewideDiscountBps,
     );
     const market =
       marketMetrics.get(r.ebayListingId) ??
@@ -146,6 +148,7 @@ export function buildEbayRows(
         market?.bestSellingPriceCents,
         market?.averageCompetitorPriceCents,
         localListing.product.shippingCostCents,
+        sitewideDiscountBps,
       ),
       match: {
         sku: localListing.product.sku,

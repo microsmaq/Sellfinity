@@ -2,6 +2,7 @@ import {
   EBAY_FINAL_VALUE_RATE,
   EBAY_PER_ORDER_FEE_CENTS,
   estimateMargin,
+  grossUpEbayPriceCents,
   type MarginEstimate,
 } from "@/lib/fees";
 import type { SourcingCandidate } from "./provider";
@@ -23,8 +24,13 @@ function clamp01(x: number): number {
   return Math.max(0, Math.min(1, x));
 }
 
-export function scoreCandidate(c: SourcingCandidate): ScoredCandidate {
-  const margin = estimateMargin(c.marketPriceCents, c.costCents, c.shippingCostCents);
+export function scoreCandidate(c: SourcingCandidate, sitewideDiscountBps = 0): ScoredCandidate {
+  const margin = estimateMargin(
+    c.marketPriceCents,
+    c.costCents,
+    c.shippingCostCents,
+    sitewideDiscountBps,
+  );
 
   const marginScore = clamp01(margin.marginPct / MARGIN_PCT_CEILING);
   const demandScore = clamp01(c.salesPerWeek / SALES_PER_WEEK_CEILING);
@@ -45,8 +51,8 @@ export function scoreCandidate(c: SourcingCandidate): ScoredCandidate {
   return { ...c, margin, score };
 }
 
-export function scoreAndRank(candidates: SourcingCandidate[]): ScoredCandidate[] {
-  return candidates.map(scoreCandidate).sort((a, b) => b.score - a.score);
+export function scoreAndRank(candidates: SourcingCandidate[], sitewideDiscountBps = 0): ScoredCandidate[] {
+  return candidates.map((candidate) => scoreCandidate(candidate, sitewideDiscountBps)).sort((a, b) => b.score - a.score);
 }
 
 /**
@@ -58,7 +64,7 @@ export function suggestPriceCents(c: {
   marketPriceCents: number;
   costCents: number;
   shippingCostCents: number;
-}): number {
+}, sitewideDiscountBps = 0): number {
   const undercut = c.marketPriceCents * 0.97;
   let charm = Math.round(undercut / 100) * 100 - 1;
   if (charm >= c.marketPriceCents) charm -= 100;
@@ -69,5 +75,5 @@ export function suggestPriceCents(c: {
     (c.costCents + c.shippingCostCents + EBAY_PER_ORDER_FEE_CENTS + 100) /
       (1 - EBAY_FINAL_VALUE_RATE),
   );
-  return Math.max(charm, breakEvenFloor);
+  return grossUpEbayPriceCents(Math.max(charm, breakEvenFloor), sitewideDiscountBps);
 }

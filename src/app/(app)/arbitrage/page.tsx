@@ -49,7 +49,11 @@ export default async function ArbitragePage({
         title="Arbitrage finder"
         subtitle="Admin-curated Amazon bestsellers with verified eBay equivalents, competitive market data, and margins net of eBay fees."
       />
-      <ArbitrageTable data={data} filters={params} />
+      <ArbitrageTable
+        data={data}
+        filters={params}
+        sitewideDiscountBps={user.ebaySitewideDiscountBps}
+      />
     </>
   );
 }

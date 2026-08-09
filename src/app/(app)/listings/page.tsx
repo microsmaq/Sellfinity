@@ -105,6 +105,7 @@ export default async function ListingsPage() {
         listings,
         new Set(suppressions.map((item) => item.ebayListingId)),
         marketMetrics,
+        user.ebaySitewideDiscountBps,
       );
     } catch (e) {
       ebayFetchError = e instanceof Error ? e.message.slice(0, 200) : "eBay lookup failed";
@@ -138,6 +139,7 @@ export default async function ListingsPage() {
       metric?.bestSellingPriceCents,
       metric?.averageCompetitorPriceCents,
       l.product.shippingCostCents,
+      user.ebaySitewideDiscountBps,
     );
 
     return {

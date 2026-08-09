@@ -562,6 +562,7 @@ export async function cleanupEbayListings(
         item.ebayRecommendedPriceCents,
         item.averageCompetitorPriceCents,
         exact.shippingCostCents,
+        user.ebaySitewideDiscountBps,
       );
       if (newPriceCents !== listing.priceCents) {
         await client.updateListing(ebayListingId, {
@@ -575,6 +576,7 @@ export async function cleanupEbayListings(
           newPriceCents,
           exact.priceCents,
           exact.shippingCostCents,
+          user.ebaySitewideDiscountBps,
         );
         results.push({
           ebayListingId,
@@ -804,6 +806,7 @@ export async function cleanupListingSourcesBatch(): Promise<SourceCleanupBatchRe
       market?.bestSellingPriceCents,
       market?.averageCompetitorPriceCents,
       recoverable.product.shippingCostCents,
+      user.ebaySitewideDiscountBps,
     );
     await db.listing.update({
       where: { id: recoverable.id },

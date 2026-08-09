@@ -43,4 +43,12 @@ describe("assessListingHealth", () => {
     expect(expensive.status).toBe("ABOVE_MARKET");
     expect(expensive.priceDifferencePct).toBe(25);
   });
+
+  it("uses the discounted buyer price for profit and competitive health", () => {
+    const fullPrice = assessListingHealth(listing(3_300, 1_000, 3_200));
+    const discounted = assessListingHealth(listing(3_300, 1_000, 3_200), 500);
+    expect(fullPrice.status).toBe("ABOVE_MARKET");
+    expect(discounted.status).toBe("COMPETITIVE");
+    expect(discounted.profitCents).toBeLessThan(fullPrice.profitCents!);
+  });
 });

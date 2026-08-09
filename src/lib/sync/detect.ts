@@ -3,7 +3,7 @@
 import type { SupplierProductState } from "@/lib/sourcing/provider";
 import { suggestPriceCents } from "@/lib/sourcing/scoring";
 import { LISTING_QUANTITY_CAP } from "@/lib/listings/generate";
-import { ebayFeeCents, netProfitCents } from "@/lib/fees";
+import { estimateMargin } from "@/lib/fees";
 import type { SyncIssueDetails, SyncIssueType } from "@/lib/types";
 
 export type DetectedIssue = {
@@ -34,6 +34,7 @@ export function detectIssues(
   listing: ListingFacts,
   product: ProductFacts,
   state: SupplierProductState,
+  sitewideDiscountBps = 0,
 ): DetectedIssue[] {
   const issues: DetectedIssue[] = [];
 
@@ -91,24 +92,18 @@ export function detectIssues(
   if (state.stock > 0) {
     const shippingCostCents =
       state.shippingCostCents ?? product.shippingCostCents;
-    const profitAtCurrentPrice = netProfitCents({
-      quantity: 1,
-      salePriceCents: listing.priceCents,
-      shippingChargedCents: 0,
-      ebayFeeCents: ebayFeeCents({
-        quantity: 1,
-        salePriceCents: listing.priceCents,
-        shippingChargedCents: 0,
-      }),
+    const profitAtCurrentPrice = estimateMargin(
+      listing.priceCents,
+      state.costCents,
       shippingCostCents,
-      cogsCents: state.costCents,
-    });
+      sitewideDiscountBps,
+    ).estimatedProfitCents;
     if (profitAtCurrentPrice <= 0) {
       const expectedPrice = suggestPriceCents({
         marketPriceCents: listing.priceCents,
         costCents: state.costCents,
         shippingCostCents,
-      });
+      }, sitewideDiscountBps);
       issues.push({
         type: "COST_RISE",
         details: {

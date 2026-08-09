@@ -9,6 +9,27 @@ export const EBAY_AD_RATE = 0.03;
 /** Fixed per-order fee. */
 export const EBAY_PER_ORDER_FEE_CENTS = 30;
 
+export function normalizeSitewideDiscountBps(discountBps = 0): number {
+  return Math.max(0, Math.min(9_000, Math.round(discountBps)));
+}
+
+/** Buyer checkout price after a seller-wide percentage discount. */
+export function discountedEbayPriceCents(listPriceCents: number, discountBps = 0): number {
+  return Math.floor(
+    listPriceCents * (10_000 - normalizeSitewideDiscountBps(discountBps)) / 10_000,
+  );
+}
+
+/** Smallest list price whose discounted checkout price reaches the target. */
+export function grossUpEbayPriceCents(buyerPriceCents: number, discountBps = 0): number {
+  const safeDiscountBps = normalizeSitewideDiscountBps(discountBps);
+  if (safeDiscountBps === 0) return Math.round(buyerPriceCents);
+  let listPriceCents = Math.ceil(buyerPriceCents * 10_000 / (10_000 - safeDiscountBps));
+  while (discountedEbayPriceCents(listPriceCents, safeDiscountBps) < buyerPriceCents) listPriceCents++;
+  while (listPriceCents > 0 && discountedEbayPriceCents(listPriceCents - 1, safeDiscountBps) >= buyerPriceCents) listPriceCents--;
+  return listPriceCents;
+}
+
 export type OrderAmounts = {
   quantity: number;
   salePriceCents: number; // per unit
@@ -49,16 +70,18 @@ export function estimateMargin(
   marketPriceCents: number,
   costCents: number,
   shippingCostCents: number,
+  sitewideDiscountBps = 0,
 ): MarginEstimate {
+  const buyerPriceCents = discountedEbayPriceCents(marketPriceCents, sitewideDiscountBps);
   const estimatedFeeCents =
     ebayFeeCents({
       quantity: 1,
-      salePriceCents: marketPriceCents,
+      salePriceCents: buyerPriceCents,
       shippingChargedCents: 0,
-    }) + Math.round(marketPriceCents * EBAY_AD_RATE);
+    }) + Math.round(buyerPriceCents * EBAY_AD_RATE);
   const estimatedProfitCents =
-    marketPriceCents - estimatedFeeCents - costCents - shippingCostCents;
+    buyerPriceCents - estimatedFeeCents - costCents - shippingCostCents;
   const marginPct =
-    marketPriceCents > 0 ? (estimatedProfitCents / marketPriceCents) * 100 : 0;
+    buyerPriceCents > 0 ? (estimatedProfitCents / buyerPriceCents) * 100 : 0;
   return { estimatedFeeCents, estimatedProfitCents, marginPct };
 }

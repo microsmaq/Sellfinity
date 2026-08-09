@@ -2,6 +2,7 @@ import {
   AI_MIN_MARGIN,
   trueProfitCents,
 } from "@/lib/listings/cleanup";
+import { discountedEbayPriceCents } from "@/lib/fees";
 
 export type ListingHealthStatus =
   | "SOURCE_ISSUE"
@@ -32,7 +33,7 @@ type HealthListing = {
   } | null;
 };
 
-export function assessListingHealth(listing: HealthListing): ListingHealth {
+export function assessListingHealth(listing: HealthListing, sitewideDiscountBps = 0): ListingHealth {
   const benchmarkPriceCents = listing.market?.bestSellingPriceCents ?? null;
   if (!listing.match || listing.match.unavailable) {
     return {
@@ -49,10 +50,12 @@ export function assessListingHealth(listing: HealthListing): ListingHealth {
     listing.priceCents,
     listing.match.amazonPriceCents,
     listing.match.shippingCostCents,
+    sitewideDiscountBps,
   );
+  const buyerPriceCents = discountedEbayPriceCents(listing.priceCents, sitewideDiscountBps);
   const marginPct =
-    listing.priceCents > 0
-      ? Math.round((profitCents / listing.priceCents) * 100)
+    buyerPriceCents > 0
+      ? Math.round((profitCents / buyerPriceCents) * 100)
       : 0;
   if (profitCents <= 0) {
     return {
@@ -86,9 +89,9 @@ export function assessListingHealth(listing: HealthListing): ListingHealth {
   }
 
   const priceDifferencePct = Math.round(
-    ((listing.priceCents - benchmarkPriceCents) / benchmarkPriceCents) * 100,
+    ((buyerPriceCents - benchmarkPriceCents) / benchmarkPriceCents) * 100,
   );
-  if (listing.priceCents <= benchmarkPriceCents) {
+  if (buyerPriceCents <= benchmarkPriceCents) {
     return {
       status: "COMPETITIVE",
       label: "Competitive",
