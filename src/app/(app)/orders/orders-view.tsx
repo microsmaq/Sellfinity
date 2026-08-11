@@ -332,6 +332,7 @@ export function OrdersView({ orders, fetchError, profitProtectionEnabled, autoRe
             <option value="NEWEST">Newest first</option><option value="SHIP_BY">Ship-by date</option><option value="PROFIT">Highest profit</option>
           </select>
           <Button variant="secondary" disabled={pending} onClick={refreshFulfillment}>{pending ? "Checking email…" : "↻ Refresh Amazon & eBay"}</Button>
+          <a href="/downloads/sellfinity-tracking-helper.zip" download className="inline-flex min-h-10 items-center justify-center rounded-lg border border-slate-300 bg-white px-3 text-sm font-medium text-slate-700 hover:bg-slate-50">Download Chrome tracking helper</a>
         </div>
 
         {refreshMessage && <p className="border-b border-indigo-100 bg-indigo-50 px-4 py-3 text-sm text-indigo-800" role="status">{refreshMessage}</p>}

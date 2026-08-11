@@ -1,0 +1,38 @@
+{
+  "manifest_version": 3,
+  "name": "Sellfinity Amazon Tracking Helper",
+  "version": "1.0.0",
+  "description": "Copies carrier tracking from an opened Amazon tracking page into the originating Sellfinity fulfillment row.",
+  "permissions": ["tabs", "storage"],
+  "host_permissions": [
+    "https://www.sellfinity.app/*",
+    "https://*.amazon.com/*",
+    "https://*.ups.com/*",
+    "https://*.fedex.com/*",
+    "https://*.usps.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "Sellfinity Tracking Helper",
+    "default_popup": "popup.html"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://www.sellfinity.app/orders*"],
+      "js": ["sellfinity-content.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "https://*.amazon.com/*",
+        "https://*.ups.com/*",
+        "https://*.fedex.com/*",
+        "https://*.usps.com/*"
+      ],
+      "js": ["tracking.js", "amazon-content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}
