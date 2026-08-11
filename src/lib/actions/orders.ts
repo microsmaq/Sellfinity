@@ -24,6 +24,26 @@ export async function submitManualOrderTracking(orderId: string, rawTrackingNumb
     return { error: "Tracking cannot be added to a cancelled or refunded order." };
   }
 
+  const carrier = ebayCarrierCode(order.amazonPurchaseItem?.purchase.carrier ?? null, trackingNumber);
+
+  // A delivered eBay order no longer needs a fulfillment update. Keep the
+  // tracking number in Sellfinity so it remains visible without asking eBay
+  // to modify a fulfillment that is already closed.
+  if (order.sourcingStatus === "DELIVERED") {
+    await db.order.update({
+      where: { id: order.id },
+      data: {
+        ebayTrackingNumber: trackingNumber,
+        ebayTrackingCarrier: carrier,
+        ebayTrackingSyncedAt: null,
+        ebayTrackingSyncError: null,
+      },
+    });
+    revalidatePath("/orders");
+    revalidatePath("/dashboard");
+    return { trackingNumber, carrier, sourcingStatus: "DELIVERED", syncedToEbay: false };
+  }
+
   try {
     const ebay = await getEbayClientForUser(user.id);
     const remoteOrders = await ebay.getUnfulfilledOrders(user.id);
@@ -42,7 +62,6 @@ export async function submitManualOrderTracking(orderId: string, rawTrackingNumb
     }
 
     const [{ remoteOrder, line }] = candidates;
-    const carrier = ebayCarrierCode(order.amazonPurchaseItem?.purchase.carrier ?? null, trackingNumber);
     await ebay.createShippingFulfillment(user.id, {
       orderId: remoteOrder.orderId,
       lineItemId: line.lineItemId,
@@ -50,7 +69,7 @@ export async function submitManualOrderTracking(orderId: string, rawTrackingNumb
       trackingNumber,
       shippingCarrierCode: carrier,
     });
-    const sourcingStatus = order.sourcingStatus === "DELIVERED" ? "DELIVERED" : "SHIPPED";
+    const sourcingStatus = "SHIPPED";
     await db.order.update({ where: { id: order.id }, data: {
       status: "SHIPPED",
       sourcingStatus,
@@ -61,7 +80,7 @@ export async function submitManualOrderTracking(orderId: string, rawTrackingNumb
     } });
     revalidatePath("/orders");
     revalidatePath("/dashboard");
-    return { trackingNumber, carrier, sourcingStatus };
+    return { trackingNumber, carrier, sourcingStatus, syncedToEbay: true };
   } catch (error) {
     const message = error instanceof Error ? error.message.slice(0, 300) : "eBay rejected the tracking update.";
     await db.order.updateMany({
