@@ -6,6 +6,7 @@ import { Badge, Button, Card, Input, StatCard, cx } from "@/components/ui";
 import { formatCents } from "@/lib/money";
 import { protectOrderMargin, setAutoProfitProtection } from "@/lib/actions/profit-protection";
 import { syncAmazonEmailsNow } from "@/lib/actions/amazon-email";
+import { setAutoRestockFulfilledListings } from "@/lib/actions/orders";
 
 export type FulfillmentStage = "AWAITING" | "PURCHASED" | "IN_TRANSIT" | "DELIVERED" | "CANCELLED" | "REFUNDED";
 
@@ -75,7 +76,7 @@ function trackingUrl(carrier: string | null, tracking: string): string {
   return `https://www.google.com/search?q=${encodeURIComponent(`${carrier ?? "package"} ${tracking}`)}`;
 }
 
-export function OrdersView({ orders, fetchError, profitProtectionEnabled, sitewideDiscountBps }: { orders: FulfillmentOrderRow[]; fetchError: string | null; profitProtectionEnabled: boolean; sitewideDiscountBps: number }) {
+export function OrdersView({ orders, fetchError, profitProtectionEnabled, autoRestockEnabled, sitewideDiscountBps }: { orders: FulfillmentOrderRow[]; fetchError: string | null; profitProtectionEnabled: boolean; autoRestockEnabled: boolean; sitewideDiscountBps: number }) {
   const router = useRouter();
   const [query, setQuery] = useState("");
   const [tab, setTab] = useState<Tab>("ALL");
@@ -84,6 +85,8 @@ export function OrdersView({ orders, fetchError, profitProtectionEnabled, sitewi
   const [pending, startTransition] = useTransition();
   const [protectionEnabled, setProtectionEnabled] = useState(profitProtectionEnabled);
   const [protectionMessage, setProtectionMessage] = useState<string | null>(null);
+  const [restockEnabled, setRestockEnabled] = useState(autoRestockEnabled);
+  const [restockMessage, setRestockMessage] = useState<string | null>(null);
   const [refreshMessage, setRefreshMessage] = useState<string | null>(null);
   const [orderOverrides, setOrderOverrides] = useState<Record<string, Partial<FulfillmentOrderRow>>>({});
   const [retryingOrderId, setRetryingOrderId] = useState<string | null>(null);
@@ -148,6 +151,30 @@ export function OrdersView({ orders, fetchError, profitProtectionEnabled, sitewi
     });
   }
 
+  function toggleAutoRestock() {
+    const enabled = !restockEnabled;
+    const previous = restockEnabled;
+    setRestockEnabled(enabled);
+    setRestockMessage(null);
+    startTransition(async () => {
+      try {
+        const result = await setAutoRestockFulfilledListings(enabled);
+        if (!enabled) {
+          setRestockMessage("Automatic stock refill is off.");
+        } else if (result.warning) {
+          setRestockMessage(`Automatic stock refill is on, but the immediate check failed: ${result.warning}`);
+        } else {
+          const count = result.restock?.restocked ?? 0;
+          setRestockMessage(`Automatic stock refill is on. ${count} low-stock listing${count === 1 ? " was" : "s were"} refilled to 5 now.`);
+        }
+        router.refresh();
+      } catch {
+        setRestockEnabled(previous);
+        setRestockMessage("Could not update automatic stock refill. Please try again.");
+      }
+    });
+  }
+
   function refreshFulfillment() {
     setRefreshMessage("Checking Amazon order, shipment, delivery, and tracking emails…");
     startTransition(async () => {
@@ -166,6 +193,9 @@ export function OrdersView({ orders, fetchError, profitProtectionEnabled, sitewi
         ];
         if (resolution.pending) details.push(`${resolution.pending} tracking link${resolution.pending === 1 ? " needs" : "s need"} Amazon sign-in or another update`);
         if (result.tracking.failed) details.push(`${result.tracking.failed} eBay update${result.tracking.failed === 1 ? "" : "s"} failed`);
+        if (result.restock.restocked) details.push(`${result.restock.restocked} listing${result.restock.restocked === 1 ? "" : "s"} refilled to 5`);
+        if (result.restock.failed) details.push(`${result.restock.failed} stock refill${result.restock.failed === 1 ? "" : "s"} failed`);
+        if (result.restockError) details.push("stock check unavailable");
         setRefreshMessage(`Refresh complete: ${details.join(" · ")}.`);
         router.refresh();
       } catch {
@@ -229,6 +259,22 @@ export function OrdersView({ orders, fetchError, profitProtectionEnabled, sitewi
           </div>
           <Button variant={protectionEnabled ? "secondary" : "primary"} disabled={pending} onClick={toggleProfitProtection} className="shrink-0">
             {pending ? "Updating…" : protectionEnabled ? "Turn off automatic" : "Protect future orders"}
+          </Button>
+        </div>
+      </Card>
+
+      <Card className="overflow-hidden border-emerald-200 bg-gradient-to-r from-emerald-50/80 via-white to-sky-50/60">
+        <div className="flex flex-col gap-4 p-5 lg:flex-row lg:items-center lg:justify-between">
+          <div className="max-w-3xl">
+            <div className="flex flex-wrap items-center gap-2">
+              <h2 className="font-semibold text-slate-950">Automatic stock refill</h2>
+              <Badge tone={restockEnabled ? "green" : "slate"}>{restockEnabled ? "On" : "Off"}</Badge>
+            </div>
+            <p className="mt-1.5 text-sm leading-6 text-slate-600">After fulfillment refreshes, Sellfinity checks the live eBay quantity of active listings that have sold. When stock is 0 or 1, it resets the listing to 5. Listings whose live quantity eBay does not confirm are left unchanged.</p>
+            {restockMessage && <p className="mt-2 text-sm font-medium text-emerald-700" role="status">{restockMessage}</p>}
+          </div>
+          <Button variant={restockEnabled ? "secondary" : "primary"} disabled={pending} onClick={toggleAutoRestock} className="shrink-0">
+            {pending ? "Updating…" : restockEnabled ? "Turn off auto-restock" : "Turn on auto-restock"}
           </Button>
         </div>
       </Card>

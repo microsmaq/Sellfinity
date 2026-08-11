@@ -182,6 +182,7 @@ export default async function OrdersPage() {
           orders={rows}
           fetchError={fetchError ?? (!ebayConnected ? "Connect eBay in Settings to refresh open orders." : null)}
           profitProtectionEnabled={user.autoProtectVerifiedProfit}
+          autoRestockEnabled={user.autoRestockFulfilledListings}
           sitewideDiscountBps={user.ebaySitewideDiscountBps}
         />
       </div>

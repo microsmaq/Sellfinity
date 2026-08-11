@@ -38,6 +38,9 @@ model User {
   // Reprice active listings after a matched order proves the realized margin
   // missed the 5% / $7 net-profit floor.
   autoProtectVerifiedProfit Boolean   @default(false)
+  // Refill sold active eBay listings to five units whenever live stock falls
+  // below two during fulfillment refreshes.
+  autoRestockFulfilledListings Boolean @default(false)
   // Account-wide eBay promotion percentage in basis points (500 = 5%).
   // Protected list prices are grossed up so the discounted checkout price
   // still clears the verified-profit target.

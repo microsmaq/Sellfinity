@@ -6,6 +6,7 @@ import { syncAmazonPurchaseEmails } from "@/lib/amazon-email/sync";
 import { importOrders } from "@/lib/orders/import";
 import { uploadAmazonTrackingToEbay } from "@/lib/amazon-email/tracking";
 import { protectVerifiedOrderMargins } from "@/lib/orders/profit-protection";
+import { restockLowFulfillmentInventory } from "@/lib/orders/auto-restock";
 
 export async function syncAmazonEmailsNow() {
   const user = await requireUser();
@@ -20,8 +21,12 @@ export async function syncAmazonEmailsNow() {
     let trackingError: string | null = null;
     try { tracking = await uploadAmazonTrackingToEbay(user.id); }
     catch (error) { trackingError = error instanceof Error ? error.message.slice(0, 300) : "eBay tracking update failed"; }
-    revalidatePath("/dashboard"); revalidatePath("/settings");
-    return { ...result, tracking, trackingError, protection };
+    let restock = { checked: 0, lowStock: 0, restocked: 0, failed: 0 };
+    let restockError: string | null = null;
+    try { restock = await restockLowFulfillmentInventory(user.id); }
+    catch (error) { restockError = error instanceof Error ? error.message.slice(0, 300) : "eBay stock refill failed"; }
+    revalidatePath("/dashboard"); revalidatePath("/settings"); revalidatePath("/orders"); revalidatePath("/listings");
+    return { ...result, tracking, trackingError, protection, restock, restockError };
   } catch (error) {
     const message = error instanceof Error ? error.message.slice(0, 300) : "Amazon email sync failed";
     await db.amazonEmailConnection.updateMany({ where: { userId: user.id }, data: { lastSyncError: message } });
