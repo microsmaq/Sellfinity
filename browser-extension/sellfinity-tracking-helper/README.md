@@ -15,4 +15,7 @@
 4. When a supported tracking number appears, the extension returns to Sellfinity and fills that order's tracking field.
 5. Review the number and click **Save & mark shipped**.
 
+After updating the extension files, click the extension's **Reload** button on
+`chrome://extensions` before trying it again.
+
 The extension does not submit tracking automatically and does not use clipboard access. It only reads supported Amazon/carrier tracking pages opened from Sellfinity.

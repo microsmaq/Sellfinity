@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Sellfinity Amazon Tracking Helper",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Copies carrier tracking from an opened Amazon tracking page into the originating Sellfinity fulfillment row.",
   "permissions": ["tabs", "storage"],
   "host_permissions": [

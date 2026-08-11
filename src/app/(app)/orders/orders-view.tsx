@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Badge, Button, Card, Input, StatCard, cx } from "@/components/ui";
 import { formatCents } from "@/lib/money";
@@ -95,6 +95,17 @@ export function OrdersView({ orders, fetchError, profitProtectionEnabled, autoRe
   const [manualTrackingMessages, setManualTrackingMessages] = useState<Record<string, string>>({});
   const displayOrders = useMemo(() => orders.map((order) => ({ ...order, ...orderOverrides[order.id] })), [orderOverrides, orders]);
 
+  useEffect(() => {
+    function receiveExtensionTracking(event: Event) {
+      const detail = (event as CustomEvent<{ orderId?: string; trackingNumber?: string }>).detail;
+      if (!detail?.orderId || !detail.trackingNumber) return;
+      setManualTracking((current) => ({ ...current, [detail.orderId!]: detail.trackingNumber! }));
+      setManualTrackingMessages((current) => ({ ...current, [detail.orderId!]: "Tracking found by the Chrome helper. Review it, then save." }));
+    }
+    document.addEventListener("sellfinity:tracking-filled", receiveExtensionTracking);
+    return () => document.removeEventListener("sellfinity:tracking-filled", receiveExtensionTracking);
+  }, []);
+
   function toggleProfitProtection() {
     const nextEnabled = !protectionEnabled;
     setProtectionEnabled(nextEnabled);
@@ -178,8 +189,11 @@ export function OrdersView({ orders, fetchError, profitProtectionEnabled, autoRe
     });
   }
 
-  function submitTracking(order: FulfillmentOrderRow) {
-    const value = (manualTracking[order.id] ?? "").trim();
+  function submitTracking(order: FulfillmentOrderRow, visibleValue?: string) {
+    const domValue = document.querySelector<HTMLInputElement>(`input[data-order-id="${CSS.escape(order.id)}"]`)?.value;
+    const value = [visibleValue, manualTracking[order.id], domValue]
+      .find((candidate) => candidate?.trim())
+      ?.trim() ?? "";
     if (!value) {
       setManualTrackingMessages((current) => ({ ...current, [order.id]: "Enter the tracking number first." }));
       return;
@@ -356,7 +370,7 @@ export function OrdersView({ orders, fetchError, profitProtectionEnabled, autoRe
                     <td className="max-w-[330px] px-4 py-4"><div className="flex gap-3">{order.imageUrl ? /* External marketplace image hosts are dynamic. */ // eslint-disable-next-line @next/next/no-img-element
                       <img src={order.imageUrl} alt="" className="h-12 w-12 shrink-0 rounded-lg border border-slate-200 bg-white object-contain" /> : <div className="h-12 w-12 shrink-0 rounded-lg bg-slate-100" />}<div className="min-w-0">{order.ebayUrl ? <a href={order.ebayUrl} target="_blank" rel="noreferrer" className="line-clamp-2 font-medium text-slate-900 hover:text-indigo-700">{order.title}</a> : <p className="line-clamp-2 font-medium text-slate-900">{order.title}</p>}<p className="mt-1 text-xs text-slate-500">{order.buyerUsername} · Qty {order.quantity}</p>{order.variation && <p className="mt-0.5 truncate text-xs text-violet-700">{order.variation}</p>}</div></div></td>
                     <td className="px-4 py-4"><Badge tone={meta.tone}>{meta.label}</Badge>{order.amazonOrderId && <p className="mt-2 text-xs text-slate-500">Amazon #{order.amazonOrderId}</p>}{order.matchConfidence !== null && <p className="mt-0.5 text-[11px] text-slate-400">{order.matchConfidence}% source match</p>}</td>
-                    <td className="max-w-[240px] px-4 py-4">{order.trackingNumber ? <><a href={trackingUrl(order.carrier, order.trackingNumber)} target="_blank" rel="noreferrer" className="break-all font-medium text-indigo-700 hover:underline">{order.trackingNumber}</a><p className="mt-1 text-xs text-slate-500">{order.carrier ?? "Carrier pending"}{order.trackingSynced ? " · sent to eBay" : " · waiting for eBay"}</p></> : <>{order.amazonTrackingUrl ? <><a href={order.amazonTrackingUrl} target="_blank" rel="noreferrer" className="font-medium text-indigo-700 hover:underline">Open Amazon tracking ↗</a><p className="mt-1 text-xs text-amber-700">Tracking number pending</p></> : <span className="text-slate-400">Not available yet</span>}{order.stage !== "CANCELLED" && order.stage !== "REFUNDED" && <div className="mt-2 space-y-1.5"><input value={manualTracking[order.id] ?? ""} onChange={(event) => setManualTracking((current) => ({ ...current, [order.id]: event.target.value }))} onKeyDown={(event) => { if (event.key === "Enter") submitTracking(order); }} placeholder="Enter tracking number" aria-label={`Tracking number for ${order.ebayOrderId}`} className="w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-xs text-slate-900 placeholder-slate-400 focus:border-indigo-500 focus:outline-none" /><Button size="sm" variant="secondary" disabled={pending || savingTrackingOrderId === order.id} onClick={() => submitTracking(order)} className="w-full">{savingTrackingOrderId === order.id ? "Sending to eBay…" : "Save & mark shipped"}</Button>{manualTrackingMessages[order.id] && <p className="text-[11px] leading-4 text-slate-600" role="status">{manualTrackingMessages[order.id]}</p>}</div>}</>}{order.trackingLookupError && <p className="mt-1 line-clamp-3 text-xs text-amber-700" title={order.trackingLookupError}>{order.trackingLookupError}</p>}{order.trackingError && <p className="mt-1 line-clamp-2 text-xs text-red-600" title={order.trackingError}>{order.trackingError}</p>}</td>
+                    <td className="max-w-[240px] px-4 py-4">{order.trackingNumber ? <><a href={trackingUrl(order.carrier, order.trackingNumber)} target="_blank" rel="noreferrer" className="break-all font-medium text-indigo-700 hover:underline">{order.trackingNumber}</a><p className="mt-1 text-xs text-slate-500">{order.carrier ?? "Carrier pending"}{order.trackingSynced ? " · sent to eBay" : " · waiting for eBay"}</p></> : <>{order.amazonTrackingUrl ? <><a href={order.amazonTrackingUrl} target="_blank" rel="noreferrer" className="font-medium text-indigo-700 hover:underline">Open Amazon tracking ↗</a><p className="mt-1 text-xs text-amber-700">Tracking number pending</p></> : <span className="text-slate-400">Not available yet</span>}{order.stage !== "CANCELLED" && order.stage !== "REFUNDED" && <div className="mt-2 space-y-1.5"><input data-order-id={order.id} value={manualTracking[order.id] ?? ""} onChange={(event) => setManualTracking((current) => ({ ...current, [order.id]: event.target.value }))} onKeyDown={(event) => { if (event.key === "Enter") submitTracking(order, event.currentTarget.value); }} placeholder="Enter tracking number" aria-label={`Tracking number for ${order.ebayOrderId}`} className="w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-xs text-slate-900 placeholder-slate-400 focus:border-indigo-500 focus:outline-none" /><Button size="sm" variant="secondary" disabled={pending || savingTrackingOrderId === order.id} onClick={() => submitTracking(order)} className="w-full">{savingTrackingOrderId === order.id ? "Sending to eBay…" : "Save & mark shipped"}</Button>{manualTrackingMessages[order.id] && <p className={cx("text-[11px] leading-4", /could not|cannot|invalid|closed|rejected|no longer/i.test(manualTrackingMessages[order.id]) ? "font-medium text-red-600" : "text-slate-600")} role="status">{manualTrackingMessages[order.id]}</p>}</div>}</>}{order.trackingLookupError && <p className="mt-1 line-clamp-3 text-xs text-amber-700" title={order.trackingLookupError}>{order.trackingLookupError}</p>}{order.trackingError && <p className="mt-1 line-clamp-2 text-xs text-red-600" title={order.trackingError}>{order.trackingError}</p>}</td>
                     <td className="whitespace-nowrap px-4 py-4 text-right"><p className="font-semibold tabular-nums text-slate-900">{formatCents(order.revenueCents)}</p><p className="mt-1 text-[11px] text-slate-400">eBay sale</p></td>
                     <td className="whitespace-nowrap px-4 py-4 text-right"><p className="font-medium tabular-nums text-slate-700">{order.costCents === null ? "—" : formatCents(order.costCents + order.ebayFeeCents)}</p><p className="mt-1 text-[11px] text-slate-400">{order.costVerified ? "Verified" : "Estimated"} · incl. fees</p></td>
                     <td className="whitespace-nowrap px-4 py-4 text-right">

@@ -16,6 +16,7 @@ async function notifySource(request, message) {
     await chrome.tabs.sendMessage(request.sourceTabId, {
       ...message,
       inputLabel: request.inputLabel,
+      orderId: request.orderId,
       requestId: request.requestId
     });
     await chrome.tabs.update(request.sourceTabId, { active: true });
@@ -32,6 +33,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         requestId: message.requestId,
         sourceTabId: sender.tab.id,
         inputLabel: message.inputLabel,
+        orderId: message.orderId,
         amazonUrl: message.amazonUrl,
         destinationTabId: null,
         createdAt: Date.now()

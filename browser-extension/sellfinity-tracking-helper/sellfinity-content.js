@@ -46,6 +46,7 @@
       type: "BEGIN_TRACKING_REQUEST",
       requestId,
       inputLabel: input.getAttribute("aria-label"),
+      orderId: input.dataset.orderId,
       amazonUrl: anchor.href
     }).then(() => toast("Amazon tracking opened. Waiting for a carrier tracking number…"))
       .catch(() => toast("The tracking helper could not start. Reload this page and try again.", "error"));
@@ -60,6 +61,11 @@
         return;
       }
       setReactInputValue(input, message.trackingNumber);
+      document.dispatchEvent(new CustomEvent("sellfinity:tracking-filled", { detail: {
+        orderId: message.orderId || input.dataset.orderId,
+        trackingNumber: message.trackingNumber,
+        carrier: message.carrier
+      } }));
       input.scrollIntoView({ behavior: "smooth", block: "center" });
       input.focus();
       input.style.outline = "3px solid #34d399";
