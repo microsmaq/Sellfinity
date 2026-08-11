@@ -18,6 +18,13 @@ export function remoteFulfillmentKey(orderId: string, lineItemId: string): strin
   return `${orderId}-${lineItemId}`;
 }
 
+/** New imports use order+line identity. Older single-line imports stored only
+ * eBay's order id, so expose that alias only when it cannot be ambiguous. */
+export function remoteFulfillmentLookupKeys(orderId: string, lineItemId: string, lineCount: number): string[] {
+  const composite = remoteFulfillmentKey(orderId, lineItemId);
+  return lineCount === 1 ? [composite, orderId] : [composite];
+}
+
 export function trackingAppliesToAsin(trackingAsinsJson: string, purchaseItemCount: number, asin: string): boolean {
   try {
     const trackingAsins = JSON.parse(trackingAsinsJson) as unknown;

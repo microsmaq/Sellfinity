@@ -8,6 +8,7 @@ import { Badge, PageHeader } from "@/components/ui";
 import { OrdersView, type FulfillmentOrderRow, type FulfillmentStage } from "./orders-view";
 import { actualAmazonCost } from "@/lib/amazon-email/sync";
 import { verifiedProfitProtectionDecision } from "@/lib/orders/profit-protection-policy";
+import { remoteFulfillmentLookupKeys } from "@/lib/amazon-email/tracking-utils";
 
 export const metadata = { title: "Fulfillment — Sellfinity" };
 export const dynamic = "force-dynamic";
@@ -51,7 +52,10 @@ export default async function OrdersPage() {
     line: (typeof liveOrders)[number]["lines"][number];
   }> = new Map(
     liveOrders.flatMap((order) =>
-      order.lines.map((line) => [`${order.orderId}-${line.lineItemId}`, { order, line }] as const),
+      order.lines.flatMap((line) =>
+        remoteFulfillmentLookupKeys(order.orderId, line.lineItemId, order.lines.length)
+          .map((key) => [key, { order, line }] as const),
+      ),
     ),
   );
   const rows: FulfillmentOrderRow[] = storedOrders.map((order) => {
@@ -89,8 +93,8 @@ export default async function OrdersPage() {
       amazonTitle: purchaseItem?.title ?? order.listing.product.title,
       amazonOrderId: purchase?.amazonOrderId ?? null,
       amazonUrl: purchaseItem?.amazonUrl ?? order.listing.product.supplierUrl,
-      trackingNumber: purchase?.trackingNumber ?? order.ebayTrackingNumber,
-      carrier: purchase?.carrier ?? order.ebayTrackingCarrier,
+      trackingNumber: order.ebayTrackingNumber ?? purchase?.trackingNumber ?? null,
+      carrier: order.ebayTrackingCarrier ?? purchase?.carrier ?? null,
       amazonTrackingUrl: purchase?.trackingUrl ?? null,
       trackingLookupError: purchase?.trackingLookupError ?? null,
       trackingSynced: !!order.ebayTrackingSyncedAt,
@@ -112,7 +116,10 @@ export default async function OrdersPage() {
   // A newly paid eBay order can appear before the scheduled importer stores it.
   const storedIds = new Set(storedOrders.map((order) => order.ebayOrderId));
   const missingLiveLines = liveOrders.flatMap((order) =>
-    order.lines.filter((line) => !storedIds.has(`${order.orderId}-${line.lineItemId}`)).map((line) => ({ order, line })),
+    order.lines.filter((line) =>
+      !remoteFulfillmentLookupKeys(order.orderId, line.lineItemId, order.lines.length)
+        .some((key) => storedIds.has(key)),
+    ).map((line) => ({ order, line })),
   );
   if (missingLiveLines.length) {
     const listingIds = [...new Set(missingLiveLines.map(({ line }) => line.ebayListingId))];

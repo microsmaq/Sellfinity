@@ -1,7 +1,7 @@
 import "server-only";
 import { db } from "@/lib/db";
 import { getEbayClientForUser } from "@/lib/ebay";
-import { ebayCarrierCode, normalizeTrackingNumber, remoteFulfillmentKey, trackingAppliesToAsin } from "./tracking-utils";
+import { ebayCarrierCode, normalizeTrackingNumber, remoteFulfillmentLookupKeys, trackingAppliesToAsin } from "./tracking-utils";
 
 export type TrackingUploadResult = {
   eligible: number;
@@ -28,10 +28,12 @@ export async function uploadAmazonTrackingToEbay(userId: string): Promise<Tracki
   const ebay = await getEbayClientForUser(userId);
   const remoteOrders = await ebay.getUnfulfilledOrders(userId);
   const remoteLines = new Map(
-    remoteOrders.flatMap((order) => order.lines.map((line) => [
-      remoteFulfillmentKey(order.orderId, line.lineItemId),
-      { orderId: order.orderId, line },
-    ] as const)),
+    remoteOrders.flatMap((order) => order.lines.flatMap((line) =>
+      remoteFulfillmentLookupKeys(order.orderId, line.lineItemId, order.lines.length).map((key) => [
+        key,
+        { orderId: order.orderId, line },
+      ] as const),
+    )),
   );
 
   let eligible = 0;

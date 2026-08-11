@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ebayCarrierCode, normalizeTrackingNumber, remoteFulfillmentKey, trackingAppliesToAsin } from "@/lib/amazon-email/tracking-utils";
+import { ebayCarrierCode, normalizeTrackingNumber, remoteFulfillmentKey, remoteFulfillmentLookupKeys, trackingAppliesToAsin } from "@/lib/amazon-email/tracking-utils";
 import { trackingFromPage } from "@/lib/amazon-email/tracking-resolver-utils";
 
 describe("Amazon tracking normalization", () => {
@@ -17,6 +17,13 @@ describe("Amazon tracking normalization", () => {
   it("uses the same composite key stored by eBay order import", () => {
     expect(remoteFulfillmentKey("12-34567-89012", "10001234567890"))
       .toBe("12-34567-89012-10001234567890");
+  });
+
+  it("supports a legacy order-id alias only for unambiguous single-line orders", () => {
+    expect(remoteFulfillmentLookupKeys("12-34567-89012", "10001234567890", 1))
+      .toEqual(["12-34567-89012-10001234567890", "12-34567-89012"]);
+    expect(remoteFulfillmentLookupKeys("12-34567-89012", "10001234567890", 2))
+      .toEqual(["12-34567-89012-10001234567890"]);
   });
 
   it("extracts carrier tracking from a redirected tracking page", () => {

@@ -5,6 +5,72 @@ import { requireUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { importOrders } from "@/lib/orders/import";
 import { restockLowFulfillmentInventory, type AutoRestockResult } from "@/lib/orders/auto-restock";
+import { getEbayClientForUser } from "@/lib/ebay";
+import { ebayCarrierCode, normalizeTrackingNumber, remoteFulfillmentLookupKeys } from "@/lib/amazon-email/tracking-utils";
+
+export async function submitManualOrderTracking(orderId: string, rawTrackingNumber: string) {
+  const user = await requireUser();
+  const trackingNumber = normalizeTrackingNumber(rawTrackingNumber);
+  if (trackingNumber.length < 8 || trackingNumber.length > 30) {
+    return { error: "Enter a valid tracking number containing 8 to 30 letters or numbers." };
+  }
+
+  const order = await db.order.findFirst({
+    where: { id: orderId, userId: user.id },
+    include: { amazonPurchaseItem: { include: { purchase: true } } },
+  });
+  if (!order) return { error: "Order not found." };
+  if (["REFUNDED"].includes(order.status) || order.sourcingStatus === "CANCELLED") {
+    return { error: "Tracking cannot be added to a cancelled or refunded order." };
+  }
+
+  try {
+    const ebay = await getEbayClientForUser(user.id);
+    const remoteOrders = await ebay.getUnfulfilledOrders(user.id);
+    const candidates = remoteOrders.flatMap((remoteOrder) =>
+      remoteOrder.lines.flatMap((line) =>
+        remoteFulfillmentLookupKeys(remoteOrder.orderId, line.lineItemId, remoteOrder.lines.length)
+          .includes(order.ebayOrderId)
+          ? [{ remoteOrder, line }]
+          : [],
+      ),
+    );
+    if (candidates.length !== 1) {
+      return { error: candidates.length > 1
+        ? "This eBay order has multiple possible lines. Refresh the order before adding tracking."
+        : "This order is no longer an open eBay fulfillment or could not be mapped safely." };
+    }
+
+    const [{ remoteOrder, line }] = candidates;
+    const carrier = ebayCarrierCode(order.amazonPurchaseItem?.purchase.carrier ?? null, trackingNumber);
+    await ebay.createShippingFulfillment(user.id, {
+      orderId: remoteOrder.orderId,
+      lineItemId: line.lineItemId,
+      quantity: Math.min(order.quantity, line.quantity),
+      trackingNumber,
+      shippingCarrierCode: carrier,
+    });
+    const sourcingStatus = order.sourcingStatus === "DELIVERED" ? "DELIVERED" : "SHIPPED";
+    await db.order.update({ where: { id: order.id }, data: {
+      status: "SHIPPED",
+      sourcingStatus,
+      ebayTrackingNumber: trackingNumber,
+      ebayTrackingCarrier: carrier,
+      ebayTrackingSyncedAt: new Date(),
+      ebayTrackingSyncError: null,
+    } });
+    revalidatePath("/orders");
+    revalidatePath("/dashboard");
+    return { trackingNumber, carrier, sourcingStatus };
+  } catch (error) {
+    const message = error instanceof Error ? error.message.slice(0, 300) : "eBay rejected the tracking update.";
+    await db.order.updateMany({
+      where: { id: order.id, userId: user.id },
+      data: { ebayTrackingSyncError: message },
+    });
+    return { error: message };
+  }
+}
 
 export async function setAutoRestockFulfilledListings(enabled: boolean) {
   const user = await requireUser();
