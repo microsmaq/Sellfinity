@@ -117,6 +117,13 @@ export function OrdersView({ orders, fetchError, profitProtectionEnabled, autoRe
       const detail = (event as CustomEvent<{ orderId?: string; trackingNumber?: string }>).detail;
       if (!detail?.orderId || !detail.trackingNumber) return;
       setManualTracking((current) => ({ ...current, [detail.orderId!]: detail.trackingNumber! }));
+      // Version 1.1.0 emits tracking results but not aggregate progress. Keep
+      // its counters moving; 1.1.1 follows with authoritative totals.
+      setRefreshRun((current) => current ? {
+        ...current,
+        trackingProcessed: Math.min(current.trackingTotal, current.trackingProcessed + 1),
+        trackingFound: current.trackingFound + 1,
+      } : current);
     }
     function receiveHelperProgress(event: Event) {
       const detail = (event as CustomEvent<{ status?: "running" | "complete"; total?: number; processed?: number; found?: number }>).detail;
