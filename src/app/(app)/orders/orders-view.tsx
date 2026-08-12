@@ -217,6 +217,9 @@ export function OrdersView({ orders, fetchError, profitProtectionEnabled, autoRe
 
   function refreshFulfillment() {
     setRefreshMessage("Checking Amazon order, shipment, delivery, and tracking emails…");
+    // Start the signed-in browser helper immediately. Tracking lookup should
+    // still run when Gmail authorization has expired or the server sync fails.
+    document.dispatchEvent(new CustomEvent("sellfinity:bulk-tracking-refresh"));
     startTransition(async () => {
       try {
         const result = await syncAmazonEmailsNow();
@@ -238,7 +241,6 @@ export function OrdersView({ orders, fetchError, profitProtectionEnabled, autoRe
         if (result.restock.failed) details.push(`${result.restock.failed} stock refill${result.restock.failed === 1 ? "" : "s"} failed`);
         if (result.restockError) details.push("stock check unavailable");
         setRefreshMessage(`Refresh complete: ${details.join(" · ")}.`);
-        document.dispatchEvent(new CustomEvent("sellfinity:bulk-tracking-refresh"));
         router.refresh();
       } catch {
         setRefreshMessage("Could not complete the Amazon and eBay refresh. Please try again.");
