@@ -231,7 +231,8 @@ export function OrdersView({ orders, fetchError, profitProtectionEnabled, autoRe
           `${resolution.resolved} tracking number${resolution.resolved === 1 ? "" : "s"} resolved`,
           `${result.tracking.uploaded} sent to eBay`,
         ];
-        if (resolution.pending) details.push(`${resolution.pending} tracking link${resolution.pending === 1 ? " needs" : "s need"} Amazon sign-in or another update`);
+        if (result.tracking.savedLocally) details.push(`${result.tracking.savedLocally} delivered tracking ID${result.tracking.savedLocally === 1 ? "" : "s"} saved`);
+        if (resolution.pending) details.push(`${resolution.pending} tracking ID${resolution.pending === 1 ? " is" : "s are"} still pending`);
         if (result.tracking.failed) details.push(`${result.tracking.failed} eBay update${result.tracking.failed === 1 ? "" : "s"} failed`);
         if (result.restock.restocked) details.push(`${result.restock.restocked} listing${result.restock.restocked === 1 ? "" : "s"} refilled to 5`);
         if (result.restock.failed) details.push(`${result.restock.failed} stock refill${result.restock.failed === 1 ? "" : "s"} failed`);

@@ -3,6 +3,7 @@ import { db } from "@/lib/db";
 import { trackingFromPage } from "./tracking-resolver-utils";
 
 export type TrackingResolutionResult = { examined: number; resolved: number; pending: number };
+export type TrackingResolutionOptions = { retryFailed?: boolean };
 
 const ALLOWED_TRACKING_HOST = /(^|\.)(?:amazon\.com|a\.co|amzn\.to|ups\.com|fedex\.com|usps\.com|dhl\.com|ontrac\.com)$/i;
 
@@ -39,14 +40,17 @@ async function fetchTrackingPage(initialUrl: URL): Promise<{ url: string; html: 
   throw new Error("Amazon tracking redirected too many times.");
 }
 
-export async function resolveMissingAmazonTracking(userId: string): Promise<TrackingResolutionResult> {
+export async function resolveMissingAmazonTracking(
+  userId: string,
+  options: TrackingResolutionOptions = {},
+): Promise<TrackingResolutionResult> {
   const purchases = await db.amazonPurchase.findMany({
     where: {
       userId,
       status: { in: ["SHIPPED", "DELIVERED"] },
       trackingNumber: null,
       trackingUrl: { not: null },
-      trackingLookupError: null,
+      ...(!options.retryFailed && { trackingLookupError: null }),
     },
     orderBy: { updatedAt: "desc" },
     take: 80,

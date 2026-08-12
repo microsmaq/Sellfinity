@@ -109,7 +109,10 @@ async function reconcile(userId: string): Promise<number> {
   return matched;
 }
 
-export async function syncAmazonPurchaseEmails(userId: string): Promise<{ examined: number; imported: number; matched: number; trackingResolution: TrackingResolutionResult }> {
+export async function syncAmazonPurchaseEmails(
+  userId: string,
+  options: { retryTrackingFailures?: boolean } = {},
+): Promise<{ examined: number; imported: number; matched: number; trackingResolution: TrackingResolutionResult }> {
   const token = await accessToken(userId);
   const connection = await db.amazonEmailConnection.findUniqueOrThrow({ where: { userId } });
   const processed = new Set<string>(JSON.parse(connection.processedMessageIdsJson) as string[]);
@@ -192,7 +195,9 @@ export async function syncAmazonPurchaseEmails(userId: string): Promise<{ examin
     imported++;
   }
   const matched = await reconcile(userId);
-  const trackingResolution = await resolveMissingAmazonTracking(userId);
+  const trackingResolution = await resolveMissingAmazonTracking(userId, {
+    retryFailed: options.retryTrackingFailures,
+  });
   await db.amazonEmailConnection.update({ where: { userId }, data: { lastSyncedAt: new Date(), lastSyncError: null, processedMessageIdsJson: JSON.stringify([...processed].slice(-1000)), syncVersion: AMAZON_EMAIL_SYNC_VERSION } });
   return { examined: ids.length, imported, matched, trackingResolution };
 }

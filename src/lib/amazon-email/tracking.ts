@@ -6,6 +6,7 @@ import { ebayCarrierCode, normalizeTrackingNumber, remoteFulfillmentLookupKeys, 
 export type TrackingUploadResult = {
   eligible: number;
   uploaded: number;
+  savedLocally: number;
   failed: number;
 };
 
@@ -23,7 +24,39 @@ export async function uploadAmazonTrackingToEbay(userId: string): Promise<Tracki
       amazonPurchaseItem: { include: { purchase: { include: { items: { select: { id: true } } } } } },
     },
   });
-  if (!candidates.length) return { eligible: 0, uploaded: 0, failed: 0 };
+  if (!candidates.length) return { eligible: 0, uploaded: 0, savedLocally: 0, failed: 0 };
+
+  let eligible = 0;
+  let uploaded = 0;
+  let savedLocally = 0;
+  let failed = 0;
+
+  // Delivered orders are already closed on eBay. Save newly resolved tracking
+  // in Sellfinity without making an unnecessary fulfillment API request.
+  const activeCandidates: typeof candidates = [];
+  for (const order of candidates) {
+    const item = order.amazonPurchaseItem;
+    const purchase = item?.purchase;
+    const rawTracking = purchase?.trackingNumber;
+    if (!item || !purchase || !rawTracking || purchase.status !== "DELIVERED") {
+      activeCandidates.push(order);
+      continue;
+    }
+    if (!item.asin || item.asin.toUpperCase() !== order.listing.product.sku.toUpperCase()) continue;
+    if (!trackingAppliesToAsin(purchase.trackingAsinsJson, purchase.items.length, item.asin)) continue;
+    const trackingNumber = normalizeTrackingNumber(rawTracking);
+    if (trackingNumber.length < 8 || trackingNumber.length > 30) continue;
+    await db.order.update({ where: { id: order.id }, data: {
+      sourcingStatus: "DELIVERED",
+      ebayTrackingNumber: trackingNumber,
+      ebayTrackingCarrier: ebayCarrierCode(purchase.carrier, trackingNumber),
+      ebayTrackingSyncedAt: null,
+      ebayTrackingSyncError: null,
+    } });
+    savedLocally++;
+  }
+
+  if (!activeCandidates.length) return { eligible, uploaded, savedLocally, failed };
 
   const ebay = await getEbayClientForUser(userId);
   const remoteOrders = await ebay.getUnfulfilledOrders(userId);
@@ -36,10 +69,7 @@ export async function uploadAmazonTrackingToEbay(userId: string): Promise<Tracki
     )),
   );
 
-  let eligible = 0;
-  let uploaded = 0;
-  let failed = 0;
-  for (const order of candidates) {
+  for (const order of activeCandidates) {
     const item = order.amazonPurchaseItem;
     if (!item) continue;
     const purchase = item.purchase;
@@ -77,5 +107,5 @@ export async function uploadAmazonTrackingToEbay(userId: string): Promise<Tracki
       failed++;
     }
   }
-  return { eligible, uploaded, failed };
+  return { eligible, uploaded, savedLocally, failed };
 }
