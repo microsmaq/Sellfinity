@@ -238,6 +238,7 @@ export function OrdersView({ orders, fetchError, profitProtectionEnabled, autoRe
         if (result.restock.failed) details.push(`${result.restock.failed} stock refill${result.restock.failed === 1 ? "" : "s"} failed`);
         if (result.restockError) details.push("stock check unavailable");
         setRefreshMessage(`Refresh complete: ${details.join(" · ")}.`);
+        document.dispatchEvent(new CustomEvent("sellfinity:bulk-tracking-refresh"));
         router.refresh();
       } catch {
         setRefreshMessage("Could not complete the Amazon and eBay refresh. Please try again.");
@@ -336,7 +337,7 @@ export function OrdersView({ orders, fetchError, profitProtectionEnabled, autoRe
           <select value={sort} onChange={(event) => setSort(event.target.value as typeof sort)} className="min-h-10 rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-700" aria-label="Sort orders">
             <option value="NEWEST">Newest first</option><option value="SHIP_BY">Ship-by date</option><option value="PROFIT">Highest profit</option>
           </select>
-          <Button variant="secondary" disabled={pending} onClick={refreshFulfillment}>{pending ? "Checking email…" : "↻ Refresh Amazon & eBay"}</Button>
+          <Button data-sellfinity-refresh="true" variant="secondary" disabled={pending} onClick={refreshFulfillment}>{pending ? "Checking email…" : "↻ Refresh Amazon & eBay"}</Button>
           <a href="/downloads/sellfinity-tracking-helper.zip" download className="inline-flex min-h-10 items-center justify-center rounded-lg border border-slate-300 bg-white px-3 text-sm font-medium text-slate-700 hover:bg-slate-50">Download Chrome tracking helper</a>
         </div>
 
