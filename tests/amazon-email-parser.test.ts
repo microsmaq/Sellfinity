@@ -2,6 +2,22 @@ import { describe, expect, it } from "vitest";
 import { parseAmazonEmail } from "@/lib/amazon-email/parser";
 
 describe("Amazon purchase email parser", () => {
+  it("parses Amazon's current Ordered confirmation format", () => {
+    const parsed = parseAmazonEmail({
+      subject: 'Ordered: "RELIFE REBUILD YOUR LIFE AB..."',
+      sentAt: new Date("2026-08-11T06:38:00Z"),
+      html: `Order # 114-2267315-1849848
+        <a href="https://www.amazon.com/gp/r.html?U=https%3A%2F%2Fwww.amazon.com%2Fdp%2FB0DFY1GZX4">RELIFE REBUILD YOUR LIFE AB Workout Machine Adjustable Ab Trainer Machine</a>
+        Quantity: 1 $59.98 Grand Total: $64.93`,
+    });
+    expect(parsed?.amazonOrderId).toBe("114-2267315-1849848");
+    expect(parsed?.items[0]).toMatchObject({
+      asin: "B0DFY1GZX4",
+      title: "RELIFE REBUILD YOUR LIFE AB Workout Machine Adjustable Ab Trainer Machine",
+    });
+    expect(parsed?.totalCents).toBe(6493);
+  });
+
   it("extracts an order, exact ASIN, quantities, and actual charges", () => {
     const parsed = parseAmazonEmail({
       subject: "Your Amazon.com order #111-2222222-3333333",

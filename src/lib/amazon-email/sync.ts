@@ -9,7 +9,10 @@ import { deliveryAddressFingerprint } from "./address-match";
 
 type GmailPart = { mimeType?: string; body?: { data?: string }; parts?: GmailPart[] };
 type GmailMessage = { id: string; internalDate?: string; payload?: { headers?: { name: string; value: string }[] } & GmailPart };
-const AMAZON_EMAIL_SYNC_VERSION = 5;
+// Version 6 adds Amazon's current "Ordered:" confirmation subject. Bumping the
+// version causes connected inboxes to rescan recent messages once, recovering
+// confirmations that the older Gmail query never returned.
+const AMAZON_EMAIL_SYNC_VERSION = 6;
 
 function decode(data?: string): string {
   if (!data) return "";
@@ -118,7 +121,7 @@ export async function syncAmazonPurchaseEmails(
   const processed = new Set<string>(JSON.parse(connection.processedMessageIdsJson) as string[]);
   let pageToken: string | undefined; const ids: string[] = [];
   do {
-    const params = new URLSearchParams({ q: "from:(amazon.com) (subject:(order OR shipped OR delivered OR delivery)) newer_than:365d", maxResults: "100" });
+    const params = new URLSearchParams({ q: "from:(amazon.com) (subject:(order OR ordered OR shipped OR delivered OR delivery)) newer_than:365d", maxResults: "100" });
     if (pageToken) params.set("pageToken", pageToken);
     const page = await gmail<{ messages?: { id: string }[]; nextPageToken?: string }>(token, `messages?${params}`);
     ids.push(...(page.messages ?? []).map((message) => message.id)); pageToken = page.nextPageToken;
