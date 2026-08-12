@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Badge, Button, Card, Input, StatCard, cx } from "@/components/ui";
+import { PremiumProgress } from "@/components/premium-progress";
 import { formatCents } from "@/lib/money";
 import { protectOrderMargin, setAutoProfitProtection } from "@/lib/actions/profit-protection";
 import { syncAmazonEmailsNow } from "@/lib/actions/amazon-email";
@@ -47,6 +48,21 @@ export type FulfillmentOrderRow = {
 
 type Tab = "ALL" | "NEEDS_ACTION" | "PURCHASED" | "IN_TRANSIT" | "DELIVERED" | "EXCEPTIONS";
 
+type RefreshRun = {
+  startedAt: number;
+  server: "running" | "complete" | "error";
+  helper: "starting" | "running" | "complete" | "unavailable";
+  trackingTotal: number;
+  trackingProcessed: number;
+  trackingFound: number;
+  result: string | null;
+};
+
+function elapsedLabel(seconds: number): string {
+  const minutes = Math.floor(seconds / 60);
+  return minutes ? `${minutes}m ${String(seconds % 60).padStart(2, "0")}s` : `${seconds}s`;
+}
+
 const stageMeta: Record<FulfillmentStage, { label: string; tone: "amber" | "indigo" | "green" | "red" | "slate" }> = {
   AWAITING: { label: "Awaiting purchase", tone: "amber" },
   PURCHASED: { label: "Purchased", tone: "indigo" },
@@ -88,6 +104,8 @@ export function OrdersView({ orders, fetchError, profitProtectionEnabled, autoRe
   const [restockEnabled, setRestockEnabled] = useState(autoRestockEnabled);
   const [restockMessage, setRestockMessage] = useState<string | null>(null);
   const [refreshMessage, setRefreshMessage] = useState<string | null>(null);
+  const [refreshRun, setRefreshRun] = useState<RefreshRun | null>(null);
+  const [refreshElapsed, setRefreshElapsed] = useState(0);
   const [orderOverrides, setOrderOverrides] = useState<Record<string, Partial<FulfillmentOrderRow>>>({});
   const [retryingOrderId, setRetryingOrderId] = useState<string | null>(null);
   const [manualTracking, setManualTracking] = useState<Record<string, string>>({});
@@ -100,9 +118,33 @@ export function OrdersView({ orders, fetchError, profitProtectionEnabled, autoRe
       if (!detail?.orderId || !detail.trackingNumber) return;
       setManualTracking((current) => ({ ...current, [detail.orderId!]: detail.trackingNumber! }));
     }
+    function receiveHelperProgress(event: Event) {
+      const detail = (event as CustomEvent<{ status?: "running" | "complete"; total?: number; processed?: number; found?: number }>).detail;
+      if (!detail?.status) return;
+      const helperStatus = detail.status;
+      setRefreshRun((current) => current ? {
+        ...current,
+        helper: helperStatus,
+        trackingTotal: detail.total ?? current.trackingTotal,
+        trackingProcessed: detail.processed ?? current.trackingProcessed,
+        trackingFound: detail.found ?? current.trackingFound,
+      } : current);
+    }
     document.addEventListener("sellfinity:tracking-filled", receiveExtensionTracking);
-    return () => document.removeEventListener("sellfinity:tracking-filled", receiveExtensionTracking);
+    document.addEventListener("sellfinity:tracking-helper-progress", receiveHelperProgress);
+    return () => {
+      document.removeEventListener("sellfinity:tracking-filled", receiveExtensionTracking);
+      document.removeEventListener("sellfinity:tracking-helper-progress", receiveHelperProgress);
+    };
   }, []);
+
+  useEffect(() => {
+    if (!refreshRun || (refreshRun.server !== "running" && refreshRun.helper !== "running" && refreshRun.helper !== "starting")) return;
+    const updateElapsed = () => setRefreshElapsed(Math.floor((Date.now() - refreshRun.startedAt) / 1000));
+    updateElapsed();
+    const timer = window.setInterval(updateElapsed, 1000);
+    return () => window.clearInterval(timer);
+  }, [refreshRun]);
 
   function toggleProfitProtection() {
     const nextEnabled = !protectionEnabled;
@@ -216,6 +258,18 @@ export function OrdersView({ orders, fetchError, profitProtectionEnabled, autoRe
   }
 
   function refreshFulfillment() {
+    const trackingTotal = displayOrders.filter((order) => !order.trackingNumber && !!order.amazonTrackingUrl).length;
+    const startedAt = Date.now();
+    setRefreshElapsed(0);
+    setRefreshRun({
+      startedAt,
+      server: "running",
+      helper: trackingTotal ? "starting" : "complete",
+      trackingTotal,
+      trackingProcessed: 0,
+      trackingFound: 0,
+      result: null,
+    });
     setRefreshMessage("Checking Amazon order, shipment, delivery, and tracking emails…");
     // Start the signed-in browser helper immediately. Tracking lookup should
     // still run when Gmail authorization has expired or the server sync fails.
@@ -224,7 +278,9 @@ export function OrdersView({ orders, fetchError, profitProtectionEnabled, autoRe
       try {
         const result = await syncAmazonEmailsNow();
         if ("error" in result) {
-          setRefreshMessage(result.error ?? "Amazon email refresh failed.");
+          const message = result.error ?? "Amazon email refresh failed.";
+          setRefreshMessage(message);
+          setRefreshRun((current) => current ? { ...current, server: "error", result: message } : current);
           return;
         }
         const resolution = result.trackingResolution;
@@ -241,12 +297,49 @@ export function OrdersView({ orders, fetchError, profitProtectionEnabled, autoRe
         if (result.restock.failed) details.push(`${result.restock.failed} stock refill${result.restock.failed === 1 ? "" : "s"} failed`);
         if (result.restockError) details.push("stock check unavailable");
         setRefreshMessage(`Refresh complete: ${details.join(" · ")}.`);
+        setRefreshRun((current) => current ? {
+          ...current,
+          server: "complete",
+          result: `Refresh complete: ${details.join(" · ")}.`,
+        } : current);
         router.refresh();
       } catch {
-        setRefreshMessage("Could not complete the Amazon and eBay refresh. Please try again.");
+        const message = "Could not complete the Amazon and eBay refresh. Please try again.";
+        setRefreshMessage(message);
+        setRefreshRun((current) => current ? { ...current, server: "error", result: message } : current);
       }
     });
   }
+
+  const helperStartingTimedOut = refreshRun?.helper === "starting" && refreshElapsed >= 8;
+  const refreshWorking = !!refreshRun && (
+    refreshRun.server === "running" || refreshRun.helper === "running" || (refreshRun.helper === "starting" && !helperStartingTimedOut)
+  );
+  const refreshComplete = !!refreshRun && !refreshWorking && refreshRun.server === "complete";
+  const refreshStatus = refreshWorking ? "running" : refreshComplete ? "complete" : "error";
+  const helperRatio = refreshRun?.trackingTotal
+    ? refreshRun.trackingProcessed / refreshRun.trackingTotal
+    : 1;
+  const refreshPercentage = !refreshRun
+    ? 0
+    : refreshComplete
+      ? 100
+      : refreshWorking
+        ? Math.min(96, Math.max(8, refreshRun.server === "running" ? 12 + refreshElapsed * 0.8 : 60, 55 + helperRatio * 40))
+        : 100;
+  const refreshSubtitle = !refreshRun
+    ? ""
+    : refreshRun.server === "running"
+      ? refreshElapsed < 8
+        ? "Importing current eBay orders and preparing the Amazon email scan…"
+        : refreshElapsed < 35
+          ? "Scanning Amazon purchase, shipment, and delivery emails…"
+          : refreshElapsed < 90
+            ? "Resolving tracking links and matching purchases to fulfillment rows…"
+            : "Still working normally—large email histories and Amazon tracking pages can take several minutes."
+      : refreshRun.helper === "running"
+        ? "Email and eBay refresh finished. The signed-in browser helper is still checking tracking pages."
+        : refreshRun.result ?? "Refresh finished.";
 
   const tabCounts = useMemo(() => ({
     ALL: displayOrders.length,
@@ -339,11 +432,39 @@ export function OrdersView({ orders, fetchError, profitProtectionEnabled, autoRe
           <select value={sort} onChange={(event) => setSort(event.target.value as typeof sort)} className="min-h-10 rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-700" aria-label="Sort orders">
             <option value="NEWEST">Newest first</option><option value="SHIP_BY">Ship-by date</option><option value="PROFIT">Highest profit</option>
           </select>
-          <Button data-sellfinity-refresh="true" variant="secondary" disabled={pending} onClick={refreshFulfillment}>{pending ? "Checking email…" : "↻ Refresh Amazon & eBay"}</Button>
+          <Button data-sellfinity-refresh="true" variant="secondary" disabled={refreshWorking} onClick={refreshFulfillment}>{refreshWorking ? "Refresh in progress…" : "↻ Refresh Amazon & eBay"}</Button>
           <a href="/downloads/sellfinity-tracking-helper.zip" download className="inline-flex min-h-10 items-center justify-center rounded-lg border border-slate-300 bg-white px-3 text-sm font-medium text-slate-700 hover:bg-slate-50">Download Chrome tracking helper</a>
         </div>
 
-        {refreshMessage && <p className="border-b border-indigo-100 bg-indigo-50 px-4 py-3 text-sm text-indigo-800" role="status">{refreshMessage}</p>}
+        {refreshRun ? (
+          <div className="border-b border-slate-200 bg-slate-50/70 p-4" role="status" aria-live="polite">
+            <PremiumProgress
+              title={refreshWorking ? "Refreshing fulfillment" : refreshComplete ? "Fulfillment refresh complete" : "Fulfillment refresh needs attention"}
+              subtitle={refreshSubtitle}
+              percentage={refreshPercentage}
+              status={refreshStatus}
+              stats={[
+                { label: "elapsed", value: elapsedLabel(refreshElapsed), tone: "info" },
+                { label: "tracking links checked", value: `${refreshRun.trackingProcessed}/${refreshRun.trackingTotal}` },
+                { label: "tracking IDs found", value: refreshRun.trackingFound, tone: refreshRun.trackingFound ? "success" : "default" },
+              ]}
+              className="border-0 shadow-none"
+            />
+            <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+              {[
+                { label: "eBay orders", active: refreshRun.server === "running" && refreshElapsed < 8, done: refreshRun.server !== "running" },
+                { label: "Amazon emails", active: refreshRun.server === "running" && refreshElapsed >= 8, done: refreshRun.server !== "running" },
+                { label: "Tracking pages", active: refreshRun.helper === "running" || (refreshRun.helper === "starting" && !helperStartingTimedOut), done: refreshRun.helper === "complete" },
+                { label: "Prices & stock", active: refreshRun.server === "running" && refreshElapsed >= 35, done: refreshRun.server === "complete" },
+              ].map((stage) => (
+                <div key={stage.label} className={cx("flex items-center gap-2 rounded-lg border px-3 py-2 text-xs font-medium transition-colors", stage.done ? "border-emerald-200 bg-emerald-50 text-emerald-700" : stage.active ? "border-indigo-200 bg-indigo-50 text-indigo-700" : "border-slate-200 bg-white text-slate-400")}>
+                  <span className={cx("flex h-5 w-5 items-center justify-center rounded-full", stage.done ? "bg-emerald-600 text-white" : stage.active ? "animate-pulse bg-indigo-600 text-white" : "bg-slate-200 text-slate-500")}>{stage.done ? "✓" : stage.active ? "•" : ""}</span>
+                  {stage.label}
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : refreshMessage && <p className="border-b border-indigo-100 bg-indigo-50 px-4 py-3 text-sm text-indigo-800" role="status">{refreshMessage}</p>}
 
         {fetchError && <p className="border-b border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">Live status is temporarily unavailable: {fetchError}</p>}
 

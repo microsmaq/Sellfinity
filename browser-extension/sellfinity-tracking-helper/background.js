@@ -98,7 +98,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
       await notifySource(matching, message.type === "TRACKING_FOUND"
         ? { type: "FILL_TRACKING", trackingNumber: message.trackingNumber, carrier: message.carrier, autoSave: !!matching.bulk }
-        : { type: "TRACKING_LOOKUP_FAILED", reason: message.reason });
+        : { type: "TRACKING_LOOKUP_FAILED", reason: message.reason, autoSave: !!matching.bulk });
       await savePending(requests.filter((request) => request.requestId !== matching.requestId));
       if (matching.bulk) {
         try { await chrome.tabs.remove(sender.tab.id); } catch { /* The tracking tab may already be closed. */ }

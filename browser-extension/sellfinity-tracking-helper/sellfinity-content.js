@@ -32,6 +32,7 @@
 
   const saveQueue = [];
   let savingQueue = false;
+  let bulkProgress = null;
 
   function wait(milliseconds) {
     return new Promise((resolve) => setTimeout(resolve, milliseconds));
@@ -78,12 +79,33 @@
       });
   }
 
+  function reportBulkProgress(status = "running") {
+    if (!bulkProgress) return;
+    document.dispatchEvent(new CustomEvent("sellfinity:tracking-helper-progress", { detail: {
+      status,
+      total: bulkProgress.total,
+      processed: bulkProgress.processed,
+      found: bulkProgress.found
+    } }));
+  }
+
+  function finishBulkItem(found) {
+    if (!bulkProgress) return;
+    bulkProgress.processed = Math.min(bulkProgress.total, bulkProgress.processed + 1);
+    if (found) bulkProgress.found += 1;
+    reportBulkProgress(bulkProgress.processed >= bulkProgress.total ? "complete" : "running");
+  }
+
   document.addEventListener("sellfinity:bulk-tracking-refresh", () => {
     const requests = bulkTrackingRequests();
     if (!requests.length) return;
     chrome.runtime.sendMessage({ type: "BEGIN_BULK_TRACKING_REQUEST", requests })
       .then((result) => {
-        if (result?.queued) toast(`Checking ${result.queued} Amazon tracking page${result.queued === 1 ? "" : "s"}…`);
+        if (result?.queued) {
+          bulkProgress = { total: result.queued, processed: 0, found: 0 };
+          reportBulkProgress();
+          toast(`Checking ${result.queued} Amazon tracking page${result.queued === 1 ? "" : "s"}…`);
+        }
       })
       .catch(() => toast("The tracking helper could not start the automatic check.", "error"));
   });
@@ -115,7 +137,8 @@
       const inputs = [...document.querySelectorAll('input[aria-label^="Tracking number for "]')];
       const input = inputs.find((candidate) => candidate.getAttribute("aria-label") === message.inputLabel);
       if (!(input instanceof HTMLInputElement)) {
-        toast("Tracking was found, but the original fulfillment row is no longer visible.", "error");
+        if (message.autoSave) finishBulkItem(false);
+        else toast("Tracking was found, but the original fulfillment row is no longer visible.", "error");
         return;
       }
       setReactInputValue(input, message.trackingNumber);
@@ -125,6 +148,7 @@
         carrier: message.carrier
       } }));
       if (message.autoSave) queueAutomaticSave(message.orderId || input.dataset.orderId);
+      if (message.autoSave) finishBulkItem(true);
       input.scrollIntoView({ behavior: "smooth", block: "center" });
       input.focus();
       input.style.outline = "3px solid #34d399";
@@ -134,7 +158,8 @@
         : `${message.carrier || "Carrier"} tracking ${message.trackingNumber} filled. Review it, then save.`, "success");
     }
     if (message?.type === "TRACKING_LOOKUP_FAILED") {
-      toast(message.reason || "No supported tracking number was found.", "error");
+      if (message.autoSave) finishBulkItem(false);
+      else toast(message.reason || "No supported tracking number was found.", "error");
     }
   });
 })();
