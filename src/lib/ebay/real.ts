@@ -11,6 +11,7 @@ import {
   type EbayClient,
   type ListingUpdate,
   type RemoteListing,
+  type ListingTrafficMetric,
   type RemoteOrder,
   type RemoteFulfillmentOrder,
   type ShippingFulfillmentInput,
@@ -583,6 +584,57 @@ ${innerXml}
       return;
     }
     await this.request("POST", `/sell/inventory/v1/offer/${offer.offerId}/withdraw`);
+  }
+
+  async getListingTraffic(
+    _userId: string,
+    ebayListingIds: string[],
+    start: Date,
+    end: Date,
+  ): Promise<ListingTrafficMetric[]> {
+    if (ebayListingIds.length === 0) return [];
+    const metrics = [
+      "TOTAL_IMPRESSION_TOTAL",
+      "LISTING_VIEWS_TOTAL",
+      "CLICK_THROUGH_RATE",
+      "SALES_CONVERSION_RATE",
+    ];
+    const date = (value: Date) => value.toISOString().slice(0, 10).replaceAll("-", "");
+    const filter = `listing_ids:{${ebayListingIds.join("|")}},date_range:[${date(start)}..${date(end)}]`;
+    const query = new URLSearchParams({
+      dimension: "LISTING",
+      filter,
+      metric: metrics.join(","),
+    });
+    type TrafficValue = { value?: string; applicable?: boolean };
+    type TrafficRecord = { dimensionValues?: TrafficValue[]; metricValues?: TrafficValue[] };
+    type TrafficReport = {
+      header?: { metrics?: { key?: string }[] };
+      records?: TrafficRecord[];
+    };
+    const report = await this.request<TrafficReport>(
+      "GET",
+      `/sell/analytics/v1/traffic_report?${query.toString()}`,
+    );
+    const keys = report.header?.metrics?.map((metric) => metric.key ?? "") ?? metrics;
+    const number = (record: TrafficRecord, key: string) => {
+      const index = keys.indexOf(key);
+      const metric = index >= 0 ? record?.metricValues?.[index] : undefined;
+      if (!metric?.applicable || metric.value === undefined) return null;
+      const value = Number(metric.value);
+      return Number.isFinite(value) ? value : null;
+    };
+    return (report.records ?? []).flatMap((record) => {
+      const ebayListingId = record.dimensionValues?.[0]?.value;
+      if (!ebayListingId) return [];
+      return [{
+        ebayListingId,
+        impressions: number(record, "TOTAL_IMPRESSION_TOTAL"),
+        views: number(record, "LISTING_VIEWS_TOTAL"),
+        clickThroughRate: number(record, "CLICK_THROUGH_RATE"),
+        salesConversionRate: number(record, "SALES_CONVERSION_RATE"),
+      }];
+    });
   }
 
   async getSellerListings(): Promise<RemoteListing[]> {

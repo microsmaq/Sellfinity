@@ -12,6 +12,7 @@ const links = [
   { href: "/listings", label: "Listings", icon: "🏷️" },
   { href: "/orders", label: "Fulfillment", icon: "📦" },
   { href: "/inventory", label: "Inventory sync", icon: "🔄" },
+  { href: "/analytics", label: "Product analytics", icon: "📈" },
   { href: "/settings", label: "Settings", icon: "⚙️" },
 ];
 

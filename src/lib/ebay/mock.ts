@@ -11,6 +11,7 @@ import {
   type CreateListingInput,
   type EbayClient,
   type RemoteListing,
+  type ListingTrafficMetric,
   type ListingUpdate,
   type RemoteOrder,
   type RemoteFulfillmentOrder,
@@ -124,6 +125,27 @@ export class MockEbayClient implements EbayClient {
       quantity: l.quantity,
       listingDate: l.publishedAt,
     }));
+  }
+
+  async getListingTraffic(
+    _userId: string,
+    ebayListingIds: string[],
+    start: Date,
+    end: Date,
+  ): Promise<ListingTrafficMetric[]> {
+    const days = Math.max(1, Math.ceil((end.getTime() - start.getTime()) / DAY_MS));
+    return ebayListingIds.map((ebayListingId) => {
+      const rand = mulberry32(hashString(`${ebayListingId}:traffic:${days}`));
+      const impressions = Math.round(days * (18 + rand() * 55));
+      const views = Math.max(1, Math.round(impressions * (0.025 + rand() * 0.08)));
+      return {
+        ebayListingId,
+        impressions,
+        views,
+        clickThroughRate: (views / impressions) * 100,
+        salesConversionRate: 1.5 + rand() * 6,
+      };
+    });
   }
 
   async getOrders(userId: string, since: Date): Promise<RemoteOrder[]> {

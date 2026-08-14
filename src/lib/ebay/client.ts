@@ -84,6 +84,14 @@ export type RemoteListing = {
   listingDate?: Date | null;
 };
 
+export type ListingTrafficMetric = {
+  ebayListingId: string;
+  impressions: number | null;
+  views: number | null;
+  clickThroughRate: number | null;
+  salesConversionRate: number | null;
+};
+
 export class EbayApiError extends Error {}
 
 export interface EbayClient {
@@ -107,6 +115,13 @@ export interface EbayClient {
    * not created through this app.
    */
   getSellerListings(userId: string): Promise<RemoteListing[]>;
+  /** Buyer engagement for the requested listings over a date range. */
+  getListingTraffic?(
+    userId: string,
+    ebayListingIds: string[],
+    start: Date,
+    end: Date,
+  ): Promise<ListingTrafficMetric[]>;
 }
 
 /** Validation eBay itself enforces; the mock applies it too so failures show up in dev. */

@@ -1,9 +1,11 @@
 import path from "node:path";
+import { existsSync } from "node:fs";
 import { defineConfig } from "vitest/config";
 
 // Tests run against the dedicated TEST_DATABASE_URL database (wiped between
 // tests) — never the app database.
-process.loadEnvFile?.(path.resolve(__dirname, ".env"));
+const envFile = path.resolve(__dirname, ".env");
+if (existsSync(envFile)) process.loadEnvFile?.(envFile);
 const testDbUrl = process.env.TEST_DATABASE_URL ?? "";
 
 export default defineConfig({

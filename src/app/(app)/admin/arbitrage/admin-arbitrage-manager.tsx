@@ -249,6 +249,12 @@ function CatalogRow({
       </td>
       <td className="sticky right-0 min-w-[150px] bg-white px-4 py-4 group-hover:bg-slate-50">
         <div className="flex flex-col gap-1.5">
+          <Link
+            href={`/admin/arbitrage/${encodeURIComponent(row.asin)}`}
+            className="inline-flex min-h-8 items-center justify-center rounded-lg bg-indigo-50 px-2.5 text-xs font-semibold text-indigo-700 hover:bg-indigo-100"
+          >
+            View report
+          </Link>
           <Button
             size="sm"
             variant="secondary"

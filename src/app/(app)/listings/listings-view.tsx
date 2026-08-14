@@ -225,6 +225,12 @@ function ListingMarketRow({
               </p>
             )}
             <p className="mt-1 text-xs text-slate-500">SKU {row.sku}</p>
+            <Link
+              href={`/analytics/asins/${encodeURIComponent(row.sku)}`}
+              className="mt-1 inline-block text-xs font-semibold text-indigo-600 hover:underline"
+            >
+              View performance
+            </Link>
             <div className="mt-1 flex flex-wrap gap-1.5">
               <Badge tone={statusTone[row.status]}>{row.status}</Badge>
               <Badge tone={confidenceTone(row.sourceMatchConfidence)}>
