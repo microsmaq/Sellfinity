@@ -90,7 +90,7 @@ export function AsinReportView({ report, admin }: { report: AsinReport; admin: b
       <PageHeader
         title="ASIN performance report"
         subtitle={admin ? "Performance across every Sellfinity seller who mirrored this product." : "Sales and buyer engagement for your listings of this product."}
-        actions={<Link href={admin ? "/admin/arbitrage" : "/analytics"} className="text-sm font-medium text-indigo-600 hover:text-indigo-500">← Back</Link>}
+        actions={<Link href="/analytics" className="text-sm font-medium text-indigo-600 hover:text-indigo-500">← Back to product analytics</Link>}
       />
       <Card className="mb-6 p-5">
         <div className="flex flex-col gap-4 sm:flex-row">
