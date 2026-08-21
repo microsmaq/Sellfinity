@@ -1,4 +1,4 @@
-import { discountedEbayPriceCents, EBAY_FINAL_VALUE_RATE, EBAY_PER_ORDER_FEE_CENTS } from "@/lib/fees";
+import { discountedEbayPriceCents, ebayAdvertisingFeeCents, EBAY_FINAL_VALUE_RATE, EBAY_PER_ORDER_FEE_CENTS, normalizeAdRateBps } from "@/lib/fees";
 
 export const VERIFIED_MARGIN_TARGET_BPS = 500;
 export const VERIFIED_PROFIT_TARGET_CENTS = 700;
@@ -41,8 +41,12 @@ export function verifiedProfitProtectionDecision(input: {
   realizedEbayFeeCents: number;
   verifiedAmazonCostCents: number;
   sitewideDiscountBps?: number;
+  adRateBps?: number;
 }): VerifiedProfitDecision {
-  const realizedProfitCents = input.realizedRevenueCents - input.realizedEbayFeeCents - input.verifiedAmazonCostCents;
+  const adRateBps = normalizeAdRateBps(input.adRateBps);
+  const totalRealizedFeeCents = input.realizedEbayFeeCents
+    + ebayAdvertisingFeeCents(input.realizedRevenueCents, adRateBps);
+  const realizedProfitCents = input.realizedRevenueCents - totalRealizedFeeCents - input.verifiedAmazonCostCents;
   const realizedMarginBps = input.realizedRevenueCents > 0
     ? Math.floor((realizedProfitCents * 10_000) / input.realizedRevenueCents)
     : -10_000;
@@ -54,9 +58,9 @@ export function verifiedProfitProtectionDecision(input: {
   const quantity = Math.max(1, input.orderQuantity);
   const unitCostCents = Math.ceil(input.verifiedAmazonCostCents / quantity);
   const observedVariableFeeBps = input.realizedRevenueCents > 0
-    ? Math.ceil((Math.max(0, input.realizedEbayFeeCents - EBAY_PER_ORDER_FEE_CENTS) * 10_000) / input.realizedRevenueCents)
+    ? Math.ceil((Math.max(0, totalRealizedFeeCents - EBAY_PER_ORDER_FEE_CENTS) * 10_000) / input.realizedRevenueCents)
     : 0;
-  const variableFeeBps = Math.max(Math.round(EBAY_FINAL_VALUE_RATE * 10_000), observedVariableFeeBps);
+  const variableFeeBps = Math.max(Math.round(EBAY_FINAL_VALUE_RATE * 10_000) + adRateBps, observedVariableFeeBps);
   const discountBps = Math.max(0, Math.min(9_000, Math.round(input.sitewideDiscountBps ?? 0)));
 
   // Solve both targets, then take the cheaper one because the policy is 5%

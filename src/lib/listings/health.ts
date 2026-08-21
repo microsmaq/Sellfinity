@@ -33,7 +33,7 @@ type HealthListing = {
   } | null;
 };
 
-export function assessListingHealth(listing: HealthListing, sitewideDiscountBps = 0): ListingHealth {
+export function assessListingHealth(listing: HealthListing, sitewideDiscountBps = 0, adRateBps = 300): ListingHealth {
   const benchmarkPriceCents = listing.market?.bestSellingPriceCents ?? null;
   if (!listing.match || listing.match.unavailable) {
     return {
@@ -51,6 +51,7 @@ export function assessListingHealth(listing: HealthListing, sitewideDiscountBps 
     listing.match.amazonPriceCents,
     listing.match.shippingCostCents,
     sitewideDiscountBps,
+    adRateBps,
   );
   const buyerPriceCents = discountedEbayPriceCents(listing.priceCents, sitewideDiscountBps);
   const marginPct =

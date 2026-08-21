@@ -6,12 +6,19 @@
 
 import { db } from "@/lib/db";
 import {
+  EBAY_US_IDENTIFIER_UNAVAILABLE,
+  ebayProductBrand,
+  ebayProductMpn,
+  requiredEbayAspectValue,
+} from "./product-details";
+import {
   EbayApiError,
   type CreateListingInput,
   type EbayClient,
   type ListingUpdate,
   type RemoteListing,
   type ListingTrafficMetric,
+  type ListingTrafficDayMetric,
   type RemoteOrder,
   type RemoteFulfillmentOrder,
   type ShippingFulfillmentInput,
@@ -23,6 +30,7 @@ import {
   type EbayEnvConfig,
 } from "./oauth";
 import { fitEbayDescription } from "./description";
+import { ebayImportedOrderState } from "@/lib/orders/ebay-state";
 
 const MARKETPLACE = "EBAY_US";
 const LOCATION_KEY = "sellfinity-primary";
@@ -173,6 +181,7 @@ export class RealEbayClient implements EbayClient {
             : "";
         throw new EbayApiError(
           `eBay ${method} ${path} failed (${res.status})${retryNote}: ${text.slice(0, 500)}`,
+          res.status,
         );
       }
       if (res.status === 204 || res.headers.get("content-length") === "0") {
@@ -325,9 +334,14 @@ export class RealEbayClient implements EbayClient {
   /**
    * Required item specifics for a category, filled with the standard
    * defaults sellers use when the data isn't known ("Unbranded" brand,
-   * "Does Not Apply" for the rest).
+   * "Does not apply" for the rest). eBay's unavailable-identifier text is
+   * marketplace-specific and case-sensitive; this client publishes to the
+   * United States marketplace.
    */
-  private async requiredAspects(categoryId: string): Promise<Record<string, string[]>> {
+  private async requiredAspects(
+    categoryId: string,
+    brand?: string,
+  ): Promise<Record<string, string[]>> {
     const res = await this.request<{
       aspects?: {
         localizedAspectName: string;
@@ -343,7 +357,7 @@ export class RealEbayClient implements EbayClient {
     for (const aspect of res.aspects ?? []) {
       if (!aspect.aspectConstraint?.aspectRequired) continue;
       const name = aspect.localizedAspectName;
-      aspects[name] = [name.toLowerCase() === "brand" ? "Unbranded" : "Does Not Apply"];
+      aspects[name] = [requiredEbayAspectValue(name, brand)];
     }
     return aspects;
   }
@@ -354,8 +368,10 @@ export class RealEbayClient implements EbayClient {
       this.ensurePolicies(),
       this.suggestCategoryId(input.title),
     ]);
-    const aspects = await this.requiredAspects(categoryId);
+    const aspects = await this.requiredAspects(categoryId, input.brand);
     const description = fitEbayDescription(input.description);
+    const brand = ebayProductBrand(input.brand);
+    const mpn = ebayProductMpn();
 
     await this.request("PUT", `/sell/inventory/v1/inventory_item/${encodeURIComponent(input.sku)}`, {
       product: {
@@ -363,6 +379,15 @@ export class RealEbayClient implements EbayClient {
         description,
         imageUrls: input.imageUrls.slice(0, 12),
         aspects,
+        brand,
+        // Some eBay categories validate Brand/MPN as a paired, dedicated
+        // product identifier even when both values also exist in aspects.
+        mpn,
+        // Amazon does not reliably expose GTINs. eBay US explicitly accepts
+        // this substitute when a category requires UPC but the product's UPC
+        // is unavailable. This must be sent in the dedicated Product field;
+        // an identically named item aspect alone does not satisfy publishing.
+        upc: [EBAY_US_IDENTIFIER_UNAVAILABLE],
       },
       condition: "NEW",
       availability: { shipToLocationAvailability: { quantity: input.quantity } },
@@ -637,6 +662,76 @@ ${innerXml}
     });
   }
 
+  async getListingTrafficTrend(
+    userId: string,
+    ebayListingIds: string[],
+    start: Date,
+    end: Date,
+  ): Promise<ListingTrafficDayMetric[]> {
+    if (ebayListingIds.length === 0) return [];
+    // eBay only supports listing_ids with the LISTING dimension. Query one
+    // day at a time so the product trend stays listing-specific and accurate.
+    const dates: Date[] = [];
+    const cursor = new Date(start);
+    cursor.setUTCHours(0, 0, 0, 0);
+    const last = new Date(Math.min(end.getTime(), Date.now() - 86_400_000));
+    last.setUTCHours(0, 0, 0, 0);
+    while (cursor <= last) {
+      dates.push(new Date(cursor));
+      cursor.setUTCDate(cursor.getUTCDate() + 1);
+    }
+    const result: ListingTrafficDayMetric[] = [];
+    for (let offset = 0; offset < dates.length; offset += 5) {
+      const group = await Promise.all(dates.slice(offset, offset + 5).map(async (date) => {
+        const rows = await this.getListingTraffic(userId, ebayListingIds, date, date);
+        return {
+          date: date.toISOString().slice(0, 10),
+          impressions: rows.reduce((sum, row) => sum + (row.impressions ?? 0), 0),
+          views: rows.reduce((sum, row) => sum + (row.views ?? 0), 0),
+        };
+      }));
+      result.push(...group);
+    }
+    return result;
+  }
+
+  async getAccountTrafficTrend(
+    _userId: string,
+    start: Date,
+    end: Date,
+  ): Promise<ListingTrafficDayMetric[]> {
+    const date = (value: Date) => value.toISOString().slice(0, 10).replaceAll("-", "");
+    const query = new URLSearchParams({
+      dimension: "DAY",
+      filter: `marketplace_ids:{${MARKETPLACE}},date_range:[${date(start)}..${date(end)}]`,
+      metric: "TOTAL_IMPRESSION_TOTAL,LISTING_VIEWS_TOTAL",
+    });
+    type Value = { value?: string; applicable?: boolean };
+    const report = await this.request<{
+      header?: { metrics?: { key?: string }[] };
+      records?: { dimensionValues?: Value[]; metricValues?: Value[] }[];
+    }>("GET", `/sell/analytics/v1/traffic_report?${query.toString()}`);
+    const keys = report.header?.metrics?.map((metric) => metric.key ?? "") ?? [];
+    const metric = (values: Value[] | undefined, key: string) => {
+      const value = values?.[keys.indexOf(key)];
+      const parsed = value?.applicable === false ? 0 : Number(value?.value ?? 0);
+      return Number.isFinite(parsed) ? parsed : 0;
+    };
+    return (report.records ?? []).flatMap((record) => {
+      const rawDate = record.dimensionValues?.[0]?.value;
+      if (!rawDate) return [];
+      const parsed = new Date(rawDate);
+      const day = /^\d{4}-\d{2}-\d{2}/.test(rawDate)
+        ? rawDate.slice(0, 10)
+        : Number.isNaN(parsed.getTime()) ? null : parsed.toISOString().slice(0, 10);
+      return day ? [{
+        date: day,
+        impressions: metric(record.metricValues, "TOTAL_IMPRESSION_TOTAL"),
+        views: metric(record.metricValues, "LISTING_VIEWS_TOTAL"),
+      }] : [];
+    });
+  }
+
   async getSellerListings(): Promise<RemoteListing[]> {
     const listings: RemoteListing[] = [];
     for (let page = 1; page <= 10; page++) {
@@ -770,6 +865,9 @@ ${innerXml}
       orderId: string;
       creationDate: string;
       buyer?: { username?: string };
+      orderPaymentStatus?: string;
+      orderFulfillmentStatus?: string;
+      cancelStatus?: { cancelState?: string };
       fulfillmentStartInstructions?: { shippingStep?: { shipTo?: { fullName?: string; contactAddress?: { addressLine1?: string; postalCode?: string } } } }[];
       lineItems?: {
         lineItemId: string;
@@ -788,6 +886,11 @@ ${innerXml}
         `/sell/fulfillment/v1/order?filter=${filter}&limit=100&offset=${offset}`,
       );
       for (const order of page.orders ?? []) {
+        const lifecycle = ebayImportedOrderState({
+          cancelState: order.cancelStatus?.cancelState,
+          paymentStatus: order.orderPaymentStatus,
+          fulfillmentStatus: order.orderFulfillmentStatus,
+        });
         for (const item of order.lineItems ?? []) {
           if (!item.legacyItemId) continue;
           const totalCents = Math.round(parseFloat(item.lineItemCost?.value ?? "0") * 100);
@@ -810,6 +913,8 @@ ${innerXml}
               ?.map((instruction) => instruction.shippingStep?.shipTo?.contactAddress?.postalCode?.trim())
               .find(Boolean) ?? null,
             saleDate: new Date(order.creationDate),
+            status: lifecycle.status,
+            cancelled: lifecycle.cancelled,
           });
         }
       }

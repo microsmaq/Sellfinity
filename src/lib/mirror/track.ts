@@ -122,13 +122,14 @@ export async function matchAndTrackListing(
 
   const user = await db.user.findUnique({
     where: { id: userId },
-    select: { ebaySitewideDiscountBps: true },
+    select: { ebaySitewideDiscountBps: true, ebayAdRateBps: true },
   });
   const margin = estimateMargin(
     input.priceCents,
     match.priceCents,
     match.shippingCostCents,
     user?.ebaySitewideDiscountBps ?? 0,
+    user?.ebayAdRateBps ?? 300,
   );
   return {
     ok: true,

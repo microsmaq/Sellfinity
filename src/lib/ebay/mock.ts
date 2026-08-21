@@ -148,6 +148,41 @@ export class MockEbayClient implements EbayClient {
     });
   }
 
+  async getListingTrafficTrend(
+    _userId: string,
+    ebayListingIds: string[],
+    start: Date,
+    end: Date,
+  ) {
+    const points = [];
+    for (let time = start.getTime(); time <= end.getTime(); time += DAY_MS) {
+      const date = new Date(time).toISOString().slice(0, 10);
+      let impressions = 0;
+      let views = 0;
+      for (const ebayListingId of ebayListingIds) {
+        const rand = mulberry32(hashString(`${ebayListingId}:traffic:${date}`));
+        const listingImpressions = Math.round(18 + rand() * 55);
+        impressions += listingImpressions;
+        views += Math.max(0, Math.round(listingImpressions * (0.025 + rand() * 0.08)));
+      }
+      points.push({ date, impressions, views });
+    }
+    return points;
+  }
+
+  async getAccountTrafficTrend(userId: string, start: Date, end: Date) {
+    const listings = await db.listing.findMany({
+      where: { userId, status: "ACTIVE", ebayListingId: { not: null } },
+      select: { ebayListingId: true },
+    });
+    return this.getListingTrafficTrend(
+      userId,
+      listings.flatMap((listing) => listing.ebayListingId ? [listing.ebayListingId] : []),
+      start,
+      end,
+    );
+  }
+
   async getOrders(userId: string, since: Date): Promise<RemoteOrder[]> {
     const listings = await db.listing.findMany({
       // quantity 0 = eBay's out-of-stock control: still listed, not buyable.

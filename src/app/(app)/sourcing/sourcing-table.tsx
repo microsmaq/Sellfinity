@@ -1,5 +1,7 @@
 "use client";
 
+/* eslint-disable @next/next/no-img-element */
+
 import { useMemo, useState, useTransition } from "react";
 import { importProducts } from "@/lib/actions/sourcing";
 import { formatCents } from "@/lib/money";
@@ -100,11 +102,11 @@ export function SourcingTable({
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center gap-3">
+      <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:items-center sm:gap-3">
         <select
           value={category}
           onChange={(e) => setCategory(e.target.value)}
-          className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
+          className="min-h-10 min-w-0 rounded-xl border border-slate-300 bg-white px-3 py-2 text-[13px]"
         >
           <option value="all">All categories</option>
           {categories.map((c) => (
@@ -116,16 +118,16 @@ export function SourcingTable({
         <select
           value={minMargin}
           onChange={(e) => setMinMargin(Number(e.target.value))}
-          className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
+          className="min-h-10 min-w-0 rounded-xl border border-slate-300 bg-white px-3 py-2 text-[13px]"
         >
           <option value={0}>Any margin</option>
           <option value={15}>Margin ≥ 15%</option>
           <option value={25}>Margin ≥ 25%</option>
           <option value={35}>Margin ≥ 35%</option>
         </select>
-        <div className="ml-auto flex items-center gap-3">
+        <div className="col-span-2 flex items-center gap-3 sm:ml-auto">
           {notice && <p className="text-sm text-emerald-700">{notice}</p>}
-          <Button
+          <Button className="ml-auto sm:ml-0"
             onClick={() => runImport([...selected])}
             disabled={pending || selected.size === 0}
           >
@@ -150,7 +152,8 @@ export function SourcingTable({
         />
       )}
 
-      <Card className="overflow-x-auto">
+      <div className="space-y-3 sm:hidden">{visible.map((row) => <article key={row.id} className={cx("rounded-2xl border bg-white p-4 shadow-sm", selected.has(row.id) ? "border-indigo-300 ring-2 ring-indigo-100" : "border-slate-200")}><div className="flex items-start gap-3"><input type="checkbox" checked={selected.has(row.id)} onChange={() => toggle(row.id)} disabled={row.imported} aria-label={`Select ${row.title}`} className="mt-4 h-5 w-5 rounded border-slate-300"/>{row.imageUrl ? <img src={row.imageUrl} alt="" className="h-14 w-14 shrink-0 rounded-xl bg-slate-100 object-cover"/> : <div className="h-14 w-14 shrink-0 rounded-xl bg-slate-100"/>}<div className="min-w-0 flex-1"><div className="flex items-start justify-between gap-2"><p className="line-clamp-2 text-[13px] font-semibold leading-5 text-slate-950">{row.title}</p><ScoreBadge score={row.score}/></div><p className="mt-1 text-xs text-slate-500">{row.category} · {row.stock} in stock</p></div></div><div className="mt-3 grid grid-cols-3 rounded-xl bg-slate-50 p-3 text-center"><div><p className="text-[10px] uppercase text-slate-400">Cost</p><p className="mt-1 text-sm font-bold">{formatCents(row.costCents)}</p></div><div className="border-x border-slate-200"><p className="text-[10px] uppercase text-slate-400">Profit</p><p className={cx("mt-1 text-sm font-bold", row.estimatedProfitCents > 0 ? "text-emerald-700" : "text-red-600")}>{formatCents(row.estimatedProfitCents)}</p></div><div><p className="text-[10px] uppercase text-slate-400">Margin</p><p className="mt-1 text-sm font-bold">{row.marginPct}%</p></div></div><div className="mt-3 flex items-center justify-between text-xs text-slate-500"><span>{row.salesPerWeek}/wk · {row.competitorCount} rivals</span>{row.imported ? <Badge tone="indigo">In inventory</Badge> : <Button size="sm" variant="secondary" disabled={pending} onClick={() => runImport([row.id])}>Import</Button>}</div></article>)}{!visible.length && <p className="rounded-2xl border border-slate-200 bg-white p-8 text-center text-sm text-slate-500">No candidates match these filters.</p>}</div>
+      <Card className="hidden overflow-x-auto sm:block">
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-slate-200 text-left text-xs uppercase tracking-wide text-slate-500">
@@ -194,7 +197,6 @@ export function SourcingTable({
                 <td className="max-w-xs px-4 py-3">
                   <div className="flex items-center gap-3">
                     {r.imageUrl ? (
-                      // eslint-disable-next-line @next/next/no-img-element
                       <img
                         src={r.imageUrl}
                         alt=""

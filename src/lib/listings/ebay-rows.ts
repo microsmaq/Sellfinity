@@ -56,6 +56,7 @@ export function buildEbayRows(
   suppressedEbayIds: ReadonlySet<string> = new Set(),
   marketMetrics: ReadonlyMap<string, ListingMarketMetrics> = new Map(),
   sitewideDiscountBps = 0,
+  adRateBps = 300,
 ): EbayRow[] {
   const byEbayId = new Map(
     local.filter((l) => l.ebayListingId).map((l) => [l.ebayListingId!, l]),
@@ -72,9 +73,9 @@ export function buildEbayRows(
     seenEbayIds.add(r.ebayListingId);
 
     const localListing = byEbayId.get(r.ebayListingId);
-    // eBay's "active" list lags reality by minutes-to-hours; if we ended a
-    // listing ourselves, trust our own record and hide it immediately.
-    if (localListing?.status === "ENDED") continue;
+    // A listing positively returned by eBay is live. Explicitly ended items
+    // are filtered by the suppression set above; do not let a stale local
+    // ENDED status hide a listing that eBay currently confirms is active.
 
     if (!localListing) {
       rows.push({
@@ -126,6 +127,7 @@ export function buildEbayRows(
       localListing.product.costCents,
       localListing.product.shippingCostCents,
       sitewideDiscountBps,
+      adRateBps,
     );
     const market =
       marketMetrics.get(r.ebayListingId) ??
@@ -149,6 +151,7 @@ export function buildEbayRows(
         market?.averageCompetitorPriceCents,
         localListing.product.shippingCostCents,
         sitewideDiscountBps,
+        adRateBps,
       ),
       match: {
         sku: localListing.product.sku,

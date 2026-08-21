@@ -121,4 +121,32 @@ describe("exact Amazon variant selection", () => {
       shippingCostCents: 550,
     });
   });
+
+  it("rejects a live variant when Amazon omits the shipping charge", async () => {
+    const oldRainforest = process.env.RAINFOREST_API_KEY;
+    process.env.RAINFOREST_API_KEY = "test-key";
+    const responseBody = JSON.stringify({
+        request_info: { success: true },
+        product: {
+          asin: "BLUE-LARGE",
+          title: "Outdoor Jacket Blue Large",
+          buybox_winner: { price: { value: 34.99 } },
+          variants: [{ asin: "BLUE-LARGE", title: "Blue / Large", price: { value: 34.99 }, is_current_product: true }],
+        },
+      });
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(
+      responseBody,
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    )));
+
+    try {
+      await expect(resolveExactAmazonVariant(
+        { title: "Outdoor Jacket Blue Large" },
+        { asin: "BLUE-LARGE", title: "Outdoor Jacket Blue Large", priceCents: 3499, shippingCostCents: 0, url: "https://www.amazon.com/dp/BLUE-LARGE" },
+      )).resolves.toBeNull();
+    } finally {
+      if (oldRainforest === undefined) delete process.env.RAINFOREST_API_KEY;
+      else process.env.RAINFOREST_API_KEY = oldRainforest;
+    }
+  });
 });

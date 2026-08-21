@@ -9,7 +9,8 @@ export const maxDuration = 60;
 export default async function SellerAsinReportPage({ params }: { params: Promise<{ asin: string }> }) {
   const user = await requireUser();
   const { asin } = await params;
-  const report = await getAsinReport(decodeURIComponent(asin), { userId: user.id, days: 30 });
+  const admin = user.role === "ADMIN";
+  const report = await getAsinReport(decodeURIComponent(asin), { userId: admin ? undefined : user.id, days: 30 });
   if (!report) notFound();
-  return <AsinReportView report={report} admin={false} />;
+  return <AsinReportView report={report} admin={admin} />;
 }

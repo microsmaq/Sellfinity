@@ -1,5 +1,9 @@
 import { db } from "@/lib/db";
-import { getEbayClientForUser } from "@/lib/ebay";
+import { ebayAdvertisingFeeCents } from "@/lib/fees";
+import { loadListingTraffic, type TrafficSnapshot } from "@/lib/analytics/traffic";
+import { arbitrageSuggestedPriceCents } from "@/lib/arbitrage/pricing";
+import { assessPriceCompetitiveness, type PriceCompetitiveness } from "@/lib/arbitrage/price-competitiveness";
+import { assessProductGrowth, type ProductGrowthAssessment } from "@/lib/analytics/growth-assessment";
 
 const DAY_MS = 86_400_000;
 
@@ -36,6 +40,24 @@ export type AsinPriceEvent = {
   source: string;
 };
 
+export type AsinTrafficDayPoint = { date: string; impressions: number; views: number };
+
+export type AsinListingRow = {
+  id: string;
+  ebayListingId: string | null;
+  title: string;
+  status: string;
+  currentPriceCents: number;
+  impressions: number | null;
+  views: number | null;
+  clickThroughRate: number | null;
+  salesConversionRate: number | null;
+  averageCompetitorPriceCents: number | null;
+  suggestedPriceCents: number | null;
+  competitorCount: number | null;
+  priceAssessment: PriceCompetitiveness;
+};
+
 export type AsinReport = {
   asin: string;
   title: string;
@@ -54,7 +76,16 @@ export type AsinReport = {
   views: number | null;
   clickThroughRate: number | null;
   salesConversionRate: number | null;
+  currentAverageListingPriceCents: number | null;
+  averageCompetitorPriceCents: number | null;
+  bestSellingPriceCents: number | null;
+  suggestedPriceCents: number | null;
+  competitorCount: number | null;
+  priceAssessment: PriceCompetitiveness;
+  growthAssessment: ProductGrowthAssessment;
   daily: AsinDailyPoint[];
+  trafficDaily: AsinTrafficDayPoint[];
+  listings: AsinListingRow[];
   sellers: AsinSellerRow[];
   priceHistory: AsinPriceEvent[];
 };
@@ -101,6 +132,8 @@ export async function getAsinReport(
           name: true,
           email: true,
           ebayConnection: { select: { status: true, ebayUsername: true } },
+          ebayAdRateBps: true,
+          ebaySitewideDiscountBps: true,
         },
       },
       listings: {
@@ -129,12 +162,21 @@ export async function getAsinReport(
       views: null,
       clickThroughRate: null,
       salesConversionRate: null,
+      currentAverageListingPriceCents: null,
+      averageCompetitorPriceCents: catalog.averageCompetitorPriceCents,
+      bestSellingPriceCents: catalog.ebayRecommendedPriceCents,
+      suggestedPriceCents: catalog.suggestedPriceCents,
+      competitorCount: catalog.competitorCount,
+      priceAssessment: { label: "Not rated", tone: "slate", summary: "No seller listing price is available." },
+      growthAssessment: assessProductGrowth({ activeListings: 0, impressions: null, views: null, clickThroughRate: null, salesConversionRate: null, currentPriceCents: null, averageCompetitorPriceCents: catalog.averageCompetitorPriceCents, suggestedPriceCents: catalog.suggestedPriceCents, sourceMatchConfidence: catalog.matchConfidence }),
       daily: Array.from({ length: days }, (_, offset) => ({
         date: new Date(start.getTime() + offset * DAY_MS).toISOString().slice(0, 10),
         units: 0,
         revenueCents: 0,
         averageSalePriceCents: null,
       })),
+      trafficDaily: Array.from({ length: days }, (_, offset) => ({ date: new Date(start.getTime() + offset * DAY_MS).toISOString().slice(0, 10), impressions: 0, views: 0 })),
+      listings: [],
       sellers: [],
       priceHistory: [],
     };
@@ -146,7 +188,9 @@ export async function getAsinReport(
   const orders = listings.flatMap((listing) =>
     listing.orders.map((order) => ({ ...order, listing })),
   );
-  const completedOrders = orders.filter((order) => order.status !== "REFUNDED");
+  const completedOrders = orders.filter(
+    (order) => order.status !== "REFUNDED" && order.sourcingStatus !== "CANCELLED",
+  );
   const userIds = [...new Set(products.map((product) => product.userId))];
   const listingIds = listings.map((listing) => listing.id);
   const activities = listingIds.length
@@ -161,50 +205,19 @@ export async function getAsinReport(
       })
     : [];
 
+  const trafficByUser = new Map<string, TrafficSnapshot>();
   const sellers: AsinSellerRow[] = await Promise.all(userIds.map(async (userId) => {
     const sellerProducts = products.filter((product) => product.userId === userId);
     const seller = sellerProducts[0].user;
     const sellerListings = listings.filter((listing) => listing.userId === userId);
     const sellerOrders = completedOrders.filter((order) => order.userId === userId);
     const prices = sellerListings.map((listing) => listing.priceCents);
-    let traffic = {
-      impressions: null as number | null,
-      views: null as number | null,
-      clickThroughRate: null as number | null,
-      salesConversionRate: null as number | null,
-      trafficError: null as string | null,
-    };
     const ebayIds = sellerListings.flatMap((listing) => listing.ebayListingId ? [listing.ebayListingId] : []);
-    if (ebayIds.length > 0 && seller.ebayConnection?.status !== "DISCONNECTED") {
-      try {
-        const client = await getEbayClientForUser(userId);
-        if (!client.getListingTraffic) throw new Error("Traffic reporting is unavailable.");
-        const rows = await client.getListingTraffic(userId, ebayIds, start, new Date());
-        const impressions = rows.reduce((sum, row) => sum + (row.impressions ?? 0), 0);
-        const views = rows.reduce((sum, row) => sum + (row.views ?? 0), 0);
-        const rate = (key: "clickThroughRate" | "salesConversionRate") => {
-          const valid = rows.filter((row) => row[key] !== null);
-          return valid.length
-            ? valid.reduce((sum, row) => sum + (row[key] ?? 0), 0) / valid.length
-            : null;
-        };
-        traffic = {
-          impressions,
-          views,
-          clickThroughRate: rate("clickThroughRate"),
-          salesConversionRate: rate("salesConversionRate"),
-          trafficError: null,
-        };
-      } catch (error) {
-        traffic.trafficError = error instanceof Error && /scope|permission|access|403/i.test(error.message)
-          ? "Reconnect eBay in Settings to grant read-only analytics access."
-          : "eBay traffic data is temporarily unavailable.";
-      }
-    } else if (ebayIds.length === 0) {
-      traffic.trafficError = "No published eBay listing is available for traffic reporting.";
-    } else {
-      traffic.trafficError = "Connect eBay to load traffic data.";
-    }
+    const snapshot = await loadListingTraffic({ userId, ebayListingIds: ebayIds, start, end: new Date(), connected: Boolean(seller.ebayConnection && seller.ebayConnection.status !== "DISCONNECTED") });
+    trafficByUser.set(userId, snapshot);
+    const impressions = snapshot.rows.length ? snapshot.rows.reduce((sum, row) => sum + (row.impressions ?? 0), 0) : null;
+    const views = snapshot.rows.length ? snapshot.rows.reduce((sum, row) => sum + (row.views ?? 0), 0) : null;
+    const conversionRows = snapshot.rows.filter((row) => row.salesConversionRate !== null);
     return {
       userId,
       name: seller.name,
@@ -218,16 +231,84 @@ export async function getAsinReport(
         0,
       ),
       netProfitCents: sellerOrders.reduce(
-        (sum, order) => sum + order.salePriceCents * order.quantity + order.shippingChargedCents
-          - order.ebayFeeCents - order.cogsCents - order.shippingCostCents,
+        (sum, order) => {
+          const revenue = order.salePriceCents * order.quantity + order.shippingChargedCents;
+          return sum + revenue - order.ebayFeeCents
+            - ebayAdvertisingFeeCents(revenue, seller.ebayAdRateBps)
+            - order.cogsCents - order.shippingCostCents;
+        },
         0,
       ),
       currentAveragePriceCents: prices.length
         ? Math.round(prices.reduce((sum, price) => sum + price, 0) / prices.length)
         : null,
-      ...traffic,
+      impressions,
+      views,
+      clickThroughRate: impressions ? ((views ?? 0) / impressions) * 100 : null,
+      salesConversionRate: conversionRows.length ? conversionRows.reduce((sum, row) => sum + (row.salesConversionRate ?? 0) * Math.max(row.views ?? 1, 1), 0) / conversionRows.reduce((sum, row) => sum + Math.max(row.views ?? 1, 1), 0) : null,
+      trafficError: snapshot.error,
     };
   }));
+
+  const marketMetrics = listings.some((listing) => listing.ebayListingId)
+    ? await db.ebayMarketMetric.findMany({
+        where: {
+          ebayListingId: { in: listings.flatMap((listing) => listing.ebayListingId ? [listing.ebayListingId] : []) },
+          userId: { in: userIds },
+        },
+      })
+    : [];
+  const marketByListing = new Map(marketMetrics.map((metric) => [`${metric.userId}:${metric.ebayListingId}`, metric]));
+  const listingRows: AsinListingRow[] = listings.map((listing) => {
+    const metric = trafficByUser.get(listing.userId)?.rows.find((row) => row.ebayListingId === listing.ebayListingId);
+    const market = listing.ebayListingId ? marketByListing.get(`${listing.userId}:${listing.ebayListingId}`) : null;
+    const suggestedPriceCents = market ? arbitrageSuggestedPriceCents(
+      listing.product.costCents,
+      listing.priceCents,
+      market.bestSellingPriceCents,
+      market.averageCompetitorPriceCents,
+      listing.product.shippingCostCents,
+      listing.seller.ebaySitewideDiscountBps,
+      listing.seller.ebayAdRateBps,
+    ) : listing.product.suggestedPriceCents || catalog?.suggestedPriceCents || null;
+    const averageCompetitorPriceCents = market?.averageCompetitorPriceCents ?? catalog?.averageCompetitorPriceCents ?? null;
+    return {
+      id: listing.id,
+      ebayListingId: listing.ebayListingId,
+      title: listing.title,
+      status: listing.status,
+      currentPriceCents: listing.priceCents,
+      impressions: metric?.impressions ?? null,
+      views: metric?.views ?? null,
+      clickThroughRate: metric?.clickThroughRate ?? null,
+      salesConversionRate: metric?.salesConversionRate ?? null,
+      averageCompetitorPriceCents,
+      suggestedPriceCents,
+      competitorCount: market?.competitorCount ?? catalog?.competitorCount ?? null,
+      priceAssessment: assessPriceCompetitiveness(
+        listing.priceCents,
+        catalog?.ebayPriceCents ?? averageCompetitorPriceCents ?? listing.priceCents,
+        averageCompetitorPriceCents,
+        market?.bestSellingPriceCents ?? catalog?.ebayRecommendedPriceCents,
+        suggestedPriceCents,
+        listing.seller.ebaySitewideDiscountBps,
+      ),
+    };
+  });
+
+  const trafficDailyMap = new Map<string, AsinTrafficDayPoint>();
+  for (let offset = 0; offset < days; offset++) {
+    const date = new Date(start.getTime() + offset * DAY_MS).toISOString().slice(0, 10);
+    trafficDailyMap.set(date, { date, impressions: 0, views: 0 });
+  }
+  for (const snapshot of trafficByUser.values()) {
+    for (const point of snapshot.daily) {
+      const aggregate = trafficDailyMap.get(point.date);
+      if (!aggregate) continue;
+      aggregate.impressions += point.impressions;
+      aggregate.views += point.views;
+    }
+  }
 
   const dailyMap = new Map<string, AsinDailyPoint>();
   for (let offset = 0; offset < days; offset++) {
@@ -250,11 +331,11 @@ export async function getAsinReport(
   }
 
   const initialPrices: AsinPriceEvent[] = listings.map((listing) => ({
-    date: listing.createdAt.toISOString(),
+    date: listing.updatedAt.toISOString(),
     priceCents: listing.priceCents,
     sellerName: listing.seller.name,
     listingTitle: listing.title,
-    source: "LISTING_CREATED",
+    source: "CURRENT_SNAPSHOT",
   }));
   const priceHistory: AsinPriceEvent[] = [...initialPrices, ...activities.map((activity) => {
     const listing = listings.find((row) => row.id === activity.listingId)!;
@@ -268,6 +349,19 @@ export async function getAsinReport(
   })].sort((left, right) => left.date.localeCompare(right.date));
 
   const totalRevenue = sellers.reduce((sum, seller) => sum + seller.revenueCents, 0);
+  const average = (values: number[]) => values.length ? Math.round(values.reduce((sum, value) => sum + value, 0) / values.length) : null;
+  const currentAverageListingPriceCents = average(listingRows.map((listing) => listing.currentPriceCents));
+  const averageCompetitorPriceCents = average(listingRows.flatMap((listing) => listing.averageCompetitorPriceCents ? [listing.averageCompetitorPriceCents] : [])) ?? catalog?.averageCompetitorPriceCents ?? null;
+  const bestSellingPriceCents = average(marketMetrics.flatMap((metric) => metric.bestSellingPriceCents ? [metric.bestSellingPriceCents] : [])) ?? catalog?.ebayRecommendedPriceCents ?? null;
+  const suggestedPriceCents = average(listingRows.flatMap((listing) => listing.suggestedPriceCents ? [listing.suggestedPriceCents] : [])) ?? catalog?.suggestedPriceCents ?? null;
+  const competitorCount = marketMetrics.length ? Math.max(...marketMetrics.map((metric) => metric.competitorCount)) : catalog?.competitorCount ?? null;
+  const aggregatePriceAssessment = currentAverageListingPriceCents === null
+    ? { label: "Not rated", tone: "slate", summary: "No seller listing price is available." } as PriceCompetitiveness
+    : assessPriceCompetitiveness(currentAverageListingPriceCents, catalog?.ebayPriceCents ?? averageCompetitorPriceCents ?? currentAverageListingPriceCents, averageCompetitorPriceCents, bestSellingPriceCents, suggestedPriceCents);
+  const aggregateImpressions = sellers.some((seller) => seller.impressions !== null) ? sellers.reduce((sum, seller) => sum + (seller.impressions ?? 0), 0) : null;
+  const aggregateViews = sellers.some((seller) => seller.views !== null) ? sellers.reduce((sum, seller) => sum + (seller.views ?? 0), 0) : null;
+  const aggregateCtr = aggregateImpressions ? ((aggregateViews ?? 0) / aggregateImpressions) * 100 : null;
+  const aggregateConversion = weightedRate(sellers, "salesConversionRate");
   const first = products[0];
   return {
     asin: normalizedAsin,
@@ -285,15 +379,30 @@ export async function getAsinReport(
     averageSalePriceCents: completedOrders.length
       ? Math.round(totalRevenue / completedOrders.reduce((sum, order) => sum + order.quantity, 0))
       : null,
-    impressions: sellers.some((seller) => seller.impressions !== null)
-      ? sellers.reduce((sum, seller) => sum + (seller.impressions ?? 0), 0)
-      : null,
-    views: sellers.some((seller) => seller.views !== null)
-      ? sellers.reduce((sum, seller) => sum + (seller.views ?? 0), 0)
-      : null,
-    clickThroughRate: weightedRate(sellers, "clickThroughRate"),
-    salesConversionRate: weightedRate(sellers, "salesConversionRate"),
+    impressions: aggregateImpressions,
+    views: aggregateViews,
+    clickThroughRate: aggregateCtr,
+    salesConversionRate: aggregateConversion,
+    currentAverageListingPriceCents,
+    averageCompetitorPriceCents,
+    bestSellingPriceCents,
+    suggestedPriceCents,
+    competitorCount,
+    priceAssessment: aggregatePriceAssessment,
+    growthAssessment: assessProductGrowth({
+      activeListings: listings.filter((listing) => listing.status === "ACTIVE").length,
+      impressions: aggregateImpressions,
+      views: aggregateViews,
+      clickThroughRate: aggregateCtr,
+      salesConversionRate: aggregateConversion,
+      currentPriceCents: currentAverageListingPriceCents,
+      averageCompetitorPriceCents,
+      suggestedPriceCents,
+      sourceMatchConfidence: average(listings.flatMap((listing) => listing.sourceMatchConfidence !== null ? [listing.sourceMatchConfidence] : [])),
+    }),
     daily: [...dailyMap.values()],
+    trafficDaily: [...trafficDailyMap.values()],
+    listings: listingRows,
     sellers,
     priceHistory,
   };

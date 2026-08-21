@@ -3,6 +3,8 @@
 import { requireUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { protectVerifiedOrderMargins } from "@/lib/orders/profit-protection";
+import { getProtectedPriceListings } from "@/lib/listings/winner";
+import { revalidatePath } from "next/cache";
 
 export async function setAutoProfitProtection(enabled: boolean) {
   const user = await requireUser();
@@ -30,10 +32,52 @@ export async function setEbaySitewideDiscount(percent: number) {
   return { discountBps };
 }
 
-export async function protectOrderMargin(orderId: string) {
+export async function setAutoLockProfitableListings(enabled: boolean) {
   const user = await requireUser();
-  const owned = await db.order.findFirst({ where: { id: orderId, userId: user.id }, select: { id: true } });
+  await db.user.update({
+    where: { id: user.id },
+    data: { autoLockProfitableListings: enabled },
+  });
+  revalidatePath("/settings");
+  revalidatePath("/listings");
+  revalidatePath("/orders");
+  revalidatePath("/analytics");
+  return { enabled };
+}
+
+export async function setEbayAdRate(percent: number) {
+  const user = await requireUser();
+  if (!Number.isFinite(percent) || percent < 0 || percent > 50) {
+    return { error: "Enter an advertising rate from 0% to 50%." };
+  }
+  const adRateBps = Math.round(percent * 100);
+  await db.$transaction([
+    db.user.update({ where: { id: user.id }, data: { ebayAdRateBps: adRateBps } }),
+    db.order.updateMany({
+      where: { userId: user.id, profitProtectionStatus: { not: null } },
+      data: {
+        profitProtectionStatus: null,
+        profitProtectionReviewedAt: null,
+        profitProtectionError: null,
+      },
+    }),
+  ]);
+  revalidatePath("/settings");
+  revalidatePath("/dashboard");
+  revalidatePath("/orders");
+  revalidatePath("/listings");
+  revalidatePath("/analytics");
+  return { adRateBps };
+}
+
+export async function protectOrderMargin(orderId: string, confirmVerifiedWinner = false) {
+  const user = await requireUser();
+  const owned = await db.order.findFirst({ where: { id: orderId, userId: user.id }, select: { id: true, listingId: true } });
   if (!owned) return { error: "Order not found." };
+  const winnerListings = await getProtectedPriceListings(user.id, user.ebayAdRateBps);
+  if (winnerListings.has(owned.listingId) && !confirmVerifiedWinner) {
+    return { error: "This profitable listing's price is locked. Confirm the price-lock warning before changing it." };
+  }
   const summary = await protectVerifiedOrderMargins(user.id, { orderIds: [orderId] });
   const order = await db.order.findFirst({
     where: { id: orderId, userId: user.id },

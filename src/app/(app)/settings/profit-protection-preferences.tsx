@@ -2,10 +2,12 @@
 
 import { useState, useTransition } from "react";
 import { Button, Card, Input } from "@/components/ui";
-import { setEbaySitewideDiscount } from "@/lib/actions/profit-protection";
+import { setAutoLockProfitableListings, setEbayAdRate, setEbaySitewideDiscount } from "@/lib/actions/profit-protection";
 
-export function ProfitProtectionPreferences({ initialDiscountBps }: { initialDiscountBps: number }) {
+export function ProfitProtectionPreferences({ initialDiscountBps, initialAdRateBps, initialAutoLockProfitableListings }: { initialDiscountBps: number; initialAdRateBps: number; initialAutoLockProfitableListings: boolean }) {
   const [discount, setDiscount] = useState(String(initialDiscountBps / 100));
+  const [adRate, setAdRate] = useState(String(initialAdRateBps / 100));
+  const [autoLockProfitable, setAutoLockProfitable] = useState(initialAutoLockProfitableListings);
   const [message, setMessage] = useState<{ text: string; error: boolean } | null>(null);
   const [pending, startTransition] = useTransition();
 
@@ -32,8 +34,78 @@ export function ProfitProtectionPreferences({ initialDiscountBps }: { initialDis
     });
   }
 
+  function saveAdRate() {
+    const percent = Number(adRate);
+    setMessage(null);
+    startTransition(async () => {
+      try {
+        const result = await setEbayAdRate(percent);
+        if ("error" in result) {
+          setMessage({ text: result.error ?? "Could not save the advertising rate.", error: true });
+          return;
+        }
+        setAdRate(String(result.adRateBps / 100));
+        setMessage({
+          text: `Saved ${(result.adRateBps / 100).toFixed(2).replace(/\.00$/, "")}% advertising rate. Profit estimates, pricing safeguards, and reported profit now include this allowance.`,
+          error: false,
+        });
+      } catch {
+        setMessage({ text: "Could not save the advertising rate.", error: true });
+      }
+    });
+  }
+
+  function toggleAutoLock(enabled: boolean) {
+    setAutoLockProfitable(enabled);
+    setMessage(null);
+    startTransition(async () => {
+      try {
+        const result = await setAutoLockProfitableListings(enabled);
+        setAutoLockProfitable(result.enabled);
+        setMessage({
+          text: result.enabled
+            ? "Profitable-sale price lock enabled. A profitable sale will add a Price locked tag and protect the listing's current price."
+            : "Profitable-sale price lock disabled. Listings will no longer receive automatic one-sale price locks.",
+          error: false,
+        });
+      } catch {
+        setAutoLockProfitable(!enabled);
+        setMessage({ text: "Could not save the profitable-sale price lock setting.", error: true });
+      }
+    });
+  }
+
   return (
-    <Card className="p-6">
+    <Card className="overflow-hidden">
+      <div className="border-b border-slate-200 px-6 py-5">
+        <h2 className="text-base font-semibold text-slate-900">eBay fees and promotions</h2>
+        <p className="mt-1 text-sm text-slate-600">Use your actual promotion settings so Sellfinity protects the profit you expect to keep.</p>
+      </div>
+      <div className="divide-y divide-slate-200">
+      <div className="p-6">
+        <div className="flex items-start justify-between gap-5">
+          <div className="max-w-xl">
+            <div className="flex flex-wrap items-center gap-2">
+              <h2 className="text-sm font-semibold text-slate-900">Automatically lock profitable listings</h2>
+              <span className="rounded-full bg-indigo-50 px-2 py-0.5 text-[11px] font-semibold text-indigo-700">Recommended</span>
+            </div>
+            <p className="mt-2 text-sm leading-6 text-slate-600">After a listing generates one profitable sale, add a separate Price locked tag and protect its current price from automatic repricing.</p>
+            <p className="mt-1 text-xs leading-5 text-slate-500">The lock stays active for seven days after the latest profitable sale. Manual changes require confirmation, and automatic price tools skip the listing. Verified Winner remains reserved for consistent profitable sales.</p>
+          </div>
+          <label className="relative inline-flex min-h-11 shrink-0 cursor-pointer items-center">
+            <input
+              type="checkbox"
+              checked={autoLockProfitable}
+              disabled={pending}
+              onChange={(event) => toggleAutoLock(event.target.checked)}
+              className="peer sr-only"
+              aria-label="Automatically lock profitable listings"
+            />
+            <span className="h-7 w-12 rounded-full bg-slate-300 transition peer-checked:bg-indigo-600 peer-focus-visible:ring-2 peer-focus-visible:ring-indigo-500 peer-focus-visible:ring-offset-2 peer-disabled:opacity-50 after:absolute after:left-1 after:top-2.5 after:h-5 after:w-5 after:rounded-full after:bg-white after:shadow-sm after:transition-transform peer-checked:after:translate-x-5" />
+          </label>
+        </div>
+      </div>
+      <div className="p-6">
       <div className="flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between">
         <div className="max-w-xl">
           <h2 className="text-sm font-semibold text-slate-900">eBay sitewide discount</h2>
@@ -47,6 +119,24 @@ export function ProfitProtectionPreferences({ initialDiscountBps }: { initialDis
           </label>
           <Button disabled={pending} onClick={save}>{pending ? "Saving…" : "Save"}</Button>
         </div>
+      </div>
+      </div>
+      <div className="p-6">
+        <div className="flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between">
+          <div className="max-w-xl">
+            <h2 className="text-sm font-semibold text-slate-900">Promoted Listings advertising rate</h2>
+            <p className="mt-2 text-sm leading-6 text-slate-600">Enter the ad rate you use on eBay. Sellfinity deducts this percentage from modeled sale revenue when calculating profit, margins, suggested prices, listing health, analytics, and profit protection.</p>
+            <p className="mt-1 text-xs text-slate-500">Use 0% if listings are not promoted. Your requested setting is 9%.</p>
+          </div>
+          <div className="flex w-full items-end gap-2 sm:w-auto">
+            <label className="w-full sm:w-28">
+              <span className="mb-1 block text-xs font-medium text-slate-600">Ad rate %</span>
+              <Input type="number" min="0" max="50" step="0.1" value={adRate} onChange={(event) => setAdRate(event.target.value)} aria-label="eBay Promoted Listings advertising rate" />
+            </label>
+            <Button disabled={pending} onClick={saveAdRate}>{pending ? "Saving…" : "Save"}</Button>
+          </div>
+        </div>
+      </div>
       </div>
       {message && <p className={`mt-4 rounded-lg px-3 py-2 text-sm ${message.error ? "bg-red-50 text-red-700" : "bg-emerald-50 text-emerald-700"}`} role="status">{message.text}</p>}
     </Card>

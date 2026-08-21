@@ -10,6 +10,9 @@ import { ListingsView, type ListingRow, type UnlistedRow } from "./listings-view
 import type { EbayRow } from "./ebay-listings-table";
 import { backfillRetainedArbitrageResearchForUser } from "@/lib/arbitrage/publish-handoff";
 import { arbitrageSuggestedPriceCents } from "@/lib/arbitrage/pricing";
+import { getListingPriceProtection } from "@/lib/listings/winner";
+import { actualAmazonCost } from "@/lib/amazon-email/sync";
+import { summarize, windowStartUtc } from "@/lib/orders/stats";
 
 export const metadata = { title: "Listings — Sellfinity" };
 
@@ -25,7 +28,7 @@ export default async function ListingsPage() {
   // scan research was copied into their listing records.
   await backfillRetainedArbitrageResearchForUser(user.id);
 
-  const [products, listings, connection, suppressions, cachedMarketMetrics] = await Promise.all([
+  const [initialProducts, initialListings, connection, suppressions, cachedMarketMetrics, priceProtection, recentOrders, recentActivity] = await Promise.all([
     db.product.findMany({
       where: { userId: user.id },
       include: { listings: { where: { status: { in: ["DRAFT", "ACTIVE"] } } } },
@@ -62,10 +65,30 @@ export default async function ListingsPage() {
         competitorCount: true,
         averageCompetitorPriceCents: true,
         bestSellingPriceCents: true,
+        updatedAt: true,
       },
     }),
+    getListingPriceProtection(user.id, user.ebayAdRateBps),
+    db.order.findMany({
+      where: { userId: user.id, saleDate: { gte: windowStartUtc(30) } },
+      include: { amazonPurchaseItem: true },
+      orderBy: { saleDate: "desc" },
+    }),
+    db.mirrorBatch.findMany({
+      where: {
+        userId: user.id,
+        source: { in: ["LISTING_PUBLISH", "LISTING_EDIT", "PRICE_OPTIMIZATION", "PROFIT_PROTECTION", "AI_OPTIMIZATION", "LISTING_END", "LISTING_SYNC"] },
+      },
+      select: { id: true, source: true, trigger: true, totalCount: true, succeededCount: true, failedCount: true, createdAt: true },
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      take: 8,
+    }),
   ]);
+  const winnerListings = priceProtection.verifiedWinners;
+  const profitableSaleLocks = priceProtection.profitableSaleLocks;
 
+  let products = initialProducts;
+  let listings = initialListings;
   const ebayConnected = !!connection && connection.status !== "DISCONNECTED";
   const marketMetrics = await getListingMarketMetrics(
     listings.map((listing) => listing.product.sku),
@@ -77,6 +100,26 @@ export default async function ListingsPage() {
       averageCompetitorPriceCents: metric.averageCompetitorPriceCents,
       bestSellingPriceCents:
         metric.bestSellingPriceCents ?? metric.averageCompetitorPriceCents,
+      updatedAt: metric.updatedAt,
+    });
+  }
+  const cutoff7 = windowStartUtc(7);
+  const ordersByListing = new Map<string, Array<(typeof recentOrders)[number] & { actualAmazonCostCents: number | null }>>();
+  for (const order of recentOrders) {
+    const normalized = { ...order, actualAmazonCostCents: order.amazonPurchaseItem ? actualAmazonCost(order.amazonPurchaseItem) : null };
+    ordersByListing.set(order.listingId, [...(ordersByListing.get(order.listingId) ?? []), normalized]);
+  }
+  const orderPerformance = new Map<string, { units7d: number; units30d: number; profit7dCents: number; profit30dCents: number }>();
+  for (const listing of listings) {
+    const listingOrders = ordersByListing.get(listing.id) ?? [];
+    if (listingOrders.length === 0) continue;
+    const totals30 = summarize(listingOrders, user.ebayAdRateBps);
+    const totals7 = summarize(listingOrders.filter((order) => order.saleDate >= cutoff7), user.ebayAdRateBps);
+    orderPerformance.set(listing.id, {
+      units7d: totals7.units,
+      units30d: totals30.units,
+      profit7dCents: totals7.netCents,
+      profit30dCents: totals30.netCents,
     });
   }
 
@@ -87,26 +130,84 @@ export default async function ListingsPage() {
     try {
       const client = await getEbayClientForUser(user.id);
       const remote = await client.getSellerListings(user.id);
-      // Self-heal: a tracked ACTIVE listing that eBay no longer reports was
-      // ended outside the app — record that. (Only for listings older than a
-      // day: eBay's list can lag freshly published items.)
-      const remoteIds = remote.map((r) => r.ebayListingId);
-      await db.listing.updateMany({
+      // eBay's active-list pagination is not a reliable negative signal: a
+      // temporarily incomplete response used to mark every omitted local row
+      // as ENDED. Treat eBay's positive evidence as authoritative instead and
+      // repair only rows that were previously ended by that reconciliation.
+      // Listings explicitly ended by the seller or Smart Sync remain ended;
+      // their suppression records also keep eBay's eventual-consistency lag
+      // from showing them as live again.
+      const remoteIds = [...new Set(remote.map((r) => r.ebayListingId))];
+      const restored = remoteIds.length > 0 ? await db.listing.updateMany({
         where: {
           userId: user.id,
-          status: "ACTIVE",
-          ebayListingId: { not: null, notIn: remoteIds },
-          publishedAt: { lt: new Date(Date.now() - 24 * 60 * 60 * 1000) },
+          status: "ENDED",
+          ebayListingId: { in: remoteIds },
+          OR: [{ endedReason: null }, { endedReason: "EBAY_ENDED" }],
         },
-        data: { status: "ENDED", endedAt: new Date() },
-      });
+        data: { status: "ACTIVE", endedAt: null, endedReason: null },
+      }) : { count: 0 };
+
+      // The initial reads intentionally run in parallel with eBay. Refresh
+      // them only when reconciliation repaired rows so this render immediately
+      // reflects the corrected Active/Ended counts and inventory grouping.
+      if (restored.count > 0) {
+        [products, listings] = await Promise.all([
+          db.product.findMany({
+            where: { userId: user.id },
+            include: { listings: { where: { status: { in: ["DRAFT", "ACTIVE"] } } } },
+            orderBy: { createdAt: "desc" },
+          }),
+          db.listing.findMany({
+            where: { userId: user.id },
+            include: {
+              product: {
+                select: {
+                  sku: true,
+                  title: true,
+                  imageUrlsJson: true,
+                  category: true,
+                  costCents: true,
+                  shippingCostCents: true,
+                  supplierStock: true,
+                  supplierUrl: true,
+                },
+              },
+            },
+            orderBy: { updatedAt: "desc" },
+          }),
+        ]);
+      }
+      const localByEbayId = new Map(
+        listings.flatMap((listing) => listing.ebayListingId ? [[listing.ebayListingId, listing] as const] : []),
+      );
       ebayRows = buildEbayRows(
         remote,
         listings,
         new Set(suppressions.map((item) => item.ebayListingId)),
         marketMetrics,
         user.ebaySitewideDiscountBps,
-      );
+        user.ebayAdRateBps,
+      ).map((row) => {
+        const local = localByEbayId.get(row.ebayListingId);
+        const winner = local ? winnerListings.get(local.id) : null;
+        const priceLock = local ? profitableSaleLocks.get(local.id) : null;
+        return {
+          ...row,
+          marketUpdatedAt: (marketMetrics.get(row.ebayListingId)?.updatedAt ?? (local ? marketMetrics.get(local.product.sku)?.updatedAt : null))?.toISOString() ?? null,
+          performance: local ? orderPerformance.get(local.id) ?? null : null,
+          verifiedWinner: winner ? {
+            profitableUnits: winner.profitableUnits,
+            profitableSaleDays: winner.profitableSaleDays,
+            lastProfitableSaleAt: winner.lastProfitableSaleAt?.toISOString() ?? null,
+            protectedUntil: winner.protectedUntil?.toISOString() ?? null,
+          } : null,
+          priceLocked: !winner && priceLock ? {
+            lastProfitableSaleAt: priceLock.lastProfitableSaleAt?.toISOString() ?? null,
+            protectedUntil: priceLock.protectedUntil?.toISOString() ?? null,
+          } : null,
+        };
+      });
     } catch (e) {
       ebayFetchError = e instanceof Error ? e.message.slice(0, 200) : "eBay lookup failed";
     }
@@ -140,6 +241,7 @@ export default async function ListingsPage() {
       metric?.averageCompetitorPriceCents,
       l.product.shippingCostCents,
       user.ebaySitewideDiscountBps,
+      user.ebayAdRateBps,
     );
 
     return {
@@ -167,6 +269,10 @@ export default async function ListingsPage() {
       competitorCount: metric?.competitorCount ?? null,
       averageCompetitorPriceCents: metric?.averageCompetitorPriceCents ?? null,
       ebayRecommendedPriceCents: metric?.bestSellingPriceCents ?? null,
+      verifiedWinner: winnerListings.has(l.id),
+      priceLocked: !winnerListings.has(l.id) && profitableSaleLocks.has(l.id),
+      marketUpdatedAt: metric?.updatedAt?.toISOString() ?? null,
+      performance: orderPerformance.get(l.id) ?? null,
     };
   });
 
@@ -193,6 +299,8 @@ export default async function ListingsPage() {
           improveMainImage={user.improveMainImage}
           improveListingContent={user.improveListingContent}
           sitewideDiscountBps={user.ebaySitewideDiscountBps}
+          adRateBps={user.ebayAdRateBps}
+          recentActivity={recentActivity.map((activity) => ({ ...activity, createdAt: activity.createdAt.toISOString() }))}
         />
       </div>
     </>

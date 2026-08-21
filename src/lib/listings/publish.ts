@@ -57,6 +57,7 @@ export async function publishListingForUser(
             where: { id: draft.product.id },
             data: {
               title: source.title,
+              brand: source.brand,
               description: source.description,
               imageUrlsJson: serializeImageUrls(source.imageUrls),
               supplierUrl: source.sourceUrl,
@@ -89,6 +90,7 @@ export async function publishListingForUser(
     imageUrls,
     sku: draft.product.sku,
     category: draft.product.category,
+    brand: draft.product.brand,
   };
   const validationError = validateListingInput(input);
   if (validationError) return { ok: false, error: validationError };

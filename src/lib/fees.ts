@@ -6,11 +6,24 @@
 export const EBAY_FINAL_VALUE_RATE = 0.1325;
 /** Conservative Promoted Listings allowance used for projected profitability. */
 export const EBAY_AD_RATE = 0.03;
+export const DEFAULT_EBAY_AD_RATE_BPS = 300;
 /** Fixed per-order fee. */
 export const EBAY_PER_ORDER_FEE_CENTS = 30;
 
 export function normalizeSitewideDiscountBps(discountBps = 0): number {
   return Math.max(0, Math.min(9_000, Math.round(discountBps)));
+}
+
+export function normalizeAdRateBps(adRateBps = DEFAULT_EBAY_AD_RATE_BPS): number {
+  return Math.max(0, Math.min(5_000, Math.round(adRateBps)));
+}
+
+/** Modeled Promoted Listings spend. Applied to gross buyer revenue. */
+export function ebayAdvertisingFeeCents(
+  grossCents: number,
+  adRateBps = DEFAULT_EBAY_AD_RATE_BPS,
+): number {
+  return Math.round(Math.max(0, grossCents) * normalizeAdRateBps(adRateBps) / 10_000);
 }
 
 /** Buyer checkout price after a seller-wide percentage discount. */
@@ -71,6 +84,7 @@ export function estimateMargin(
   costCents: number,
   shippingCostCents: number,
   sitewideDiscountBps = 0,
+  adRateBps = DEFAULT_EBAY_AD_RATE_BPS,
 ): MarginEstimate {
   const buyerPriceCents = discountedEbayPriceCents(marketPriceCents, sitewideDiscountBps);
   const estimatedFeeCents =
@@ -78,7 +92,7 @@ export function estimateMargin(
       quantity: 1,
       salePriceCents: buyerPriceCents,
       shippingChargedCents: 0,
-    }) + Math.round(buyerPriceCents * EBAY_AD_RATE);
+    }) + ebayAdvertisingFeeCents(buyerPriceCents, adRateBps);
   const estimatedProfitCents =
     buyerPriceCents - estimatedFeeCents - costCents - shippingCostCents;
   const marginPct =

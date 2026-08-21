@@ -5,17 +5,40 @@ import type { EbayClient } from "@/lib/ebay/client";
 import { actualAmazonCost } from "@/lib/amazon-email/sync";
 import { recordListingActivity } from "@/lib/listings/activity-history";
 import { publishListingForUser } from "@/lib/listings/publish";
+import { getProtectedPriceListings } from "@/lib/listings/winner";
 import { isEndedEbayListingError, verifiedProfitProtectionDecision } from "./profit-protection-policy";
 
-export type ProfitProtectionSummary = { eligible: number; adjusted: number; relisted: number; protected: number; review: number; failed: number };
+export type ProfitProtectionSummary = {
+  checked: number;
+  awaitingVerification: number;
+  winnerLocked: number;
+  eligible: number;
+  adjusted: number;
+  relisted: number;
+  protected: number;
+  review: number;
+  failed: number;
+};
 
 export async function protectVerifiedOrderMargins(
   userId: string,
   options: { ebay?: EbayClient; orderIds?: string[]; maxOrders?: number } = {},
 ): Promise<ProfitProtectionSummary> {
-  const summary: ProfitProtectionSummary = { eligible: 0, adjusted: 0, relisted: 0, protected: 0, review: 0, failed: 0 };
-  const user = await db.user.findUnique({ where: { id: userId }, select: { ebaySitewideDiscountBps: true } });
+  const summary: ProfitProtectionSummary = {
+    checked: 0,
+    awaitingVerification: 0,
+    winnerLocked: 0,
+    eligible: 0,
+    adjusted: 0,
+    relisted: 0,
+    protected: 0,
+    review: 0,
+    failed: 0,
+  };
+  const user = await db.user.findUnique({ where: { id: userId }, select: { ebaySitewideDiscountBps: true, ebayAdRateBps: true } });
   if (!user) return summary;
+  const maxVerifiedOrders = options.maxOrders ?? 10;
+  const explicitRetry = Boolean(options.orderIds?.length);
   const orders = await db.order.findMany({
     where: {
       userId,
@@ -23,13 +46,23 @@ export async function protectVerifiedOrderMargins(
       status: { not: "REFUNDED" },
       sourcingStatus: { not: "CANCELLED" },
       amazonPurchaseItem: { isNot: null },
-      OR: [{ profitProtectionStatus: null }, { profitProtectionStatus: "FAILED" }],
+      OR: explicitRetry
+        ? [{ profitProtectionStatus: null }, { profitProtectionStatus: "FAILED" }]
+        : [{ profitProtectionStatus: null }],
     },
     include: { listing: { include: { product: true } }, amazonPurchaseItem: true },
     orderBy: { saleDate: "desc" },
-    take: options.maxOrders ?? 10,
+    // Orders whose Amazon emails do not expose a final price are skipped.
+    // Scan beyond the verified-work limit so those rows cannot permanently
+    // starve older orders whose landed costs are ready for protection.
+    take: explicitRetry
+      ? Math.max(1, options.orderIds?.length ?? 1)
+      : Math.max(100, maxVerifiedOrders * 10),
   });
   if (!orders.length) return summary;
+  const winnerListings = explicitRetry
+    ? new Map()
+    : await getProtectedPriceListings(userId, user.ebayAdRateBps);
 
   let ebay = options.ebay;
   const latestPriceByListing = new Map<string, number>();
@@ -37,7 +70,16 @@ export async function protectVerifiedOrderMargins(
   for (const order of orders) {
     if (!order.amazonPurchaseItem) continue;
     const verifiedCostCents = actualAmazonCost(order.amazonPurchaseItem);
-    if (verifiedCostCents === null) continue;
+    if (verifiedCostCents === null) {
+      summary.awaitingVerification++;
+      continue;
+    }
+    if (winnerListings.has(order.listingId)) {
+      summary.winnerLocked++;
+      continue;
+    }
+    if (summary.checked >= maxVerifiedOrders) break;
+    summary.checked++;
     const currentPriceCents = latestPriceByListing.get(order.listingId) ?? order.listing.priceCents;
     const decision = verifiedProfitProtectionDecision({
       currentListingPriceCents: currentPriceCents,
@@ -46,6 +88,7 @@ export async function protectVerifiedOrderMargins(
       realizedEbayFeeCents: order.ebayFeeCents,
       verifiedAmazonCostCents: verifiedCostCents,
       sitewideDiscountBps: user.ebaySitewideDiscountBps,
+      adRateBps: user.ebayAdRateBps,
     });
     if (decision.action === "not_required") {
       await db.order.update({ where: { id: order.id }, data: {

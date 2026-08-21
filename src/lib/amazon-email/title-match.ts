@@ -69,6 +69,29 @@ export type FulfillmentIdentityEvidence = {
   recipientMatches: boolean;
 };
 
+export function fulfillmentMatchIsAmbiguous(
+  selected: { score: number; identityStrength: number },
+  candidates: Array<{ score: number; identityStrength: number }>,
+): boolean {
+  return selected.identityStrength === 0 && candidates.filter((candidate) =>
+    candidate.identityStrength === selected.identityStrength && candidate.score === selected.score
+  ).length > 1;
+}
+
+/** Cancellation templates sometimes name the Amazon account holder instead
+ * of the dropship recipient. An exact ASIN close to the eBay sale is enough to
+ * safely recover that cancellation even when the displayed names conflict. */
+export function cancellationMatchOverridesIdentity(input: {
+  purchaseStatus: string;
+  exactAsin: boolean;
+  purchaseDate?: Date | null;
+  saleDate: Date;
+}): boolean {
+  if (input.purchaseStatus !== "CANCELLED" || !input.exactAsin || !input.purchaseDate) return false;
+  const distance = input.purchaseDate.getTime() - input.saleDate.getTime();
+  return distance >= -3 * 86_400_000 && distance <= 30 * 86_400_000;
+}
+
 /**
  * Delivery identity outranks product identity when repeated ASINs exist:
  * address match (2) > recipient-only match (1) > unavailable identity (0).

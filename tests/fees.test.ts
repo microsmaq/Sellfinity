@@ -84,4 +84,10 @@ describe("estimateMargin", () => {
     expect(estimateMargin(2_000, 1_000, 0, 500).estimatedProfitCents)
       .toBeLessThan(estimateMargin(2_000, 1_000, 0).estimatedProfitCents);
   });
+
+  it("uses the seller's configured advertising rate", () => {
+    const threePercent = estimateMargin(20_000, 10_000, 0, 0, 300);
+    const ninePercent = estimateMargin(20_000, 10_000, 0, 0, 900);
+    expect(threePercent.estimatedProfitCents - ninePercent.estimatedProfitCents).toBe(1_200);
+  });
 });

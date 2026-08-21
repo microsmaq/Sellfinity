@@ -16,6 +16,7 @@ import { formatCents, parseDollarsToCents } from "@/lib/money";
 import { Badge, Button, Card, cx } from "@/components/ui";
 import { PremiumProgress } from "@/components/premium-progress";
 import { EbayListingsTable, type EbayRow } from "./ebay-listings-table";
+import { batchSourceMeta } from "@/lib/mirror/batch-labels";
 
 export type UnlistedRow = {
   productId: string;
@@ -52,6 +53,25 @@ export type ListingRow = {
   competitorCount: number | null;
   averageCompetitorPriceCents: number | null;
   ebayRecommendedPriceCents: number | null;
+  verifiedWinner: boolean;
+  priceLocked: boolean;
+  marketUpdatedAt: string | null;
+  performance: {
+    units7d: number;
+    units30d: number;
+    profit7dCents: number;
+    profit30dCents: number;
+  } | null;
+};
+
+export type ListingActivityRow = {
+  id: string;
+  source: string;
+  trigger: string;
+  totalCount: number;
+  succeededCount: number;
+  failedCount: number;
+  createdAt: string;
 };
 
 type Tab = "ebay" | "unlisted" | "DRAFT" | "ACTIVE" | "ENDED";
@@ -96,6 +116,11 @@ function formatDate(value: string | null): string {
   }).format(date);
 }
 
+function marketFreshness(value: string | null): string {
+  if (!value) return "Not available";
+  return `Updated ${new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", timeZone: "UTC" }).format(new Date(value))}`;
+}
+
 function confidenceTone(value: number | null): "green" | "amber" | "red" | "slate" {
   if (value === null) return "slate";
   if (value >= 95) return "green";
@@ -114,6 +139,7 @@ function PriceQuantityCell({
 }) {
   const [price, setPrice] = useState((listing.priceCents / 100).toFixed(2));
   const [qty, setQty] = useState(String(listing.quantity));
+  const [savedPriceCents, setSavedPriceCents] = useState(listing.priceCents);
   const [pending, startTransition] = useTransition();
 
   return (
@@ -151,8 +177,12 @@ function PriceQuantityCell({
             onDone({ done: 0, failed: 1, error: "Enter a valid price and quantity" });
             return;
           }
+          const confirmsWinnerChange = (listing.verifiedWinner || listing.priceLocked) && priceCents !== savedPriceCents;
+          if (confirmsWinnerChange && !window.confirm(`“${listing.title}” has a protected price${listing.verifiedWinner ? " as a Verified Winner" : " after a profitable sale"}. Change its live eBay price from ${formatCents(savedPriceCents)} to ${formatCents(priceCents)}?`)) return;
           startTransition(async () => {
-            onDone(await updateListing(listing.id, { priceCents, quantity }));
+            const result = await updateListing(listing.id, { priceCents, quantity }, confirmsWinnerChange);
+            if (result.done > 0) setSavedPriceCents(priceCents);
+            onDone(result);
           });
         }}
       >
@@ -165,6 +195,7 @@ function PriceQuantityCell({
 function ListingMarketRow({
   row,
   sitewideDiscountBps,
+  adRateBps,
   selected,
   onToggle,
   onLocalChange,
@@ -172,6 +203,7 @@ function ListingMarketRow({
 }: {
   row: ListingRow;
   sitewideDiscountBps: number;
+  adRateBps: number;
   selected: boolean;
   onToggle: () => void;
   onLocalChange: (id: string, update: { priceCents?: number; quantity?: number }) => void;
@@ -183,6 +215,7 @@ function ListingMarketRow({
     row.costCents,
     row.shippingCostCents,
     sitewideDiscountBps,
+    adRateBps,
   );
   const competitiveness = assessPriceCompetitiveness(
     row.priceCents,
@@ -232,6 +265,8 @@ function ListingMarketRow({
               View performance
             </Link>
             <div className="mt-1 flex flex-wrap gap-1.5">
+              {row.verifiedWinner && <Badge tone="amber">🏆 Verified winner · price locked</Badge>}
+              {!row.verifiedWinner && row.priceLocked && <Badge tone="indigo">🔒 Price locked · profitable sale</Badge>}
               <Badge tone={statusTone[row.status]}>{row.status}</Badge>
               <Badge tone={confidenceTone(row.sourceMatchConfidence)}>
                 {row.sourceMatchVerdict}
@@ -276,6 +311,7 @@ function ListingMarketRow({
       </td>
       <td className="whitespace-nowrap px-4 py-4 text-right">
         {row.averageCompetitorPriceCents === null ? "-" : formatCents(row.averageCompetitorPriceCents)}
+        <p className="mt-0.5 text-[10px] text-slate-400">{marketFreshness(row.marketUpdatedAt)}</p>
       </td>
       <td className="whitespace-nowrap px-4 py-4 text-right">
         {row.ebayRecommendedPriceCents === null ? "-" : formatCents(row.ebayRecommendedPriceCents)}
@@ -298,6 +334,14 @@ function ListingMarketRow({
         <span className={margin.marginPct >= 15 ? "font-semibold text-emerald-700" : "text-amber-700"}>
           {Math.round(margin.marginPct)}%
         </span>
+      </td>
+      <td className="whitespace-nowrap px-4 py-4 text-right">
+        <span className="font-semibold tabular-nums text-slate-800">{row.performance?.units7d ?? 0}</span>
+        <span className="ml-1 text-xs text-slate-400">/ {row.performance?.units30d ?? 0}</span>
+      </td>
+      <td className="whitespace-nowrap px-4 py-4 text-right">
+        <span className={cx("font-semibold tabular-nums", (row.performance?.profit7dCents ?? 0) >= 0 ? "text-emerald-700" : "text-red-600")}>{formatCents(row.performance?.profit7dCents ?? 0)}</span>
+        <span className="ml-1 text-xs text-slate-400">/ {formatCents(row.performance?.profit30dCents ?? 0)}</span>
       </td>
       <td className="whitespace-nowrap px-4 py-4 text-xs text-slate-500">{formatDate(rowDate)}</td>
       <td className="sticky right-0 min-w-[150px] bg-white px-4 py-4 text-xs text-slate-500 group-hover:bg-slate-50">
@@ -327,6 +371,8 @@ export function ListingsView({
   improveMainImage,
   improveListingContent,
   sitewideDiscountBps,
+  adRateBps,
+  recentActivity,
 }: {
   unlisted: UnlistedRow[];
   listings: ListingRow[];
@@ -336,12 +382,15 @@ export function ListingsView({
   improveMainImage: boolean;
   improveListingContent: boolean;
   sitewideDiscountBps: number;
+  adRateBps: number;
+  recentActivity: ListingActivityRow[];
 }) {
   const [tab, setTab] = useState<Tab>(ebayConnected ? "ebay" : "unlisted");
   const [listingRows, setListingRows] = useState(listings);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [pending, startTransition] = useTransition();
   const [notice, setNotice] = useState<{ text: string; error: boolean } | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
   const [expandedTable, setExpandedTable] = useState(false);
   const [actionProgress, setActionProgress] = useState<{
     title: string;
@@ -357,6 +406,16 @@ export function ListingsView({
     return map;
   }, [listingRows]);
 
+  const normalizedSearch = searchQuery.trim().toLocaleLowerCase();
+  const filteredUnlisted = useMemo(() => unlisted.filter((row) =>
+    !normalizedSearch || [row.title, row.sku].some((value) => value.toLocaleLowerCase().includes(normalizedSearch)),
+  ), [normalizedSearch, unlisted]);
+  const filteredByStatus = useMemo(() => ({
+    DRAFT: byStatus.DRAFT.filter((row) => !normalizedSearch || [row.title, row.sku, row.category, row.ebayListingId].some((value) => value?.toLocaleLowerCase().includes(normalizedSearch))),
+    ACTIVE: byStatus.ACTIVE.filter((row) => !normalizedSearch || [row.title, row.sku, row.category, row.ebayListingId].some((value) => value?.toLocaleLowerCase().includes(normalizedSearch))),
+    ENDED: byStatus.ENDED.filter((row) => !normalizedSearch || [row.title, row.sku, row.category, row.ebayListingId].some((value) => value?.toLocaleLowerCase().includes(normalizedSearch))),
+  }), [byStatus, normalizedSearch]);
+
   const tabs: { id: Tab; label: string; count: number }[] = [
     { id: "ebay", label: "Active on eBay", count: ebayRows.length },
     { id: "unlisted", label: "Unlisted inventory", count: unlisted.length },
@@ -369,8 +428,8 @@ export function ListingsView({
     tab === "ebay"
       ? []
       : tab === "unlisted"
-        ? unlisted.map((u) => u.productId)
-        : byStatus[tab].map((l) => l.id);
+        ? filteredUnlisted.map((u) => u.productId)
+        : filteredByStatus[tab].map((l) => l.id);
   const allSelected =
     currentIds.length > 0 && currentIds.every((id) => selected.has(id));
 
@@ -378,6 +437,7 @@ export function ListingsView({
     setTab(t);
     setSelected(new Set());
     setNotice(null);
+    setSearchQuery("");
   }
 
   function toggle(id: string) {
@@ -461,25 +521,41 @@ export function ListingsView({
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex gap-1 rounded-lg bg-slate-100 p-1">
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+        <div role="tablist" aria-label="Listing status" className="flex w-full gap-1 overflow-x-auto rounded-2xl border border-slate-200 bg-white p-1.5 shadow-sm lg:w-auto">
           {tabs.map((t) => (
             <button
               key={t.id}
+              role="tab"
+              aria-selected={tab === t.id}
               onClick={() => switchTab(t.id)}
               className={cx(
-                "rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
+                "shrink-0 whitespace-nowrap rounded-xl px-3 py-2 text-xs font-semibold transition-all duration-200 sm:text-sm",
                 tab === t.id
-                  ? "bg-white text-slate-900 shadow-sm"
-                  : "text-slate-500 hover:text-slate-900",
+                  ? "bg-slate-950 text-white shadow-md shadow-slate-900/15"
+                  : "text-slate-500 hover:bg-slate-50 hover:text-slate-900",
               )}
             >
-              {t.label} ({t.count})
+              {t.label} <span className={cx("ml-1 tabular-nums", tab === t.id ? "text-slate-300" : "text-slate-400")}>{t.count}</span>
             </button>
           ))}
         </div>
         {bulkActions}
       </div>
+
+      {tab !== "ebay" && (
+        <Card className="p-3 sm:p-4">
+          <label className="relative block">
+            <span className="sr-only">Search listings</span>
+            <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400">
+              <circle cx="11" cy="11" r="6.5" stroke="currentColor" strokeWidth="2" />
+              <path d="m16 16 4 4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+            </svg>
+            <input type="search" value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} placeholder="Search product, ASIN, category or eBay ID…" className="h-11 w-full rounded-xl border border-slate-200 bg-slate-50/80 pl-10 pr-10 text-sm outline-none transition focus:border-indigo-400 focus:bg-white focus:ring-4 focus:ring-indigo-100/70" />
+            {searchQuery && <button type="button" onClick={() => setSearchQuery("")} className="absolute right-2 top-1/2 grid h-7 w-7 -translate-y-1/2 place-items-center rounded-lg text-slate-400 hover:bg-slate-200 hover:text-slate-700" aria-label="Clear search">×</button>}
+          </label>
+        </Card>
+      )}
 
       {actionProgress && (
         <PremiumProgress
@@ -515,6 +591,7 @@ export function ListingsView({
           improveMainImage={improveMainImage}
           improveListingContent={improveListingContent}
           sitewideDiscountBps={sitewideDiscountBps}
+          adRateBps={adRateBps}
         />
       ) : (
       <>
@@ -539,7 +616,7 @@ export function ListingsView({
               </div>
               <div className="flex items-center gap-2">
                 <span className="text-xs text-slate-500">
-                  {byStatus[tab].length.toLocaleString()} listings
+                  {filteredByStatus[tab].length.toLocaleString()} listings
                 </span>
                 <Button
                   type="button"
@@ -568,7 +645,7 @@ export function ListingsView({
               </tr>
             </thead>
             <tbody>
-              {unlisted.map((u) => (
+              {filteredUnlisted.map((u) => (
                 <tr key={u.productId} className="border-b border-slate-100 last:border-0">
                   <td className="px-4 py-3">
                     <input
@@ -592,14 +669,14 @@ export function ListingsView({
                   <td className="px-4 py-3 text-right tabular-nums">{u.supplierStock}</td>
                 </tr>
               ))}
-              {unlisted.length === 0 && (
+              {filteredUnlisted.length === 0 && (
                 <tr>
                   <td colSpan={5} className="px-4 py-12 text-center text-slate-500">
-                    Nothing unlisted. Import products from{" "}
-                    <Link href="/sourcing" className="font-medium text-indigo-600">
-                      Product sourcing
-                    </Link>{" "}
-                    to get started.
+                    {normalizedSearch ? (
+                      "No unlisted products match your search."
+                    ) : (
+                      <>Nothing unlisted. Import products from <Link href="/sourcing" className="font-medium text-indigo-600">Product sourcing</Link> to get started.</>
+                    )}
                   </td>
                 </tr>
               )}
@@ -612,7 +689,7 @@ export function ListingsView({
               expandedTable ? "min-h-0 flex-1" : "max-h-[72vh]",
             )}
           >
-          <table className="w-full min-w-[2550px] text-sm">
+          <table className="w-full min-w-[2850px] text-sm">
             <thead className="text-xs font-semibold uppercase tracking-wide text-slate-500">
               <tr>
                 <th className="sticky left-0 top-0 z-50 w-12 bg-slate-50 px-3 py-3">
@@ -633,16 +710,19 @@ export function ListingsView({
                 <th className="sticky top-0 z-30 bg-slate-50 px-4 py-3 text-right">Competition</th>
                 <th className="sticky top-0 z-30 bg-slate-50 px-4 py-3 text-right">Profit after ads</th>
                 <th className="sticky top-0 z-30 bg-slate-50 px-4 py-3 text-right">Margin</th>
+                <th className="sticky top-0 z-30 bg-slate-50 px-4 py-3 text-right">Units 7d / 30d</th>
+                <th className="sticky top-0 z-30 bg-slate-50 px-4 py-3 text-right">Profit 7d / 30d</th>
                 <th className="sticky top-0 z-30 bg-slate-50 px-4 py-3 text-left">Listing date</th>
                 <th className="sticky right-0 top-0 z-40 bg-slate-50 px-4 py-3 text-left">eBay ID</th>
               </tr>
             </thead>
             <tbody>
-              {byStatus[tab].map((l) => (
+              {filteredByStatus[tab].map((l) => (
                 <ListingMarketRow
                   key={l.id}
                   row={l}
                   sitewideDiscountBps={sitewideDiscountBps}
+                  adRateBps={adRateBps}
                   selected={selected.has(l.id)}
                   onToggle={() => toggle(l.id)}
                   onLocalChange={(id, update) =>
@@ -659,10 +739,10 @@ export function ListingsView({
                   }
                 />
               ))}
-              {byStatus[tab].length === 0 && (
+              {filteredByStatus[tab].length === 0 && (
                 <tr>
-                  <td colSpan={16} className="px-4 py-12 text-center text-slate-500">
-                    No {tab.toLowerCase()} listings.
+                  <td colSpan={18} className="px-4 py-12 text-center text-slate-500">
+                    {normalizedSearch ? "No listings match your search." : `No ${tab.toLowerCase()} listings.`}
                   </td>
                 </tr>
               )}
@@ -673,6 +753,34 @@ export function ListingsView({
       </Card>
       </>
       )}
+
+      <Card className="overflow-hidden">
+        <details>
+          <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-4 sm:px-5">
+            <div>
+              <h2 className="text-sm font-semibold text-slate-900">Recent listing activity</h2>
+              <p className="mt-0.5 text-xs text-slate-500">Bulk updates, optimizations, syncs, and their outcomes.</p>
+            </div>
+            <span className="rounded-lg bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-600">{recentActivity.length} recent</span>
+          </summary>
+          <div className="divide-y divide-slate-100 border-t border-slate-100 animate-fade-in">
+            {recentActivity.map((activity) => {
+              const meta = batchSourceMeta(activity.source);
+              return (
+                <Link key={activity.id} href={`/mirror/batches/${activity.id}`} className="flex items-center gap-3 px-4 py-3 transition hover:bg-slate-50 sm:px-5">
+                  <span className={cx("grid h-9 w-9 shrink-0 place-items-center rounded-xl text-sm font-bold", activity.failedCount ? "bg-amber-50 text-amber-700" : "bg-emerald-50 text-emerald-700")}>{activity.failedCount ? "!" : "✓"}</span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-sm font-semibold text-slate-800">{meta.label}</span>
+                    <span className="block text-xs text-slate-500">{activity.succeededCount}/{activity.totalCount} succeeded{activity.failedCount ? ` · ${activity.failedCount} need attention` : ""}</span>
+                  </span>
+                  <span className="shrink-0 text-right text-[11px] text-slate-400">{new Date(activity.createdAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })}<span className="ml-2 text-indigo-500">→</span></span>
+                </Link>
+              );
+            })}
+            {recentActivity.length === 0 && <p className="px-5 py-8 text-center text-sm text-slate-500">No listing activity recorded yet.</p>}
+          </div>
+        </details>
+      </Card>
     </div>
   );
 }

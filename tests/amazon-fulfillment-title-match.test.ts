@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { fulfillmentIdentityEvidence, fulfillmentNamesMatch, fulfillmentTitleSimilarity } from "@/lib/amazon-email/title-match";
+import { cancellationMatchOverridesIdentity, fulfillmentIdentityEvidence, fulfillmentMatchIsAmbiguous, fulfillmentNamesMatch, fulfillmentTitleSimilarity } from "@/lib/amazon-email/title-match";
 
 describe("Amazon delivery to eBay order title matching", () => {
   it("matches a concise eBay title to a longer Amazon delivery item name", () => {
@@ -38,6 +38,17 @@ describe("Amazon and eBay recipient matching", () => {
 });
 
 describe("repeated-ASIN delivery identity priority", () => {
+  it("defers two identical-ASIN matches until shipment identity is available", () => {
+    expect(fulfillmentMatchIsAmbiguous(
+      { score: 100, identityStrength: 0 },
+      [{ score: 100, identityStrength: 0 }, { score: 100, identityStrength: 0 }],
+    )).toBe(true);
+    expect(fulfillmentMatchIsAmbiguous(
+      { score: 100, identityStrength: 2 },
+      [{ score: 100, identityStrength: 2 }, { score: 100, identityStrength: 0 }],
+    )).toBe(false);
+  });
+
   it("ranks a delivery address match above a recipient-only match", () => {
     const address = fulfillmentIdentityEvidence({
       ebayRecipientName: "Household Member",
@@ -71,5 +82,29 @@ describe("repeated-ASIN delivery identity priority", () => {
       amazonAddressFingerprint: "same-address",
     });
     expect(evidence).toMatchObject({ compatible: true, strength: 3, addressMatches: true, recipientMatches: true });
+  });
+});
+
+describe("cancelled purchase matching", () => {
+  it("allows a nearby exact-ASIN cancellation to override conflicting recipient text", () => {
+    const saleDate = new Date("2026-07-05T12:00:00Z");
+    expect(cancellationMatchOverridesIdentity({
+      purchaseStatus: "CANCELLED",
+      exactAsin: true,
+      purchaseDate: new Date("2026-07-06T12:00:00Z"),
+      saleDate,
+    })).toBe(true);
+  });
+
+  it("does not relax matching for non-cancellations or distant purchases", () => {
+    const saleDate = new Date("2026-07-05T12:00:00Z");
+    expect(cancellationMatchOverridesIdentity({ purchaseStatus: "ORDERED", exactAsin: true, purchaseDate: saleDate, saleDate })).toBe(false);
+    expect(cancellationMatchOverridesIdentity({ purchaseStatus: "CANCELLED", exactAsin: false, purchaseDate: saleDate, saleDate })).toBe(false);
+    expect(cancellationMatchOverridesIdentity({
+      purchaseStatus: "CANCELLED",
+      exactAsin: true,
+      purchaseDate: new Date("2026-08-10T12:00:00Z"),
+      saleDate,
+    })).toBe(false);
   });
 });

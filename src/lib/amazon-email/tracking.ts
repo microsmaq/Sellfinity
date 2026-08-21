@@ -1,7 +1,7 @@
 import "server-only";
 import { db } from "@/lib/db";
 import { getEbayClientForUser } from "@/lib/ebay";
-import { ebayCarrierCode, normalizeTrackingNumber, remoteFulfillmentLookupKeys, trackingAppliesToAsin } from "./tracking-utils";
+import { ebayCarrierCode, normalizeTrackingNumber, remoteFulfillmentLookupKeys, trackingAppliesToAsin, trackingCandidateForUpload } from "./tracking-utils";
 
 export type TrackingUploadResult = {
   eligible: number;
@@ -11,14 +11,24 @@ export type TrackingUploadResult = {
 };
 
 /**
- * Upload Amazon tracking only when attribution is unambiguous:
+ * Upload tracking saved directly on an order, or Amazon tracking when
+ * attribution is unambiguous:
  * - the shipment email names the matched ASIN, or the purchase has one item;
  * - the Amazon ASIN exactly matches the listing source SKU;
  * - the local eBay sale maps to a currently unfulfilled eBay line.
  */
 export async function uploadAmazonTrackingToEbay(userId: string): Promise<TrackingUploadResult> {
   const candidates = await db.order.findMany({
-    where: { userId, ebayTrackingSyncedAt: null, amazonPurchaseItem: { isNot: null } },
+    where: {
+      userId,
+      ebayTrackingSyncedAt: null,
+      status: { not: "REFUNDED" },
+      sourcingStatus: { not: "CANCELLED" },
+      OR: [
+        { ebayTrackingNumber: { not: null } },
+        { amazonPurchaseItem: { isNot: null } },
+      ],
+    },
     include: {
       listing: { include: { product: { select: { sku: true } } } },
       amazonPurchaseItem: { include: { purchase: { include: { items: { select: { id: true } } } } } },
@@ -28,35 +38,8 @@ export async function uploadAmazonTrackingToEbay(userId: string): Promise<Tracki
 
   let eligible = 0;
   let uploaded = 0;
-  let savedLocally = 0;
+  const savedLocally = 0;
   let failed = 0;
-
-  // Delivered orders are already closed on eBay. Save newly resolved tracking
-  // in Sellfinity without making an unnecessary fulfillment API request.
-  const activeCandidates: typeof candidates = [];
-  for (const order of candidates) {
-    const item = order.amazonPurchaseItem;
-    const purchase = item?.purchase;
-    const rawTracking = purchase?.trackingNumber;
-    if (!item || !purchase || !rawTracking || purchase.status !== "DELIVERED") {
-      activeCandidates.push(order);
-      continue;
-    }
-    if (!item.asin || item.asin.toUpperCase() !== order.listing.product.sku.toUpperCase()) continue;
-    if (!trackingAppliesToAsin(purchase.trackingAsinsJson, purchase.items.length, item.asin)) continue;
-    const trackingNumber = normalizeTrackingNumber(rawTracking);
-    if (trackingNumber.length < 8 || trackingNumber.length > 30) continue;
-    await db.order.update({ where: { id: order.id }, data: {
-      sourcingStatus: "DELIVERED",
-      ebayTrackingNumber: trackingNumber,
-      ebayTrackingCarrier: ebayCarrierCode(purchase.carrier, trackingNumber),
-      ebayTrackingSyncedAt: null,
-      ebayTrackingSyncError: null,
-    } });
-    savedLocally++;
-  }
-
-  if (!activeCandidates.length) return { eligible, uploaded, savedLocally, failed };
 
   const ebay = await getEbayClientForUser(userId);
   const remoteOrders = await ebay.getUnfulfilledOrders(userId);
@@ -69,20 +52,27 @@ export async function uploadAmazonTrackingToEbay(userId: string): Promise<Tracki
     )),
   );
 
-  for (const order of activeCandidates) {
+  for (const order of candidates) {
     const item = order.amazonPurchaseItem;
-    if (!item) continue;
-    const purchase = item.purchase;
-    const rawTracking = purchase.trackingNumber;
-    if (!rawTracking || !["SHIPPED", "DELIVERED"].includes(purchase.status)) continue;
-    if (!item.asin || item.asin.toUpperCase() !== order.listing.product.sku.toUpperCase()) continue;
-    if (!trackingAppliesToAsin(purchase.trackingAsinsJson, purchase.items.length, item.asin)) continue;
+    const purchase = item?.purchase;
+    const asinMatches = !!item?.asin && item.asin.toUpperCase() === order.listing.product.sku.toUpperCase();
+    const amazonAttributionSafe = !!item && !!purchase && asinMatches
+      && trackingAppliesToAsin(purchase.trackingAsinsJson, purchase.items.length, item.asin!);
+    const candidate = trackingCandidateForUpload({
+      storedTrackingNumber: order.ebayTrackingNumber,
+      storedCarrier: order.ebayTrackingCarrier,
+      amazonTrackingNumber: purchase?.trackingNumber,
+      amazonCarrier: purchase?.carrier,
+      amazonStatus: purchase?.status,
+      amazonAttributionSafe,
+    });
+    if (!candidate) continue;
     const remote = remoteLines.get(order.ebayOrderId);
     if (!remote) continue;
 
-    const trackingNumber = normalizeTrackingNumber(rawTracking);
+    const trackingNumber = normalizeTrackingNumber(candidate.trackingNumber);
     if (trackingNumber.length < 8 || trackingNumber.length > 30) continue;
-    const shippingCarrierCode = ebayCarrierCode(purchase.carrier, trackingNumber);
+    const shippingCarrierCode = ebayCarrierCode(candidate.carrier, trackingNumber);
     eligible++;
     try {
       await ebay.createShippingFulfillment(userId, {
@@ -94,7 +84,9 @@ export async function uploadAmazonTrackingToEbay(userId: string): Promise<Tracki
       });
       await db.order.update({ where: { id: order.id }, data: {
         status: "SHIPPED",
-        sourcingStatus: purchase.status,
+        // A tracking number proves shipment, not delivery. Preserve Delivered
+        // only when Amazon independently supplied a real delivery status.
+        sourcingStatus: purchase?.status === "DELIVERED" ? "DELIVERED" : "SHIPPED",
         ebayTrackingNumber: trackingNumber,
         ebayTrackingCarrier: shippingCarrierCode,
         ebayTrackingSyncedAt: new Date(),

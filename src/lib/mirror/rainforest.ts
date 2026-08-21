@@ -215,14 +215,30 @@ export function rainforestShippingCents(
     : 0;
 }
 
+/** Missing shipping is not the same as free shipping. Only an explicit
+ * numeric amount or clear free-shipping marker is safe for profitability. */
+export function rainforestShippingIsKnown(
+  shipping?: { value?: number; raw?: string },
+): boolean {
+  if (!shipping) return false;
+  if (typeof shipping.value === "number" && shipping.value >= 0) return true;
+  const raw = shipping.raw?.trim().toUpperCase() ?? "";
+  return raw.includes("FREE") || /^\$?0(?:\.00)?(?:\s|$)/.test(raw);
+}
+
 /** Pure mapping from a Rainforest product payload to our scraper shape. */
 export function mapRainforestProduct(
   asin: string,
   product: RainforestProduct,
 ): ScrapedProduct | null {
   const priceValue = product.buybox_winner?.price?.value;
+  const shipping = product.buybox_winner?.shipping;
+  const outOfStock = product.buybox_winner?.availability?.type === "out_of_stock";
   if (!product.title || typeof priceValue !== "number" || priceValue <= 0) {
     return null; // unbuyable/incomplete page — not mirrorable
+  }
+  if (!outOfStock && !rainforestShippingIsKnown(shipping)) {
+    return null; // fail closed: an omitted delivery charge is not confirmed free shipping
   }
   const images = [
     product.main_image?.link,
@@ -241,10 +257,8 @@ export function mapRainforestProduct(
     category: product.categories?.[0]?.name ?? "Other",
     imageUrls: [...new Set(images)].slice(0, 12),
     priceCents: Math.round(priceValue * 100),
-    shippingCostCents: rainforestShippingCents(
-      product.buybox_winner?.shipping,
-    ),
-    inStock: product.buybox_winner?.availability?.type !== "out_of_stock",
+    shippingCostCents: rainforestShippingCents(shipping),
+    inStock: !outOfStock,
   };
 }
 
@@ -257,7 +271,12 @@ export async function rainforestRequest<T>(
   if (!key) throw new Error("RAINFOREST_API_KEY is not set");
   const workflow = options.workflow ?? "unspecified";
   const requestType = params.type ?? "unknown";
-  const cacheKey = requestCacheKey(params);
+  const customerZipcode = process.env.RAINFOREST_CUSTOMER_ZIPCODE?.trim();
+  const requestParams = {
+    ...(customerZipcode && { customer_zipcode: customerZipcode }),
+    ...params,
+  };
+  const cacheKey = requestCacheKey(requestParams);
   const existingPromise = inFlight.get(cacheKey);
   if (existingPromise) {
     await recordUsage(workflow, requestType, "cacheHits");
@@ -318,7 +337,7 @@ export async function rainforestRequest<T>(
       const query = new URLSearchParams({
         api_key: key,
         amazon_domain: "amazon.com",
-        ...params,
+        ...requestParams,
       });
       await recordUsage(workflow, requestType, "providerRequests");
       const res = await fetch(`${API_BASE}?${query}`, {
@@ -348,7 +367,7 @@ export async function rainforestRequest<T>(
           where: { cacheKey },
           data: {
             responseJson: JSON.stringify(body),
-            expiresAt: new Date(Date.now() + (options.ttlMs ?? defaultTtlMs(params))),
+            expiresAt: new Date(Date.now() + (options.ttlMs ?? defaultTtlMs(requestParams))),
             lockedUntil: null,
           },
         });

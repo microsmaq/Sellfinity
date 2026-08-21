@@ -7,6 +7,73 @@ import { importOrders } from "@/lib/orders/import";
 import { restockLowFulfillmentInventory, type AutoRestockResult } from "@/lib/orders/auto-restock";
 import { getEbayClientForUser } from "@/lib/ebay";
 import { ebayCarrierCode, normalizeTrackingNumber, remoteFulfillmentLookupKeys } from "@/lib/amazon-email/tracking-utils";
+import { sourcingStatusForAmazonPurchase } from "@/lib/amazon-email/status";
+
+export async function reassignAmazonPurchase(sourceOrderId: string, targetOrderId: string) {
+  const user = await requireUser();
+  if (sourceOrderId === targetOrderId) return { error: "Choose a different fulfillment order." };
+  const [source, target] = await Promise.all([
+    db.order.findFirst({
+      where: { id: sourceOrderId, userId: user.id },
+      include: { amazonPurchaseItem: { include: { purchase: true } }, listing: { include: { product: true } } },
+    }),
+    db.order.findFirst({
+      where: { id: targetOrderId, userId: user.id },
+      include: { amazonPurchaseItem: true, listing: { include: { product: true } } },
+    }),
+  ]);
+  if (!source?.amazonPurchaseItem) return { error: "The original order no longer has an Amazon purchase attached." };
+  if (!target) return { error: "The destination order was not found." };
+  if (target.amazonPurchaseItem) return { error: "The destination already has an Amazon purchase attached." };
+  if (source.listing.product.sku.toUpperCase() !== target.listing.product.sku.toUpperCase()) {
+    return { error: "Amazon purchases can only be moved between orders for the same ASIN." };
+  }
+  if (source.ebayTrackingSyncedAt) {
+    return { error: "Tracking was already sent to eBay for this match. Contact support before moving it." };
+  }
+  const status = sourcingStatusForAmazonPurchase(source.amazonPurchaseItem.purchase.status);
+  await db.$transaction([
+    db.amazonPurchaseItem.update({
+      where: { id: source.amazonPurchaseItem.id },
+      data: {
+        matchedOrderId: target.id,
+        matchReason: "Manually reassigned to the correct repeated-ASIN eBay order.",
+        matchConfidence: 100,
+      },
+    }),
+    db.order.update({
+      where: { id: source.id },
+      data: {
+        sourcingStatus: "NOT_PURCHASED",
+        amazonMatchedAt: null,
+        profitProtectionStatus: null,
+        profitProtectionReviewedAt: null,
+        profitProtectionOldPriceCents: null,
+        profitProtectionNewPriceCents: null,
+        profitProtectionError: null,
+      },
+    }),
+    db.order.update({
+      where: { id: target.id },
+      data: { sourcingStatus: status, amazonMatchedAt: new Date() },
+    }),
+  ]);
+  revalidatePath("/orders");
+  revalidatePath("/dashboard");
+  return { moved: true as const };
+}
+
+export async function markOrderCancelled(orderId: string) {
+  const user = await requireUser();
+  const result = await db.order.updateMany({
+    where: { id: orderId, userId: user.id },
+    data: { sourcingStatus: "CANCELLED", ebayTrackingSyncError: null },
+  });
+  if (!result.count) return { error: "Order not found." };
+  revalidatePath("/dashboard");
+  revalidatePath("/orders");
+  return { cancelled: true as const };
+}
 
 export async function submitManualOrderTracking(orderId: string, rawTrackingNumber: string) {
   const user = await requireUser();
@@ -25,24 +92,6 @@ export async function submitManualOrderTracking(orderId: string, rawTrackingNumb
   }
 
   const carrier = ebayCarrierCode(order.amazonPurchaseItem?.purchase.carrier ?? null, trackingNumber);
-
-  // A delivered eBay order no longer needs a fulfillment update. Keep the
-  // tracking number in Sellfinity so it remains visible without asking eBay
-  // to modify a fulfillment that is already closed.
-  if (order.sourcingStatus === "DELIVERED") {
-    await db.order.update({
-      where: { id: order.id },
-      data: {
-        ebayTrackingNumber: trackingNumber,
-        ebayTrackingCarrier: carrier,
-        ebayTrackingSyncedAt: null,
-        ebayTrackingSyncError: null,
-      },
-    });
-    revalidatePath("/orders");
-    revalidatePath("/dashboard");
-    return { trackingNumber, carrier, sourcingStatus: "DELIVERED", syncedToEbay: false };
-  }
 
   try {
     const ebay = await getEbayClientForUser(user.id);

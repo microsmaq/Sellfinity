@@ -49,6 +49,16 @@ describe("mapRainforestProduct", () => {
     expect(p.shippingCostCents).toBe(0);
   });
 
+  it("does not treat an omitted shipping field as free shipping", () => {
+    expect(mapRainforestProduct("B0UNKNOWN", {
+      ...fixture,
+      buybox_winner: {
+        price: { value: 25 },
+        availability: { type: "in_stock" },
+      },
+    })).toBeNull();
+  });
+
   it("rejects products without a title or buyable price", () => {
     expect(mapRainforestProduct("B0X", { ...fixture, title: undefined })).toBeNull();
     expect(

@@ -56,8 +56,9 @@ function IssueTable({
   onAction?: (id: string, action: "fix" | "ignore") => void;
   pending?: boolean;
 }) {
-  return (
-    <table className="w-full text-sm">
+  return (<>
+    <div className="divide-y divide-slate-100 sm:hidden">{issues.map((issue) => { const type = typeLabels[issue.type]; return <article key={issue.id} className="p-4"><div className="flex items-center justify-between gap-3"><Badge tone={type.tone}>{type.label}</Badge>{!showActions && <Badge tone={issue.resolution === "IGNORED" ? "slate" : "green"}>{resolutionLabels[issue.resolution]}</Badge>}</div><p className="mt-3 line-clamp-2 text-[13px] font-semibold text-slate-950">{issue.listingTitle}</p><p className="mt-1 text-xs leading-5 text-slate-500">{issue.message}</p>{issue.field && <div className="mt-3 flex items-center justify-between rounded-xl bg-slate-50 px-3 py-2 text-xs"><span className="text-slate-500">Listed → target</span><span className="font-bold tabular-nums">{formatValue(issue.field, issue.actual)} → {formatValue(issue.field, issue.expected)}</span></div>}{showActions && onAction && <div className="mt-3 grid grid-cols-2 gap-2"><Button size="sm" disabled={pending} onClick={() => onAction(issue.id, "fix")}>Fix now</Button><Button size="sm" variant="secondary" disabled={pending} onClick={() => onAction(issue.id, "ignore")}>Ignore</Button></div>}</article>; })}</div>
+    <table className="hidden w-full text-sm sm:table">
       <thead>
         <tr className="border-b border-slate-200 text-left text-xs uppercase tracking-wide text-slate-500">
           <th className="px-4 py-3">Issue</th>
@@ -106,8 +107,7 @@ function IssueTable({
           );
         })}
       </tbody>
-    </table>
-  );
+    </table></>);
 }
 
 export function InventoryView({
@@ -168,7 +168,7 @@ export function InventoryView({
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center gap-3">
+      <div className="flex flex-col items-stretch gap-2 sm:flex-row sm:items-center sm:gap-3">
         <Button onClick={sync} disabled={pending}>
           {pending ? "Syncing…" : "Run sync now"}
         </Button>
@@ -178,7 +178,7 @@ export function InventoryView({
         {notice && (
           <p
             className={cx(
-              "rounded-lg px-3 py-1.5 text-sm",
+              "rounded-xl px-3 py-2 text-[13px]",
               notice.error ? "bg-red-50 text-red-700" : "bg-emerald-50 text-emerald-700",
             )}
           >

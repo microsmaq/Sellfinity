@@ -5,6 +5,38 @@ export type ParsedAmazonEmail = {
   trackingNumber: string | null; carrier: string | null; trackingUrl: string | null; items: ParsedAmazonItem[];
 };
 
+/** Classify Amazon's lifecycle message without treating generic phrases such
+ * as "delivery confirmation" or "expected delivery" as proof that a package
+ * arrived. Shipment emails commonly contain those phrases. */
+export function amazonEmailStatus(
+  subject: string,
+  text: string,
+): ParsedAmazonEmail["status"] {
+  const subjectLower = subject.toLowerCase();
+  const bodyLower = text.slice(0, 4_000).toLowerCase();
+  const combined = `${subjectLower} ${bodyLower}`;
+  if (
+    /\bcancel(?:led|ed|ation)\b/.test(subjectLower) ||
+    /\b(?:order|item|shipment)\s+(?:was|has been|is)\s+cancel(?:led|ed)\b/.test(bodyLower)
+  ) {
+    return "CANCELLED";
+  }
+
+  const deliveredSubject = /\bdelivered\b/.test(subjectLower);
+  const explicitDeliveredBody =
+    /\b(?:package|order|shipment|item)\s+(?:was|has been|is)\s+delivered\b/.test(bodyLower) ||
+    /\bdelivered\s+(?:today|yesterday|on|at)\b/.test(bodyLower);
+  if (deliveredSubject || explicitDeliveredBody) return "DELIVERED";
+
+  if (
+    /\bship(?:ped|ment)\b/.test(combined) ||
+    /\bout for delivery\b|\bon the way\b/.test(combined)
+  ) {
+    return "SHIPPED";
+  }
+  return "ORDERED";
+}
+
 function decodeEntities(value: string): string {
   return value.replace(/&nbsp;/gi, " ").replace(/&amp;/gi, "&").replace(/&#39;/g, "'").replace(/&quot;/gi, '"').replace(/&#x2F;/gi, "/").replace(/&#\d+;/g, " ");
 }
@@ -99,8 +131,7 @@ export function parseAmazonEmail(input: { subject: string; html?: string; text?:
   const text = `${input.subject}\n${input.text || ""}\n${textFromHtml(html)}`;
   const orderId = text.match(/\b(\d{3}-\d{7}-\d{7})\b/)?.[1];
   if (!orderId) return null;
-  const lower = `${input.subject} ${text.slice(0, 1000)}`.toLowerCase();
-  const status = /cancel/.test(lower) ? "CANCELLED" : /deliver(?:ed|y confirmation)/.test(lower) ? "DELIVERED" : /ship(?:ped|ment)/.test(lower) ? "SHIPPED" : "ORDERED";
+  const status = amazonEmailStatus(input.subject, text);
   const itemMap = new Map<string, ParsedAmazonItem>();
   const anchor = /<a\b[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi;
   for (const match of html.matchAll(anchor)) {

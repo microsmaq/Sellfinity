@@ -17,35 +17,41 @@ datasource db {
 }
 
 model User {
-  id                        String    @id @default(cuid())
-  email                     String    @unique
-  passwordHash              String
-  name                      String
+  id                           String    @id @default(cuid())
+  email                        String    @unique
+  passwordHash                 String
+  name                         String
   // USER | ADMIN
-  role                      String    @default("USER")
+  role                         String    @default("USER")
   // FREE | PRO | SCALE
-  plan                      String    @default("FREE")
-  planRenewsAt              DateTime?
+  plan                         String    @default("FREE")
+  planRenewsAt                 DateTime?
   // Automatically publish high-confidence profitable Arbitrage Finder matches
   // after a user-initiated scan finishes.
-  autoPublishArbitrage      Boolean   @default(false)
+  autoPublishArbitrage         Boolean   @default(false)
   // Apply AI hero-image enhancement to Amazon mirroring and every Arbitrage
   // Finder publishing path, including automatic batches.
-  improveMainImage          Boolean   @default(false)
+  improveMainImage             Boolean   @default(false)
   // Rewrite Amazon source copy into factual, eBay-search-optimized titles and
   // descriptions while retaining Sellfinity's standard HTML template.
-  improveListingContent     Boolean   @default(false)
+  improveListingContent        Boolean   @default(false)
   // Reprice active listings after a matched order proves the realized margin
   // missed the 5% / $7 net-profit floor.
-  autoProtectVerifiedProfit Boolean   @default(false)
+  autoProtectVerifiedProfit    Boolean   @default(false)
+  // Give a listing a separate price lock after its first profitable sale.
+  // The lock expires after seven days without another profitable sale.
+  autoLockProfitableListings   Boolean   @default(true)
   // Refill sold active eBay listings to five units whenever live stock falls
   // below two during fulfillment refreshes.
-  autoRestockFulfilledListings Boolean @default(false)
+  autoRestockFulfilledListings Boolean   @default(false)
   // Account-wide eBay promotion percentage in basis points (500 = 5%).
   // Protected list prices are grossed up so the discounted checkout price
   // still clears the verified-profit target.
-  ebaySitewideDiscountBps   Int       @default(0)
-  createdAt                 DateTime  @default(now())
+  ebaySitewideDiscountBps      Int       @default(0)
+  // Expected Promoted Listings rate in basis points (900 = 9%). Used for
+  // projected pricing and modeled profit on imported sales.
+  ebayAdRateBps                Int       @default(300)
+  createdAt                    DateTime  @default(now())
 
   sessions                Session[]
   products                Product[]
@@ -87,29 +93,29 @@ model AmazonEmailConnection {
 // An Amazon purchase recovered from a user-authorized confirmation or
 // shipment email. The raw email is never retained.
 model AmazonPurchase {
-  id                 String    @id @default(cuid())
-  userId             String
-  amazonOrderId      String
-  sourceMessageId    String
-  purchasedAt        DateTime?
-  recipientName      String?
+  id                         String    @id @default(cuid())
+  userId                     String
+  amazonOrderId              String
+  sourceMessageId            String
+  purchasedAt                DateTime?
+  recipientName              String?
   deliveryAddressFingerprint String?
-  status             String    @default("ORDERED")
-  subtotalCents      Int?
-  shippingCents      Int       @default(0)
-  taxCents           Int       @default(0)
-  discountCents      Int       @default(0)
-  totalCents         Int?
-  currency           String    @default("USD")
-  trackingNumber     String?
-  carrier            String?
-  trackingUrl        String?
-  trackingResolvedAt DateTime?
-  trackingLookupError String?
-  trackingAsinsJson  String    @default("[]")
-  expectedDeliveryAt DateTime?
-  createdAt          DateTime  @default(now())
-  updatedAt          DateTime  @updatedAt
+  status                     String    @default("ORDERED")
+  subtotalCents              Int?
+  shippingCents              Int       @default(0)
+  taxCents                   Int       @default(0)
+  discountCents              Int       @default(0)
+  totalCents                 Int?
+  currency                   String    @default("USD")
+  trackingNumber             String?
+  carrier                    String?
+  trackingUrl                String?
+  trackingResolvedAt         DateTime?
+  trackingLookupError        String?
+  trackingAsinsJson          String    @default("[]")
+  expectedDeliveryAt         DateTime?
+  createdAt                  DateTime  @default(now())
+  updatedAt                  DateTime  @updatedAt
 
   user  User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
   items AmazonPurchaseItem[]
@@ -305,6 +311,39 @@ model EbayMarketMetric {
   @@index([userId])
 }
 
+// Durable eBay Analytics totals. Pages reuse these snapshots instead of
+// spending the seller's small daily traffic-report allowance on every visit.
+model EbayListingTrafficSnapshot {
+  id                  String   @id @default(cuid())
+  userId              String
+  ebayListingId       String
+  periodStart         DateTime
+  periodEnd           DateTime
+  impressions         Int?
+  views               Int?
+  clickThroughRate    Float?
+  salesConversionRate Float?
+  fetchedAt           DateTime @default(now())
+
+  @@unique([userId, ebayListingId])
+  @@index([userId, fetchedAt])
+}
+
+// Daily points are cached by report scope. ACCOUNT powers the main dashboard;
+// a stable listing-set key powers an individual ASIN graph.
+model EbayTrafficDailySnapshot {
+  id          String   @id @default(cuid())
+  userId      String
+  scopeKey    String
+  date        DateTime
+  impressions Int
+  views       Int
+  fetchedAt   DateTime @default(now())
+
+  @@unique([userId, scopeKey, date])
+  @@index([userId, scopeKey, date])
+}
+
 model Session {
   id        String   @id // random 256-bit token, also the cookie value
   userId    String
@@ -340,6 +379,8 @@ model Product {
   userId              String
   sku                 String
   title               String
+  // Manufacturer brand retained from Amazon for category compliance on eBay.
+  brand               String   @default("")
   description         String
   // JSON string array of image URLs
   imageUrlsJson       String   @default("[]")
@@ -406,24 +447,24 @@ model Listing {
 // A sale imported from eBay. Fee/cost fields are snapshotted at import so the
 // P&L is stable even if fee rates or supplier costs change later.
 model Order {
-  id                   String   @id @default(cuid())
-  userId               String
-  listingId            String
-  ebayOrderId          String
-  quantity             Int
+  id                         String   @id @default(cuid())
+  userId                     String
+  listingId                  String
+  ebayOrderId                String
+  quantity                   Int
   // per-unit sale price
-  salePriceCents       Int
-  shippingChargedCents Int      @default(0)
-  ebayFeeCents         Int
-  shippingCostCents    Int
-  cogsCents            Int // total cost of goods for this order
+  salePriceCents             Int
+  shippingChargedCents       Int      @default(0)
+  ebayFeeCents               Int
+  shippingCostCents          Int
+  cogsCents                  Int // total cost of goods for this order
   // PAID | SHIPPED | REFUNDED
-  status               String   @default("PAID")
-  buyerUsername        String
-  shippingRecipientName String?
+  status                     String   @default("PAID")
+  buyerUsername              String
+  shippingRecipientName      String?
   shippingAddressFingerprint String?
-  saleDate             DateTime
-  createdAt            DateTime @default(now())
+  saleDate                   DateTime
+  createdAt                  DateTime @default(now())
 
   // Reconciled Amazon fulfillment data. Catalog COGS remains the estimate;
   // realized dashboards use the linked purchase item's allocated actual cost.

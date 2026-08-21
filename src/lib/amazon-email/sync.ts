@@ -4,15 +4,17 @@ import { decryptToken, encryptToken } from "./crypto";
 import { googleEmailConfig } from "./oauth";
 import { parseAmazonEmail } from "./parser";
 import { resolveMissingAmazonTracking, type TrackingResolutionResult } from "./tracking-resolver";
-import { fulfillmentIdentityEvidence, fulfillmentTitleSimilarity } from "./title-match";
+import { cancellationMatchOverridesIdentity, fulfillmentIdentityEvidence, fulfillmentMatchIsAmbiguous, fulfillmentTitleSimilarity } from "./title-match";
 import { deliveryAddressFingerprint } from "./address-match";
+import { sourcingStatusForAmazonPurchase } from "./status";
+import { AMAZON_EMAIL_SEARCH_QUERY } from "./search-query";
 
 type GmailPart = { mimeType?: string; body?: { data?: string }; parts?: GmailPart[] };
 type GmailMessage = { id: string; internalDate?: string; payload?: { headers?: { name: string; value: string }[] } & GmailPart };
-// Version 6 adds Amazon's current "Ordered:" confirmation subject. Bumping the
-// version causes connected inboxes to rescan recent messages once, recovering
-// confirmations that the older Gmail query never returned.
-const AMAZON_EMAIL_SYNC_VERSION = 6;
+// Version 8 distinguishes shipment messages from genuine delivery
+// confirmations. The bump causes one recent-history rescan so purchases that
+// the older parser marked delivered too early can be repaired automatically.
+const AMAZON_EMAIL_SYNC_VERSION = 8;
 
 function decode(data?: string): string {
   if (!data) return "";
@@ -67,6 +69,7 @@ async function reconcile(userId: string): Promise<number> {
   });
   for (const item of prioritizedItems) {
     let best: { order: typeof orders[number]; score: number; identityStrength: number; reason: string } | null = null;
+    const eligible: Array<{ order: typeof orders[number]; score: number; identityStrength: number }> = [];
     for (const order of orders) {
       if (item.purchase.purchasedAt && item.purchase.purchasedAt < new Date(order.saleDate.getTime() - 3 * 86_400_000)) continue;
       const exactAsin = !!item.asin && item.asin.toUpperCase() === order.listing.product.sku.toUpperCase();
@@ -77,7 +80,13 @@ async function reconcile(userId: string): Promise<number> {
         ebayAddressFingerprint: order.shippingAddressFingerprint,
         amazonAddressFingerprint: item.purchase.deliveryAddressFingerprint,
       });
-      if (!identity.compatible) continue;
+      const cancellationOverride = cancellationMatchOverridesIdentity({
+        purchaseStatus: item.purchase.status,
+        exactAsin,
+        purchaseDate: item.purchase.purchasedAt,
+        saleDate: order.saleDate,
+      });
+      if (!identity.compatible && !cancellationOverride) continue;
       const score = exactAsin ? 100 : titleScore;
       const candidateDistance = item.purchase.purchasedAt
         ? Math.abs(item.purchase.purchasedAt.getTime() - order.saleDate.getTime())
@@ -95,13 +104,18 @@ async function reconcile(userId: string): Promise<number> {
           score,
           identityStrength: identity.strength,
           reason: exactAsin
-            ? `Exact Amazon ASIN matches the listing source${identity.addressMatches ? "; delivery address takes priority" : identity.recipientMatches ? "; shipping recipient takes priority" : ""}`
+            ? `Exact Amazon ASIN matches the listing source${identity.addressMatches ? "; delivery address takes priority" : identity.recipientMatches ? "; shipping recipient takes priority" : cancellationOverride ? "; nearby cancellation overrides conflicting recipient text" : ""}`
             : `Amazon delivery item name matches the eBay order title${identity.addressMatches ? "; delivery address takes priority" : identity.recipientMatches ? "; shipping recipient takes priority" : ""}`,
         };
       }
+      if (score >= 62) eligible.push({ order, score, identityStrength: identity.strength });
     }
     if (!best) continue;
-    const status = item.purchase.status === "DELIVERED" ? "DELIVERED" : item.purchase.status === "SHIPPED" ? "SHIPPED" : "PURCHASED";
+    // An order-confirmation email often lacks the delivery recipient/address.
+    // With repeated ASINs, timestamp proximity cannot prove which buyer the
+    // seller purchased for. Wait for shipment identity or manual correction.
+    if (fulfillmentMatchIsAmbiguous(best, eligible)) continue;
+    const status = sourcingStatusForAmazonPurchase(item.purchase.status);
     await db.$transaction([
       db.amazonPurchaseItem.update({ where: { id: item.id }, data: { matchedOrderId: best.order.id, matchConfidence: best.score, matchReason: best.reason } }),
       db.order.update({ where: { id: best.order.id }, data: { sourcingStatus: status, amazonMatchedAt: new Date() } }),
@@ -110,6 +124,47 @@ async function reconcile(userId: string): Promise<number> {
     matched++;
   }
   return matched;
+}
+
+/** Shipment emails can reveal the delivery address after an address-less
+ * order confirmation was provisionally matched. Reopen any conflicting
+ * assignment so the normal reconciler can attach it to the exact eBay
+ * delivery address. Never move a row after tracking reached eBay. */
+async function reopenAddressConflicts(userId: string): Promise<number> {
+  const items = await db.amazonPurchaseItem.findMany({
+    where: {
+      matchedOrderId: { not: null },
+      purchase: { userId, deliveryAddressFingerprint: { not: null } },
+      matchedOrder: { shippingAddressFingerprint: { not: null }, ebayTrackingSyncedAt: null },
+    },
+    include: { purchase: true, matchedOrder: true },
+  });
+  let reopened = 0;
+  for (const item of items) {
+    const order = item.matchedOrder;
+    if (!order || !item.purchase.deliveryAddressFingerprint || !order.shippingAddressFingerprint) continue;
+    if (item.purchase.deliveryAddressFingerprint === order.shippingAddressFingerprint) continue;
+    await db.$transaction([
+      db.amazonPurchaseItem.update({
+        where: { id: item.id },
+        data: { matchedOrderId: null, matchConfidence: null, matchReason: "Previous match reopened after Amazon supplied a conflicting delivery address." },
+      }),
+      db.order.update({
+        where: { id: order.id },
+        data: {
+          sourcingStatus: "NOT_PURCHASED",
+          amazonMatchedAt: null,
+          profitProtectionStatus: null,
+          profitProtectionReviewedAt: null,
+          profitProtectionOldPriceCents: null,
+          profitProtectionNewPriceCents: null,
+          profitProtectionError: null,
+        },
+      }),
+    ]);
+    reopened++;
+  }
+  return reopened;
 }
 
 export async function syncAmazonPurchaseEmails(
@@ -121,12 +176,14 @@ export async function syncAmazonPurchaseEmails(
   const processed = new Set<string>(JSON.parse(connection.processedMessageIdsJson) as string[]);
   let pageToken: string | undefined; const ids: string[] = [];
   do {
-    const params = new URLSearchParams({ q: "from:(amazon.com) (subject:(order OR ordered OR shipped OR delivered OR delivery)) newer_than:365d", maxResults: "100" });
+    const params = new URLSearchParams({ q: AMAZON_EMAIL_SEARCH_QUERY, maxResults: "100" });
     if (pageToken) params.set("pageToken", pageToken);
     const page = await gmail<{ messages?: { id: string }[]; nextPageToken?: string }>(token, `messages?${params}`);
     ids.push(...(page.messages ?? []).map((message) => message.id)); pageToken = page.nextPageToken;
   } while (pageToken && ids.length < 500);
   let imported = 0;
+  const observedStatuses = new Map<string, "ORDERED" | "SHIPPED" | "DELIVERED" | "CANCELLED">();
+  const rank = { ORDERED: 1, SHIPPED: 2, DELIVERED: 3, CANCELLED: 4 } as const;
   for (const id of ids) {
     if (processed.has(id) && connection.syncVersion >= AMAZON_EMAIL_SYNC_VERSION) continue;
     const message = await gmail<GmailMessage>(token, `messages/${id}?format=full`);
@@ -135,9 +192,12 @@ export async function syncAmazonPurchaseEmails(
     const content = bodies(message.payload);
     const parsed = parseAmazonEmail({ subject: header(message, "subject"), ...content, sentAt: message.internalDate ? new Date(Number(message.internalDate)) : null });
     if (!parsed) continue;
+    const observed = observedStatuses.get(parsed.amazonOrderId);
+    if (!observed || rank[parsed.status] > rank[observed]) {
+      observedStatuses.set(parsed.amazonOrderId, parsed.status);
+    }
     const lineBase = parsed.items.reduce((sum, item) => sum + (item.unitPriceCents ?? 0) * item.quantity, 0);
     const prior = await db.amazonPurchase.findUnique({ where: { userId_amazonOrderId: { userId, amazonOrderId: parsed.amazonOrderId } }, include: { items: true } });
-    const rank = { ORDERED: 1, SHIPPED: 2, DELIVERED: 3, CANCELLED: 4 } as const;
     const itemData = parsed.items.map((item) => {
       const line = (item.unitPriceCents ?? 0) * item.quantity;
       const ratio = lineBase ? line / lineBase : 1 / Math.max(1, parsed.items.length);
@@ -192,12 +252,46 @@ export async function syncAmazonPurchaseEmails(
           amazonUrl: existing.amazonUrl ?? item.amazonUrl,
         } });
       }
-      await db.order.updateMany({ where: { amazonPurchaseItem: { purchaseId: prior.id } }, data: { sourcingStatus: status === "DELIVERED" ? "DELIVERED" : status === "SHIPPED" ? "SHIPPED" : status === "CANCELLED" ? "CANCELLED" : "PURCHASED" } });
+      await db.order.updateMany({
+        where: { amazonPurchaseItem: { purchaseId: prior.id } },
+        data: { sourcingStatus: sourcingStatusForAmazonPurchase(status) },
+      });
     }
     processed.add(id);
     imported++;
   }
+  // Recompute the lifecycle from this rescan instead of preserving an older,
+  // false DELIVERED value forever. A real delivery email still wins because
+  // it has the highest observed non-cancellation rank.
+  if (connection.syncVersion < AMAZON_EMAIL_SYNC_VERSION) {
+    for (const [amazonOrderId, status] of observedStatuses) {
+      const purchase = await db.amazonPurchase.findUnique({
+        where: { userId_amazonOrderId: { userId, amazonOrderId } },
+        select: { id: true },
+      });
+      if (!purchase) continue;
+      await db.$transaction([
+        db.amazonPurchase.update({ where: { id: purchase.id }, data: { status } }),
+        db.order.updateMany({
+          where: { userId, amazonPurchaseItem: { purchaseId: purchase.id } },
+          data: { sourcingStatus: sourcingStatusForAmazonPurchase(status) },
+        }),
+      ]);
+    }
+  }
+  await reopenAddressConflicts(userId);
   const matched = await reconcile(userId);
+  // Repair rows matched by an older sync that mistakenly classified an
+  // already-cancelled Amazon purchase as PURCHASED. This also makes the
+  // correction independent of Gmail's processed-message checkpoint.
+  await db.order.updateMany({
+    where: {
+      userId,
+      sourcingStatus: { not: "CANCELLED" },
+      amazonPurchaseItem: { purchase: { status: "CANCELLED" } },
+    },
+    data: { sourcingStatus: "CANCELLED", ebayTrackingSyncError: null },
+  });
   const trackingResolution = await resolveMissingAmazonTracking(userId, {
     retryFailed: options.retryTrackingFailures,
   });
