@@ -173,4 +173,10 @@ describe("aiSuggestedListingPriceCents", () => {
     const discounted = aiSuggestedListingPriceCents(2_000, 0, 3_999, 4_299, 500);
     expect(discountedEbayPriceCents(discounted, 500)).toBe(base);
   });
+
+  it("uses an enabled user target as the authoritative net-profit goal", () => {
+    const suggested = aiSuggestedListingPriceCents(2_000, 100, 2_999, 3_199, 500, 900, 1_250);
+    expect(trueProfitCents(suggested, 2_000, 100, 500, 900)).toBe(1_250);
+    expect(trueProfitCents(suggested - 1, 2_000, 100, 500, 900)).toBeLessThan(1_250);
+  });
 });
