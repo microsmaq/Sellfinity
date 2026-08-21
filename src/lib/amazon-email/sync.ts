@@ -1,6 +1,3 @@
-Exit code: 0
-Wall time: 0.5 seconds
-Output:
 import "server-only";
 import { db } from "@/lib/db";
 import { decryptToken, encryptToken } from "./crypto";
@@ -315,4 +312,3 @@ export function actualAmazonCost(item: { lineTotalCents: number | null; allocate
   if (item.lineTotalCents === null) return null;
   return item.lineTotalCents + item.allocatedShippingCents + item.allocatedTaxCents - item.allocatedDiscountCents;
 }
-
