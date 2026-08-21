@@ -35,7 +35,7 @@ export async function protectVerifiedOrderMargins(
     review: 0,
     failed: 0,
   };
-  const user = await db.user.findUnique({ where: { id: userId }, select: { ebaySitewideDiscountBps: true, ebayAdRateBps: true } });
+  const user = await db.user.findUnique({ where: { id: userId }, select: { ebaySitewideDiscountBps: true, ebayAdRateBps: true, targetProfitEnabled: true, targetProfitCents: true } });
   if (!user) return summary;
   const maxVerifiedOrders = options.maxOrders ?? 10;
   const explicitRetry = Boolean(options.orderIds?.length);
@@ -89,6 +89,7 @@ export async function protectVerifiedOrderMargins(
       verifiedAmazonCostCents: verifiedCostCents,
       sitewideDiscountBps: user.ebaySitewideDiscountBps,
       adRateBps: user.ebayAdRateBps,
+      targetProfitCents: user.targetProfitEnabled ? user.targetProfitCents : null,
     });
     if (decision.action === "not_required") {
       await db.order.update({ where: { id: order.id }, data: {
