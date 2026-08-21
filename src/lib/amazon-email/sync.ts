@@ -11,10 +11,10 @@ import { AMAZON_EMAIL_SEARCH_QUERY } from "./search-query";
 
 type GmailPart = { mimeType?: string; body?: { data?: string }; parts?: GmailPart[] };
 type GmailMessage = { id: string; internalDate?: string; payload?: { headers?: { name: string; value: string }[] } & GmailPart };
-// Version 8 distinguishes shipment messages from genuine delivery
-// confirmations. The bump causes one recent-history rescan so purchases that
-// the older parser marked delivered too early can be repaired automatically.
-const AMAZON_EMAIL_SYNC_VERSION = 8;
+// Version 9 reparses recent Ordered confirmations so purchases saved before
+// current signed-product-link and recipient extraction can rebuild missing
+// item rows and reconcile to fulfillment automatically.
+const AMAZON_EMAIL_SYNC_VERSION = 9;
 
 function decode(data?: string): string {
   if (!data) return "";
