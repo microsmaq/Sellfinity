@@ -1,6 +1,3 @@
-Exit code: 0
-Wall time: 0.5 seconds
-Output:
 "use server";
 
 import { revalidatePath } from "next/cache";
@@ -258,4 +255,3 @@ export async function importOrdersNow(): Promise<
   revalidatePath("/orders");
   return { ...result, restock };
 }
-
