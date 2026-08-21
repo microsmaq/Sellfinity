@@ -188,7 +188,17 @@ export function aiSuggestedListingPriceCents(
   averageCompetitorPriceCents?: number | null,
   sitewideDiscountBps = 0,
   adRateBps = DEFAULT_EBAY_AD_RATE_BPS,
+  targetProfitCents: number | null = null,
 ): number {
+  if (targetProfitCents !== null) {
+    return targetNetProfitPriceCents(
+      costCents,
+      shippingCostCents,
+      targetProfitCents,
+      sitewideDiscountBps,
+      adRateBps,
+    );
+  }
   const discountBps = normalizeSitewideDiscountBps(sitewideDiscountBps);
   if (discountBps > 0) {
     return grossUpEbayPriceCents(
@@ -199,6 +209,7 @@ export function aiSuggestedListingPriceCents(
         averageCompetitorPriceCents,
         0,
         adRateBps,
+        null,
       ),
       discountBps,
     );
