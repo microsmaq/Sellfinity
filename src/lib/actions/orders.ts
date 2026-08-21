@@ -1,3 +1,6 @@
+Exit code: 0
+Wall time: 0.5 seconds
+Output:
 "use server";
 
 import { revalidatePath } from "next/cache";
@@ -8,6 +11,87 @@ import { restockLowFulfillmentInventory, type AutoRestockResult } from "@/lib/or
 import { getEbayClientForUser } from "@/lib/ebay";
 import { ebayCarrierCode, normalizeTrackingNumber, remoteFulfillmentLookupKeys } from "@/lib/amazon-email/tracking-utils";
 import { sourcingStatusForAmazonPurchase } from "@/lib/amazon-email/status";
+import { fulfillmentIdentityEvidence, fulfillmentProductFallbackAllowed, fulfillmentTitleSimilarity } from "@/lib/amazon-email/title-match";
+
+export async function linkAmazonPurchase(orderId: string, rawAmazonOrderId: string) {
+  const user = await requireUser();
+  const amazonOrderId = rawAmazonOrderId.trim();
+  if (!/^\d{3}-\d{7}-\d{7}$/.test(amazonOrderId)) {
+    return { error: "Enter an Amazon order number in the format 123-1234567-1234567." };
+  }
+
+  const [order, purchase] = await Promise.all([
+    db.order.findFirst({
+      where: { id: orderId, userId: user.id },
+      include: { amazonPurchaseItem: true, listing: { include: { product: true } } },
+    }),
+    db.amazonPurchase.findUnique({
+      where: { userId_amazonOrderId: { userId: user.id, amazonOrderId } },
+      include: { items: { include: { matchedOrder: true } } },
+    }),
+  ]);
+  if (!order) return { error: "Fulfillment order not found." };
+  if (order.amazonPurchaseItem) return { error: "This fulfillment order already has an Amazon purchase attached." };
+  if (!purchase) return { error: "Amazon order not found yet. Click Refresh, then try again." };
+
+  const strongItems = purchase.items.filter((item) => {
+    const exactAsin = !!item.asin && item.asin.toUpperCase() === order.listing.product.sku.toUpperCase();
+    const titleScore = fulfillmentTitleSimilarity(order.listing.title, item.title);
+    return exactAsin || titleScore >= 85;
+  });
+  if (strongItems.length !== 1) {
+    return { error: strongItems.length
+      ? "This Amazon order contains multiple possible matching items and cannot be linked safely."
+      : "The product in this Amazon order does not match the fulfillment listing." };
+  }
+  const item = strongItems[0];
+  if (item.matchedOrderId) {
+    return { error: `This Amazon purchase is already attached to ${item.matchedOrder?.ebayOrderId ?? "another fulfillment order"}. Use Correct Amazon match there.` };
+  }
+
+  const exactAsin = !!item.asin && item.asin.toUpperCase() === order.listing.product.sku.toUpperCase();
+  const titleScore = fulfillmentTitleSimilarity(order.listing.title, item.title);
+  const identity = fulfillmentIdentityEvidence({
+    ebayRecipientName: order.shippingRecipientName,
+    amazonRecipientName: purchase.recipientName,
+    ebayAddressFingerprint: order.shippingAddressFingerprint,
+    amazonAddressFingerprint: purchase.deliveryAddressFingerprint,
+  });
+  const productFallback = fulfillmentProductFallbackAllowed({
+    exactAsin,
+    titleScore,
+    purchaseDate: purchase.purchasedAt,
+    saleDate: order.saleDate,
+    ebayAddressFingerprint: order.shippingAddressFingerprint,
+    amazonAddressFingerprint: purchase.deliveryAddressFingerprint,
+  });
+  if (!identity.compatible && !productFallback) {
+    return { error: "The Amazon delivery identity or purchase date conflicts with this eBay order, so it was not linked." };
+  }
+  if (!productFallback && identity.strength === 0) {
+    return { error: "There is not enough date, recipient, or address evidence to link this order safely." };
+  }
+
+  const status = sourcingStatusForAmazonPurchase(purchase.status);
+  await db.$transaction([
+    db.amazonPurchaseItem.update({
+      where: { id: item.id },
+      data: {
+        asin: item.asin ?? order.listing.product.sku.toUpperCase(),
+        matchedOrderId: order.id,
+        matchConfidence: exactAsin ? 100 : titleScore,
+        matchReason: "Manually linked by Amazon order number after product, date, and delivery evidence validation.",
+      },
+    }),
+    db.order.update({
+      where: { id: order.id },
+      data: { sourcingStatus: status, amazonMatchedAt: new Date() },
+    }),
+  ]);
+  revalidatePath("/orders");
+  revalidatePath("/dashboard");
+  return { linked: true as const, amazonOrderId, sourcingStatus: status };
+}
 
 export async function reassignAmazonPurchase(sourceOrderId: string, targetOrderId: string) {
   const user = await requireUser();
@@ -174,3 +258,4 @@ export async function importOrdersNow(): Promise<
   revalidatePath("/orders");
   return { ...result, restock };
 }
+
