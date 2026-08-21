@@ -188,6 +188,7 @@ export default async function ListingsPage() {
         marketMetrics,
         user.ebaySitewideDiscountBps,
         user.ebayAdRateBps,
+        user.targetProfitEnabled ? user.targetProfitCents : null,
       ).map((row) => {
         const local = localByEbayId.get(row.ebayListingId);
         const winner = local ? winnerListings.get(local.id) : null;
@@ -242,6 +243,7 @@ export default async function ListingsPage() {
       l.product.shippingCostCents,
       user.ebaySitewideDiscountBps,
       user.ebayAdRateBps,
+      user.targetProfitEnabled ? user.targetProfitCents : null,
     );
 
     return {
