@@ -57,6 +57,7 @@ export function buildEbayRows(
   marketMetrics: ReadonlyMap<string, ListingMarketMetrics> = new Map(),
   sitewideDiscountBps = 0,
   adRateBps = 300,
+  targetProfitCents: number | null = null,
 ): EbayRow[] {
   const byEbayId = new Map(
     local.filter((l) => l.ebayListingId).map((l) => [l.ebayListingId!, l]),
@@ -152,6 +153,7 @@ export function buildEbayRows(
         localListing.product.shippingCostCents,
         sitewideDiscountBps,
         adRateBps,
+        targetProfitCents,
       ),
       match: {
         sku: localListing.product.sku,
