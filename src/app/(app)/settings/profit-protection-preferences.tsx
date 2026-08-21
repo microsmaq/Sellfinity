@@ -2,12 +2,14 @@
 
 import { useState, useTransition } from "react";
 import { Button, Card, Input } from "@/components/ui";
-import { setAutoLockProfitableListings, setEbayAdRate, setEbaySitewideDiscount } from "@/lib/actions/profit-protection";
+import { setAutoLockProfitableListings, setDefaultTargetProfit, setEbayAdRate, setEbaySitewideDiscount } from "@/lib/actions/profit-protection";
 
-export function ProfitProtectionPreferences({ initialDiscountBps, initialAdRateBps, initialAutoLockProfitableListings }: { initialDiscountBps: number; initialAdRateBps: number; initialAutoLockProfitableListings: boolean }) {
+export function ProfitProtectionPreferences({ initialDiscountBps, initialAdRateBps, initialAutoLockProfitableListings, initialTargetProfitEnabled, initialTargetProfitCents }: { initialDiscountBps: number; initialAdRateBps: number; initialAutoLockProfitableListings: boolean; initialTargetProfitEnabled: boolean; initialTargetProfitCents: number }) {
   const [discount, setDiscount] = useState(String(initialDiscountBps / 100));
   const [adRate, setAdRate] = useState(String(initialAdRateBps / 100));
   const [autoLockProfitable, setAutoLockProfitable] = useState(initialAutoLockProfitableListings);
+  const [targetProfitEnabled, setTargetProfitEnabled] = useState(initialTargetProfitEnabled);
+  const [targetProfit, setTargetProfit] = useState((initialTargetProfitCents / 100).toFixed(2));
   const [message, setMessage] = useState<{ text: string; error: boolean } | null>(null);
   const [pending, startTransition] = useTransition();
 
@@ -75,6 +77,30 @@ export function ProfitProtectionPreferences({ initialDiscountBps, initialAdRateB
     });
   }
 
+  function saveTargetProfit() {
+    const dollars = Number(targetProfit);
+    setMessage(null);
+    startTransition(async () => {
+      try {
+        const result = await setDefaultTargetProfit(targetProfitEnabled, dollars);
+        if ("error" in result) {
+          setMessage({ text: result.error ?? "Could not save the target profit.", error: true });
+          return;
+        }
+        setTargetProfitEnabled(result.enabled);
+        setTargetProfit((result.targetProfitCents / 100).toFixed(2));
+        setMessage({
+          text: result.enabled
+            ? `Default target saved at $${(result.targetProfitCents / 100).toFixed(2)} net profit per item.`
+            : "Default target profit disabled. Standard market-aware profit safeguards will be used.",
+          error: false,
+        });
+      } catch {
+        setMessage({ text: "Could not save the target profit.", error: true });
+      }
+    });
+  }
+
   return (
     <Card className="overflow-hidden">
       <div className="border-b border-slate-200 px-6 py-5">
@@ -82,6 +108,29 @@ export function ProfitProtectionPreferences({ initialDiscountBps, initialAdRateB
         <p className="mt-1 text-sm text-slate-600">Use your actual promotion settings so Sellfinity protects the profit you expect to keep.</p>
       </div>
       <div className="divide-y divide-slate-200">
+      <div className="p-6">
+        <div className="flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between">
+          <div className="max-w-xl">
+            <div className="flex flex-wrap items-center gap-2">
+              <h2 className="text-sm font-semibold text-slate-900">Default target profit per item</h2>
+              <span className="rounded-full bg-indigo-50 px-2 py-0.5 text-[11px] font-semibold text-indigo-700">Default on</span>
+            </div>
+            <p className="mt-2 text-sm leading-6 text-slate-600">Use this modeled net-profit target for new mirrored listings, suggested prices, and future-price protection during fulfillment refresh.</p>
+            <p className="mt-1 text-xs leading-5 text-slate-500">The calculation includes Amazon item cost and shipping, eBay final-value and per-order fees, your advertising rate, and your sitewide discount. Actual profit can vary if marketplace costs change.</p>
+          </div>
+          <div className="flex w-full items-end gap-2 sm:w-auto">
+            <label className="flex min-h-10 items-center gap-2 rounded-lg border border-slate-200 px-3">
+              <input type="checkbox" checked={targetProfitEnabled} disabled={pending} onChange={(event) => setTargetProfitEnabled(event.target.checked)} className="h-4 w-4 accent-indigo-600" />
+              <span className="text-xs font-medium text-slate-700">Use target</span>
+            </label>
+            <label className="w-full sm:w-28">
+              <span className="mb-1 block text-xs font-medium text-slate-600">Profit $</span>
+              <Input type="number" min="0" max="10000" step="0.01" value={targetProfit} disabled={!targetProfitEnabled || pending} onChange={(event) => setTargetProfit(event.target.value)} aria-label="Default net profit per item" />
+            </label>
+            <Button disabled={pending} onClick={saveTargetProfit}>{pending ? "Saving…" : "Save"}</Button>
+          </div>
+        </div>
+      </div>
       <div className="p-6">
         <div className="flex items-start justify-between gap-5">
           <div className="max-w-xl">
@@ -109,7 +158,7 @@ export function ProfitProtectionPreferences({ initialDiscountBps, initialAdRateB
       <div className="flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between">
         <div className="max-w-xl">
           <h2 className="text-sm font-semibold text-slate-900">eBay sitewide discount</h2>
-          <p className="mt-2 text-sm leading-6 text-slate-600">Enter the percentage from your active eBay store promotion. Verified profit protection will gross up list prices so the discounted sale still earns 5% net profit, capped at $7.</p>
+          <p className="mt-2 text-sm leading-6 text-slate-600">Enter the percentage from your active eBay store promotion. Suggested and protected list prices are grossed up so the discounted checkout amount still reaches {targetProfitEnabled ? `your $${Number(targetProfit || 0).toFixed(2)} target profit` : "the standard profit safeguard"}.</p>
           <p className="mt-1 text-xs text-slate-500">Change this whenever you start, stop, or replace the promotion.</p>
         </div>
         <div className="flex w-full items-end gap-2 sm:w-auto">
