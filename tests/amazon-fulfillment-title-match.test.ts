@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { cancellationMatchOverridesIdentity, fulfillmentIdentityEvidence, fulfillmentMatchIsAmbiguous, fulfillmentNamesMatch, fulfillmentTitleSimilarity } from "@/lib/amazon-email/title-match";
+import { cancellationMatchOverridesIdentity, fulfillmentIdentityEvidence, fulfillmentMatchIsAmbiguous, fulfillmentNamesMatch, fulfillmentProductFallbackAllowed, fulfillmentTitleSimilarity } from "@/lib/amazon-email/title-match";
 
 describe("Amazon delivery to eBay order title matching", () => {
   it("matches a concise eBay title to a longer Amazon delivery item name", () => {
@@ -106,5 +106,37 @@ describe("cancelled purchase matching", () => {
       purchaseDate: new Date("2026-08-10T12:00:00Z"),
       saleDate,
     })).toBe(false);
+  });
+});
+
+describe("unique product fallback matching", () => {
+  const saleDate = new Date("2026-08-20T12:00:00Z");
+
+  it("allows a nearby exact ASIN or very strong title match without an address conflict", () => {
+    expect(fulfillmentProductFallbackAllowed({
+      exactAsin: true,
+      titleScore: 100,
+      purchaseDate: new Date("2026-08-20T14:00:00Z"),
+      saleDate,
+    })).toBe(true);
+    expect(fulfillmentProductFallbackAllowed({
+      exactAsin: false,
+      titleScore: 92,
+      purchaseDate: new Date("2026-08-20T14:00:00Z"),
+      saleDate,
+    })).toBe(true);
+  });
+
+  it("never overrides a delivery-address conflict, weak title, or distant purchase", () => {
+    expect(fulfillmentProductFallbackAllowed({
+      exactAsin: true,
+      titleScore: 100,
+      purchaseDate: new Date("2026-08-20T14:00:00Z"),
+      saleDate,
+      ebayAddressFingerprint: "buyer-address",
+      amazonAddressFingerprint: "different-address",
+    })).toBe(false);
+    expect(fulfillmentProductFallbackAllowed({ exactAsin: false, titleScore: 84, purchaseDate: saleDate, saleDate })).toBe(false);
+    expect(fulfillmentProductFallbackAllowed({ exactAsin: true, titleScore: 100, purchaseDate: new Date("2026-09-10T12:00:00Z"), saleDate })).toBe(false);
   });
 });

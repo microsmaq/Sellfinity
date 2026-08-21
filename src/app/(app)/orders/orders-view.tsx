@@ -10,7 +10,7 @@ import { formatCents } from "@/lib/money";
 import { protectOrderMargin, setAutoProfitProtection } from "@/lib/actions/profit-protection";
 import { syncAmazonEmailsNow } from "@/lib/actions/amazon-email";
 import { markOrderCancelled, reassignAmazonPurchase, setAutoRestockFulfilledListings, submitManualOrderTracking } from "@/lib/actions/orders";
-import type { FulfillmentStage } from "@/lib/orders/fulfillment-stage";
+import { fulfillmentNeedsAction, type FulfillmentStage } from "@/lib/orders/fulfillment-stage";
 
 export type FulfillmentOrderRow = {
   id: string;
@@ -87,8 +87,13 @@ function tabMatches(order: FulfillmentOrderRow, tab: Tab): boolean {
   const protectionNeedsReview = order.profitProtectionStatus === "REVIEW_REQUIRED" || order.profitProtectionStatus === "FAILED";
   if (tab === "ALL") return true;
   if (tab === "NEEDS_ACTION") {
-    if (order.stage === "CANCELLED" || order.stage === "REFUNDED") return false;
-    return order.stage === "AWAITING" || order.stage === "PURCHASED" || order.needsSource || !!order.trackingError || protectionNeedsReview;
+    return fulfillmentNeedsAction({
+      stage: order.stage,
+      trackingNumber: order.trackingNumber,
+      needsSource: order.needsSource,
+      trackingError: order.trackingError,
+      protectionNeedsReview,
+    });
   }
   if (tab === "EXCEPTIONS") return order.stage === "CANCELLED" || order.stage === "REFUNDED" || !!order.trackingError || protectionNeedsReview;
   return order.stage === tab;
@@ -320,9 +325,14 @@ export function OrdersView({ orders, fetchError, profitProtectionEnabled, autoRe
       result: null,
     });
     setRefreshMessage("Checking Amazon order, shipment, delivery, and tracking emails…");
-    // Start the signed-in browser helper immediately. Tracking lookup should
-    // still run when Gmail authorization has expired or the server sync fails.
-    document.dispatchEvent(new CustomEvent("sellfinity:bulk-tracking-refresh"));
+    // The installed helper discovers tracking links from rendered fulfillment
+    // rows. Put every missing-tracking order in the default view before asking
+    // it to scan, even if Refresh was clicked from another tab or after search.
+    setTab("NEEDS_ACTION");
+    setQuery("");
+    window.requestAnimationFrame(() => window.requestAnimationFrame(() => {
+      document.dispatchEvent(new CustomEvent("sellfinity:bulk-tracking-refresh"));
+    }));
     startTransition(async () => {
       try {
         const result = await syncAmazonEmailsNow();

@@ -6,6 +6,22 @@ export type FulfillmentStage =
   | "CANCELLED"
   | "REFUNDED";
 
+export function fulfillmentNeedsAction(input: {
+  stage: FulfillmentStage;
+  trackingNumber?: string | null;
+  needsSource?: boolean;
+  trackingError?: string | null;
+  protectionNeedsReview?: boolean;
+}): boolean {
+  if (input.stage === "CANCELLED" || input.stage === "REFUNDED") return false;
+  return !input.trackingNumber
+    || input.stage === "AWAITING"
+    || input.stage === "PURCHASED"
+    || !!input.needsSource
+    || !!input.trackingError
+    || !!input.protectionNeedsReview;
+}
+
 /** Prefer the linked Amazon purchase lifecycle over a stale local sourcing
  * status. A shipment or delivery badge also requires shipment evidence so an
  * order-confirmation match cannot appear delivered before Amazon ships it. */

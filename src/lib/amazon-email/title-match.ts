@@ -78,6 +78,31 @@ export function fulfillmentMatchIsAmbiguous(
   ).length > 1;
 }
 
+/**
+ * Amazon confirmations can expose the account holder instead of the
+ * dropship recipient. A unique, nearby purchase with strong product identity
+ * may override that recipient-only conflict. A known address conflict never
+ * qualifies, and the caller still applies duplicate-candidate protection.
+ */
+export function fulfillmentProductFallbackAllowed(input: {
+  exactAsin: boolean;
+  titleScore: number;
+  purchaseDate?: Date | null;
+  saleDate: Date;
+  ebayAddressFingerprint?: string | null;
+  amazonAddressFingerprint?: string | null;
+}): boolean {
+  if (!input.exactAsin && input.titleScore < 85) return false;
+  if (!input.purchaseDate) return false;
+  const distance = input.purchaseDate.getTime() - input.saleDate.getTime();
+  if (distance < -3 * 86_400_000 || distance > 14 * 86_400_000) return false;
+  return !(
+    input.ebayAddressFingerprint
+    && input.amazonAddressFingerprint
+    && input.ebayAddressFingerprint !== input.amazonAddressFingerprint
+  );
+}
+
 /** Cancellation templates sometimes name the Amazon account holder instead
  * of the dropship recipient. An exact ASIN close to the eBay sale is enough to
  * safely recover that cancellation even when the displayed names conflict. */

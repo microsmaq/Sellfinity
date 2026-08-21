@@ -4,7 +4,7 @@ import { decryptToken, encryptToken } from "./crypto";
 import { googleEmailConfig } from "./oauth";
 import { parseAmazonEmail } from "./parser";
 import { resolveMissingAmazonTracking, type TrackingResolutionResult } from "./tracking-resolver";
-import { cancellationMatchOverridesIdentity, fulfillmentIdentityEvidence, fulfillmentMatchIsAmbiguous, fulfillmentTitleSimilarity } from "./title-match";
+import { cancellationMatchOverridesIdentity, fulfillmentIdentityEvidence, fulfillmentMatchIsAmbiguous, fulfillmentProductFallbackAllowed, fulfillmentTitleSimilarity } from "./title-match";
 import { deliveryAddressFingerprint } from "./address-match";
 import { sourcingStatusForAmazonPurchase } from "./status";
 import { AMAZON_EMAIL_SEARCH_QUERY } from "./search-query";
@@ -86,7 +86,15 @@ async function reconcile(userId: string): Promise<number> {
         purchaseDate: item.purchase.purchasedAt,
         saleDate: order.saleDate,
       });
-      if (!identity.compatible && !cancellationOverride) continue;
+      const productFallback = fulfillmentProductFallbackAllowed({
+        exactAsin,
+        titleScore,
+        purchaseDate: item.purchase.purchasedAt,
+        saleDate: order.saleDate,
+        ebayAddressFingerprint: order.shippingAddressFingerprint,
+        amazonAddressFingerprint: item.purchase.deliveryAddressFingerprint,
+      });
+      if (!identity.compatible && !cancellationOverride && !productFallback) continue;
       const score = exactAsin ? 100 : titleScore;
       const candidateDistance = item.purchase.purchasedAt
         ? Math.abs(item.purchase.purchasedAt.getTime() - order.saleDate.getTime())
@@ -104,8 +112,8 @@ async function reconcile(userId: string): Promise<number> {
           score,
           identityStrength: identity.strength,
           reason: exactAsin
-            ? `Exact Amazon ASIN matches the listing source${identity.addressMatches ? "; delivery address takes priority" : identity.recipientMatches ? "; shipping recipient takes priority" : cancellationOverride ? "; nearby cancellation overrides conflicting recipient text" : ""}`
-            : `Amazon delivery item name matches the eBay order title${identity.addressMatches ? "; delivery address takes priority" : identity.recipientMatches ? "; shipping recipient takes priority" : ""}`,
+            ? `Exact Amazon ASIN matches the listing source${identity.addressMatches ? "; delivery address takes priority" : identity.recipientMatches ? "; shipping recipient takes priority" : cancellationOverride ? "; nearby cancellation overrides conflicting recipient text" : productFallback && !identity.compatible ? "; unique nearby product match overrides recipient-only conflict" : ""}`
+            : `Amazon delivery item name matches the eBay order title${identity.addressMatches ? "; delivery address takes priority" : identity.recipientMatches ? "; shipping recipient takes priority" : productFallback && !identity.compatible ? "; unique nearby high-confidence product match overrides recipient-only conflict" : ""}`,
         };
       }
       if (score >= 62) eligible.push({ order, score, identityStrength: identity.strength });
