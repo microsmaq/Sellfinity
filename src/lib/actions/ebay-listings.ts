@@ -694,6 +694,7 @@ export async function cleanupEbayListings(
         adminSource.amazonShippingCents,
         user.ebaySitewideDiscountBps,
         user.ebayAdRateBps,
+        user.targetProfitEnabled ? user.targetProfitCents : null,
       );
       await db.product.update({
         where: { id: listing.product.id },
@@ -973,6 +974,7 @@ export async function cleanupListingSourcesBatch(): Promise<SourceCleanupBatchRe
           recoverable.product.shippingCostCents,
           user.ebaySitewideDiscountBps,
           user.ebayAdRateBps,
+          user.targetProfitEnabled ? user.targetProfitCents : null,
         );
     await db.listing.update({
       where: { id: recoverable.id },
