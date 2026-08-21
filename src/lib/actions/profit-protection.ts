@@ -32,6 +32,33 @@ export async function setEbaySitewideDiscount(percent: number) {
   return { discountBps };
 }
 
+export async function setDefaultTargetProfit(enabled: boolean, dollars: number) {
+  const user = await requireUser();
+  if (!Number.isFinite(dollars) || dollars < 0 || dollars > 10_000) {
+    return { error: "Enter a target profit from $0 to $10,000 per item." };
+  }
+  const targetProfitCents = Math.round(dollars * 100);
+  await db.$transaction([
+    db.user.update({
+      where: { id: user.id },
+      data: { targetProfitEnabled: enabled, targetProfitCents },
+    }),
+    db.order.updateMany({
+      where: { userId: user.id, profitProtectionStatus: { not: null } },
+      data: {
+        profitProtectionStatus: null,
+        profitProtectionReviewedAt: null,
+        profitProtectionError: null,
+      },
+    }),
+  ]);
+  revalidatePath("/settings");
+  revalidatePath("/listings");
+  revalidatePath("/orders");
+  revalidatePath("/analytics");
+  return { enabled, targetProfitCents };
+}
+
 export async function setAutoLockProfitableListings(enabled: boolean) {
   const user = await requireUser();
   await db.user.update({
