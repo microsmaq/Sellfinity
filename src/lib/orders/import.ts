@@ -73,6 +73,9 @@ export async function importOrders(
               : remote.status === "SHIPPED"
                 ? "SHIPPED"
                 : "NOT_PURCHASED",
+            ebayTrackingNumber: remote.trackingNumber ?? null,
+            ebayTrackingCarrier: remote.trackingCarrier ?? null,
+            ebayTrackingSyncedAt: remote.trackingNumber ? new Date() : null,
           },
         });
         // Cancelled/refunded orders do not consume fulfillable inventory.
@@ -91,6 +94,13 @@ export async function importOrders(
           where: { userId, ebayOrderId: remote.ebayOrderId },
           data: {
             ...(remote.status && { status: remote.status }),
+            ...(remote.status === "SHIPPED" && { sourcingStatus: "SHIPPED" }),
+            ...(remote.trackingNumber && {
+              ebayTrackingNumber: remote.trackingNumber,
+              ebayTrackingCarrier: remote.trackingCarrier ?? null,
+              ebayTrackingSyncedAt: new Date(),
+              ebayTrackingSyncError: null,
+            }),
             ...(remote.cancelled && {
               sourcingStatus: "CANCELLED",
               ebayTrackingSyncError: null,

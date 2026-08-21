@@ -12,8 +12,13 @@ export function fulfillmentNeedsAction(input: {
   needsSource?: boolean;
   trackingError?: string | null;
   protectionNeedsReview?: boolean;
+  ebayFulfilled?: boolean;
 }): boolean {
   if (input.stage === "CANCELLED" || input.stage === "REFUNDED") return false;
+  // eBay is the destination system for fulfillment. If it already considers
+  // the line fulfilled, a missing local copy of its tracking number is not a
+  // seller action. Refresh separately recovers that number when available.
+  if (input.ebayFulfilled) return !!input.trackingError || !!input.protectionNeedsReview;
   return !input.trackingNumber
     || input.stage === "AWAITING"
     || input.stage === "PURCHASED"
@@ -43,15 +48,13 @@ export function fulfillmentStage(input: {
   }
   if (ebayStatus === "REFUNDED") return "REFUNDED";
 
-  if (amazonPurchaseStatus) {
-    if (amazonPurchaseStatus === "DELIVERED") {
-      return hasShipmentDetails ? "DELIVERED" : "PURCHASED";
-    }
-    if (amazonPurchaseStatus === "SHIPPED") {
-      return hasShipmentDetails ? "IN_TRANSIT" : "PURCHASED";
-    }
-    return "PURCHASED";
-  }
+  if (amazonPurchaseStatus === "DELIVERED" && hasShipmentDetails) return "DELIVERED";
+  if (amazonPurchaseStatus === "SHIPPED" && hasShipmentDetails) return "IN_TRANSIT";
+  // A purchase email can remain stale or omit shipment details after the
+  // seller fulfilled the line directly on eBay. eBay's completed state is
+  // independent shipment evidence.
+  if (ebayStatus === "SHIPPED") return "IN_TRANSIT";
+  if (amazonPurchaseStatus) return "PURCHASED";
 
   if (sourcingStatus === "DELIVERED") return "DELIVERED";
   if (sourcingStatus === "SHIPPED" || ebayStatus === "SHIPPED") return "IN_TRANSIT";

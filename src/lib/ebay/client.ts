@@ -41,6 +41,9 @@ export type RemoteOrder = {
   status?: "PAID" | "SHIPPED" | "REFUNDED";
   /** Any active or completed eBay cancellation removes the order from work. */
   cancelled?: boolean;
+  /** Tracking already attached to a completed eBay shipping fulfillment. */
+  trackingNumber?: string | null;
+  trackingCarrier?: string | null;
 };
 
 export type RemoteFulfillmentLine = {

@@ -444,4 +444,36 @@ describe("importOrders (with the sandbox eBay client)", () => {
     expect(stored.sourcingStatus).toBe("CANCELLED");
     expect(quantityAfterCancellation).toBe(quantityAfterSale);
   });
+
+  it("refreshes completed eBay fulfillment and recovers its tracking", async () => {
+    const { user, listing } = await createUserWithActiveListing();
+    const remote: RemoteOrder = {
+      ebayOrderId: "fulfilled-order-line",
+      ebayListingId: listing.ebayListingId!,
+      quantity: 1,
+      salePriceCents: listing.priceCents,
+      shippingChargedCents: 0,
+      buyerUsername: "buyer",
+      saleDate: new Date(),
+      status: "PAID",
+      cancelled: false,
+    };
+    const ebay = new StatefulOrderEbay([remote]);
+
+    await importOrders(user.id, ebay);
+    ebay.orders = [{
+      ...remote,
+      status: "SHIPPED",
+      trackingNumber: "1Z999AA10123456784",
+      trackingCarrier: "UPS",
+    }];
+    await importOrders(user.id, ebay);
+
+    const stored = await db.order.findFirstOrThrow({ where: { userId: user.id, ebayOrderId: remote.ebayOrderId } });
+    expect(stored.status).toBe("SHIPPED");
+    expect(stored.sourcingStatus).toBe("SHIPPED");
+    expect(stored.ebayTrackingNumber).toBe("1Z999AA10123456784");
+    expect(stored.ebayTrackingCarrier).toBe("UPS");
+    expect(stored.ebayTrackingSyncedAt).not.toBeNull();
+  });
 });

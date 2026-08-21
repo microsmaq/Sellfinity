@@ -35,6 +35,7 @@ export type FulfillmentOrderRow = {
   trackingLookupError: string | null;
   trackingSynced: boolean;
   trackingError: string | null;
+  ebayFulfilled: boolean;
   revenueCents: number;
   soldUnitPriceCents: number;
   listingPriceCents: number | null;
@@ -93,6 +94,7 @@ function tabMatches(order: FulfillmentOrderRow, tab: Tab): boolean {
       needsSource: order.needsSource,
       trackingError: order.trackingError,
       protectionNeedsReview,
+      ebayFulfilled: order.ebayFulfilled,
     });
   }
   if (tab === "EXCEPTIONS") return order.stage === "CANCELLED" || order.stage === "REFUNDED" || !!order.trackingError || protectionNeedsReview;

@@ -40,6 +40,15 @@ describe("fulfillmentStage", () => {
       hasShipmentDetails: true,
     })).toBe("DELIVERED");
   });
+
+  it("honors eBay fulfillment when an older Amazon purchase is still ordered", () => {
+    expect(fulfillmentStage({
+      ebayStatus: "SHIPPED",
+      sourcingStatus: "PURCHASED",
+      amazonPurchaseStatus: "ORDERED",
+      hasShipmentDetails: false,
+    })).toBe("IN_TRANSIT");
+  });
 });
 
 describe("fulfillment needs action", () => {
@@ -55,5 +64,13 @@ describe("fulfillment needs action", () => {
     expect(fulfillmentNeedsAction({ stage: "DELIVERED", trackingNumber: "1Z999AA10123456784" })).toBe(false);
     expect(fulfillmentNeedsAction({ stage: "CANCELLED", trackingNumber: null })).toBe(false);
     expect(fulfillmentNeedsAction({ stage: "REFUNDED", trackingNumber: null })).toBe(false);
+  });
+
+  it("excludes a line eBay already considers fulfilled without requiring a local tracking copy", () => {
+    expect(fulfillmentNeedsAction({
+      stage: "IN_TRANSIT",
+      trackingNumber: null,
+      ebayFulfilled: true,
+    })).toBe(false);
   });
 });

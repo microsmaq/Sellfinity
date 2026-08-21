@@ -33,8 +33,13 @@ async function processBulkQueue(sourceTabId) {
   const available = Math.max(0, MAX_BULK_TABS - active.length);
   for (const request of waiting.slice(0, available)) {
     try {
-      const tab = await chrome.tabs.create({ url: request.amazonUrl, active: false });
+      // Register the destination before loading Amazon. A fast cached page can
+      // report tracking immediately; previously that response raced the final
+      // storage write and was discarded because its tab was still unknown.
+      const tab = await chrome.tabs.create({ url: "about:blank", active: false });
       request.destinationTabId = tab.id || null;
+      await savePending(requests);
+      if (tab.id) await chrome.tabs.update(tab.id, { url: request.amazonUrl });
     } catch {
       await notifySource(request, { type: "TRACKING_LOOKUP_FAILED", reason: "Amazon tracking could not be opened." });
       const index = requests.findIndex((candidate) => candidate.requestId === request.requestId);

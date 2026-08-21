@@ -877,6 +877,11 @@ ${innerXml}
         deliveryCost?: { shippingCost?: { value?: string } };
       }[];
     };
+    type ExistingShippingFulfillment = {
+      shipmentTrackingNumber?: string;
+      shippingCarrierCode?: string;
+      lineItems?: { lineItemId?: string; quantity?: number }[];
+    };
     const filter = encodeURIComponent(`creationdate:[${since.toISOString().replace(/\.\d{3}Z$/, ".000Z")}..]`);
     const orders: RemoteOrder[] = [];
     let offset = 0;
@@ -885,6 +890,44 @@ ${innerXml}
         "GET",
         `/sell/fulfillment/v1/order?filter=${filter}&limit=100&offset=${offset}`,
       );
+      // Completed orders no longer appear in getUnfulfilledOrders. Recover
+      // their existing eBay fulfillment records so a refresh can populate
+      // tracking that was added outside Sellfinity.
+      const trackingByLine = new Map<string, { number: string; carrier: string | null }>();
+      const completedOrders = (page.orders ?? []).filter(
+        (order) => order.orderFulfillmentStatus?.toUpperCase() === "FULFILLED",
+      );
+      for (let index = 0; index < completedOrders.length; index += 8) {
+        const batch = await Promise.all(completedOrders.slice(index, index + 8).map(async (order) => {
+          try {
+            const response = await this.request<{ fulfillments?: ExistingShippingFulfillment[] }>(
+              "GET",
+              `/sell/fulfillment/v1/order/${encodeURIComponent(order.orderId)}/shipping_fulfillment`,
+            );
+            return { order, fulfillments: response.fulfillments ?? [] };
+          } catch {
+            // Status reconciliation should still succeed if eBay temporarily
+            // refuses one order's fulfillment-detail request.
+            return { order, fulfillments: [] };
+          }
+        }));
+        for (const { order, fulfillments } of batch) {
+          for (const fulfillment of fulfillments) {
+            const number = fulfillment.shipmentTrackingNumber?.trim();
+            if (!number) continue;
+            const referencedLines = fulfillment.lineItems?.flatMap((line) => line.lineItemId ? [line.lineItemId] : []) ?? [];
+            const lineIds = referencedLines.length === 0 && order.lineItems?.length === 1
+              ? [order.lineItems[0].lineItemId]
+              : referencedLines;
+            for (const lineItemId of lineIds) {
+              trackingByLine.set(lineItemId, {
+                number,
+                carrier: fulfillment.shippingCarrierCode?.trim() || null,
+              });
+            }
+          }
+        }
+      }
       for (const order of page.orders ?? []) {
         const lifecycle = ebayImportedOrderState({
           cancelState: order.cancelStatus?.cancelState,
@@ -893,6 +936,7 @@ ${innerXml}
         });
         for (const item of order.lineItems ?? []) {
           if (!item.legacyItemId) continue;
+          const existingTracking = trackingByLine.get(item.lineItemId);
           const totalCents = Math.round(parseFloat(item.lineItemCost?.value ?? "0") * 100);
           orders.push({
             ebayOrderId: `${order.orderId}-${item.lineItemId}`,
@@ -915,6 +959,8 @@ ${innerXml}
             saleDate: new Date(order.creationDate),
             status: lifecycle.status,
             cancelled: lifecycle.cancelled,
+            trackingNumber: existingTracking?.number ?? null,
+            trackingCarrier: existingTracking?.carrier ?? null,
           });
         }
       }
