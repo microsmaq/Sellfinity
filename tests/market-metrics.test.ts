@@ -45,4 +45,14 @@ describe("aggregateListingMarketMetrics", () => {
       bestSellingPriceCents: 3899,
     });
   });
+
+  it("keeps the newest admin research timestamp for freshness labels", () => {
+    const newest = new Date("2026-08-19T08:00:00.000Z");
+    const metrics = aggregateListingMarketMetrics([
+      { asin: "B0FRESH", ebayPriceCents: 1999, salesEst: 10, updatedAt: new Date("2026-08-18T08:00:00.000Z") },
+      { asin: "B0FRESH", ebayPriceCents: 2099, salesEst: 12, updatedAt: newest },
+    ]).get("B0FRESH");
+
+    expect(metrics?.updatedAt).toEqual(newest);
+  });
 });

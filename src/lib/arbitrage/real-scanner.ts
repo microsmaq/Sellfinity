@@ -194,18 +194,11 @@ async function amazonMatch(
     seed,
     { workflow: "arbitrage_scan_variant" },
   );
-  // Preserve plausible candidates for human review when Amazon cannot prove
-  // one exact, live-priced child variant. The UI keeps their estimated
-  // profitability non-actionable until verification succeeds.
-  const source = match ?? seed;
-  const assessment = match
-    ? match.variantAssessment ?? seedAssessment
-    : {
-        verdict: "REVIEW" as const,
-        confidence: seedAssessment.confidence,
-        reason: `Likely product candidate, but the exact Amazon child variant and live price are not proven. ${seedAssessment.reason}`,
-        method: seedAssessment.method,
-      };
+  // Profitability is actionable only when the exact child price and shipping
+  // are both explicit. Search-result omissions must never become $0 shipping.
+  if (!match) return null;
+  const source = match;
+  const assessment = match.variantAssessment ?? seedAssessment;
   // Break-even and better both qualify: the Amazon source just can't cost
   // more than the eBay comp — the seller adds their margin at publish time.
   if (source.priceCents + source.shippingCostCents > candidate.priceCents) return null;

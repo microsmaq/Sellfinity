@@ -1,8 +1,34 @@
 import { describe, expect, it } from "vitest";
-import { ebayCarrierCode, normalizeTrackingNumber, remoteFulfillmentKey, remoteFulfillmentLookupKeys, trackingAppliesToAsin } from "@/lib/amazon-email/tracking-utils";
+import { amazonStatusCanUploadTracking, ebayCarrierCode, normalizeTrackingNumber, remoteFulfillmentKey, remoteFulfillmentLookupKeys, trackingAppliesToAsin, trackingCandidateForUpload } from "@/lib/amazon-email/tracking-utils";
 import { trackingFromPage } from "@/lib/amazon-email/tracking-resolver-utils";
 
 describe("Amazon tracking normalization", () => {
+  it("uploads tracking for both shipped and already-delivered Amazon packages", () => {
+    expect(amazonStatusCanUploadTracking("SHIPPED")).toBe(true);
+    expect(amazonStatusCanUploadTracking("DELIVERED")).toBe(true);
+    expect(amazonStatusCanUploadTracking("ORDERED")).toBe(false);
+  });
+
+  it("prioritizes tracking already saved on the fulfillment order", () => {
+    expect(trackingCandidateForUpload({
+      storedTrackingNumber: "TBA333742771521",
+      storedCarrier: "Other",
+      amazonTrackingNumber: "TBA-OLD",
+      amazonCarrier: "Amazon Logistics",
+      amazonStatus: "DELIVERED",
+      amazonAttributionSafe: false,
+    })).toEqual({ trackingNumber: "TBA333742771521", carrier: "Other" });
+  });
+
+  it("still requires safe attribution for tracking sourced only from Amazon", () => {
+    expect(trackingCandidateForUpload({
+      amazonTrackingNumber: "1Z999AA10123456784",
+      amazonCarrier: "UPS",
+      amazonStatus: "SHIPPED",
+      amazonAttributionSafe: false,
+    })).toBeNull();
+  });
+
   it("removes characters eBay does not accept", () => {
     expect(normalizeTrackingNumber("1z 999-aa-10123456784")).toBe("1Z999AA10123456784");
   });

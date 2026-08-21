@@ -4,8 +4,12 @@ import { getEbayClientForUser } from "@/lib/ebay";
 import type { EbayClient } from "@/lib/ebay/client";
 import { ebayFeeCents } from "@/lib/fees";
 import { deliveryAddressFingerprint } from "@/lib/amazon-email/address-match";
+import { ORDER_IMPORT_LOOKBACK_DAYS } from "./import-window";
 
-const LOOKBACK_MS = 30 * 24 * 60 * 60 * 1000;
+// eBay cancellations can be requested well after the original sale. Recheck
+// the full 90-day Fulfillment API window so older locally stored orders do not
+// remain actionable after eBay has cancelled or refunded them.
+const LOOKBACK_MS = ORDER_IMPORT_LOOKBACK_DAYS * 24 * 60 * 60 * 1000;
 
 /**
  * Pull new orders from eBay and record them with fee/COGS snapshots.
@@ -38,13 +42,16 @@ export async function importOrders(
     const listing = byEbayId.get(remote.ebayListingId);
     if (!listing) continue; // order for a listing we don't track
 
-    const newQuantity = Math.max(0, listing.quantity - remote.quantity);
+    const affectsInventory = !remote.cancelled && remote.status !== "REFUNDED";
+    const newQuantity = affectsInventory
+      ? Math.max(0, listing.quantity - remote.quantity)
+      : listing.quantity;
     try {
       // One transaction per order: the record and the quantity mirror land
       // together, and the unique (userId, ebayOrderId) constraint is the
       // dedupe — a concurrent import of the same order rolls back both writes.
-      await db.$transaction([
-        db.order.create({
+      await db.$transaction(async (tx) => {
+        await tx.order.create({
           data: {
             userId,
             listingId: listing.id,
@@ -60,32 +67,45 @@ export async function importOrders(
             shippingRecipientName: remote.shippingRecipientName ?? null,
             shippingAddressFingerprint: deliveryAddressFingerprint(remote.shippingAddressLine1, remote.shippingPostalCode),
             saleDate: remote.saleDate,
+            status: remote.status ?? "PAID",
+            sourcingStatus: remote.cancelled
+              ? "CANCELLED"
+              : remote.status === "SHIPPED"
+                ? "SHIPPED"
+                : "NOT_PURCHASED",
           },
-        }),
-        // Mirror eBay's server-side quantity decrement.
-        db.listing.update({
-          where: { id: listing.id },
-          data: { quantity: newQuantity },
-        }),
-      ]);
-    } catch (e) {
-      if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") {
-        if (remote.shippingRecipientName || (remote.shippingAddressLine1 && remote.shippingPostalCode)) {
-          await db.order.updateMany({
-            where: { userId, ebayOrderId: remote.ebayOrderId },
-            data: {
-              ...(remote.shippingRecipientName && { shippingRecipientName: remote.shippingRecipientName }),
-              ...(remote.shippingAddressLine1 && remote.shippingPostalCode && {
-                shippingAddressFingerprint: deliveryAddressFingerprint(remote.shippingAddressLine1, remote.shippingPostalCode),
-              }),
-            },
+        });
+        // Cancelled/refunded orders do not consume fulfillable inventory.
+        if (affectsInventory) {
+          await tx.listing.update({
+            where: { id: listing.id },
+            data: { quantity: newQuantity },
           });
         }
+      });
+    } catch (e) {
+      if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") {
+        // Existing rows are refreshed too, so an eBay cancellation that
+        // happened after the first import immediately leaves Needs action.
+        await db.order.updateMany({
+          where: { userId, ebayOrderId: remote.ebayOrderId },
+          data: {
+            ...(remote.status && { status: remote.status }),
+            ...(remote.cancelled && {
+              sourcingStatus: "CANCELLED",
+              ebayTrackingSyncError: null,
+            }),
+            ...(remote.shippingRecipientName && { shippingRecipientName: remote.shippingRecipientName }),
+            ...(remote.shippingAddressLine1 && remote.shippingPostalCode && {
+              shippingAddressFingerprint: deliveryAddressFingerprint(remote.shippingAddressLine1, remote.shippingPostalCode),
+            }),
+          },
+        });
         continue; // already imported
       }
       throw e;
     }
-    listing.quantity = newQuantity;
+    if (affectsInventory) listing.quantity = newQuantity;
     imported++;
   }
   return { imported };

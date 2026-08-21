@@ -126,7 +126,7 @@ export async function getSharedAmazonProduct(url: string): Promise<ScrapedProduc
       sourceId: asin,
       sourceUrl: legacy.supplierUrl,
       title: legacy.title,
-      brand: "",
+      brand: legacy.brand,
       bulletPoints: [],
       description: legacy.description,
       category: legacy.category,

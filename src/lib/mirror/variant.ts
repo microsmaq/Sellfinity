@@ -6,6 +6,7 @@ import {
 import {
   rainforestRequest,
   rainforestShippingCents,
+  rainforestShippingIsKnown,
 } from "./rainforest";
 import type { AmazonMatch } from "./match";
 
@@ -154,7 +155,17 @@ export async function resolveExactAmazonVariant(
   if (!product) return null;
   const variants = product.variants ?? [];
   let selected: RainforestVariant;
-  if (variants.length > 1) {
+  // A tracked listing already stores the exact source ASIN that was approved
+  // when it was mirrored. Rainforest marks the child represented by the
+  // requested ASIN as the current product. Prefer that explicit identity over
+  // trying to reconstruct every variation from eBay's shortened title.
+  const linkedCurrentVariant = variants.find(
+    (variant) =>
+      variant.asin === seed.asin && variant.is_current_product === true,
+  );
+  if (linkedCurrentVariant) {
+    selected = linkedCurrentVariant;
+  } else if (variants.length > 1) {
     const exact = selectExactAmazonVariant(ebay.title, variants);
     if (!exact) return null;
     selected = exact;
@@ -187,7 +198,7 @@ export async function resolveExactAmazonVariant(
   if (
     typeof price !== "number" ||
     price <= 0 ||
-    (!shipping && !isCurrentProduct)
+    !rainforestShippingIsKnown(shipping)
   ) {
     const child = await rainforestRequest<{
       request_info?: { success?: boolean };
@@ -212,6 +223,7 @@ export async function resolveExactAmazonVariant(
     shipping = child.product?.buybox_winner?.shipping;
   }
   if (typeof price !== "number" || price <= 0) return null;
+  if (!rainforestShippingIsKnown(shipping)) return null;
 
   const baseTitle = product.title_excluding_variant_name ?? seed.title;
   const label = variantLabel(selected);

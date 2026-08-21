@@ -9,6 +9,7 @@ import { generateListing } from "@/lib/listings/generate";
 import { parseImageUrls } from "@/lib/types";
 import { publishListingForUser } from "@/lib/listings/publish";
 import { recordListingActivity } from "@/lib/listings/activity-history";
+import { getProtectedPriceListings } from "@/lib/listings/winner";
 
 export type BulkResult = { done: number; failed: number; error?: string };
 
@@ -159,6 +160,7 @@ export async function deleteDrafts(listingIds: string[]): Promise<BulkResult> {
 export async function updateListing(
   listingId: string,
   update: { priceCents?: number; quantity?: number },
+  confirmVerifiedWinner = false,
 ): Promise<BulkResult> {
   const user = await requireUser();
   if (update.priceCents !== undefined && update.priceCents < 99) {
@@ -172,6 +174,12 @@ export async function updateListing(
     include: { product: true },
   });
   if (!listing) return { done: 0, failed: 1, error: "Listing not found" };
+  if (update.priceCents !== undefined && update.priceCents !== listing.priceCents) {
+    const winnerListings = await getProtectedPriceListings(user.id, user.ebayAdRateBps);
+    if (winnerListings.has(listing.id) && !confirmVerifiedWinner) {
+      return { done: 0, failed: 1, error: "This profitable listing's price is locked. Confirm the price-lock warning before changing it." };
+    }
+  }
 
   if (listing.status === "ACTIVE" && listing.ebayListingId) {
     try {

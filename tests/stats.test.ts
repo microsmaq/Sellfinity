@@ -19,16 +19,23 @@ describe("summarize", () => {
   it("uses reconciled Amazon cost instead of the catalog estimate", () => {
     const totals = summarize([{ quantity: 1, salePriceCents: 5000, shippingChargedCents: 0, ebayFeeCents: 700, cogsCents: 2500, shippingCostCents: 0, actualAmazonCostCents: 3100, status: "PAID", saleDate: new Date() }]);
     expect(totals.cogsCents).toBe(3100);
-    expect(totals.netCents).toBe(1200);
+    expect(totals.netCents).toBe(1050);
   });
   it("totals revenue, fees, costs, and net", () => {
     const t = summarize([order(), order({ quantity: 2, cogsCents: 1200 })]);
     expect(t.orders).toBe(2);
     expect(t.units).toBe(3);
     expect(t.revenueCents).toBe(2000 + 4000);
-    expect(t.feesCents).toBe(590);
+    expect(t.feesCents).toBe(770);
     expect(t.cogsCents).toBe(600 + 400 + 1200 + 400);
     expect(t.netCents).toBe(t.revenueCents - t.feesCents - t.cogsCents);
+  });
+
+  it("deducts the configured ad rate from reported profit", () => {
+    const lowAds = summarize([order()], 300);
+    const highAds = summarize([order()], 900);
+    expect(lowAds.netCents - highAds.netCents).toBe(120);
+    expect(highAds.feesCents - lowAds.feesCents).toBe(120);
   });
 
   it("excludes refunded orders from money totals but counts them", () => {
@@ -36,6 +43,16 @@ describe("summarize", () => {
     expect(t.orders).toBe(1);
     expect(t.refunded).toBe(1);
     expect(t.revenueCents).toBe(2000);
+  });
+
+  it("excludes cancelled orders from profit and daily sales", () => {
+    const cancelled = order({ sourcingStatus: "CANCELLED" });
+    const totals = summarize([order(), cancelled]);
+    const series = dailySeries([cancelled], 7, new Date("2026-07-04T18:00:00Z"));
+    expect(totals.orders).toBe(1);
+    expect(totals.revenueCents).toBe(2000);
+    expect(totals.refunded).toBe(0);
+    expect(series.every((point) => point.revenueCents === 0)).toBe(true);
   });
 
   it("handles the empty case", () => {

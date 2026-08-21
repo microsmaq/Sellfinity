@@ -218,10 +218,11 @@ export async function listArbitragePage(
     }),
     db.user.findUnique({
       where: { id: userId },
-      select: { ebaySitewideDiscountBps: true },
+      select: { ebaySitewideDiscountBps: true, ebayAdRateBps: true },
     }),
   ]);
   const sitewideDiscountBps = user?.ebaySitewideDiscountBps ?? 0;
+  const adRateBps = user?.ebayAdRateBps ?? 300;
   const ownedProducts = params.unlistedOnly
     ? await db.product.findMany({
         where: { userId },
@@ -412,12 +413,14 @@ export async function listArbitragePage(
         i.averageCompetitorPriceCents ?? i.ebayPriceCents ?? 0,
         i.amazonShippingCents,
         sitewideDiscountBps,
+        adRateBps,
       );
       const currentMargin = estimateMargin(
         suggestedPrice,
         i.amazonPriceCents,
         i.amazonShippingCents,
         sitewideDiscountBps,
+        adRateBps,
       );
       return {
         asin: i.asin,

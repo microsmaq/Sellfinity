@@ -3,6 +3,8 @@ import {
   EBAY_PER_ORDER_FEE_CENTS,
   estimateMargin,
   grossUpEbayPriceCents,
+  normalizeAdRateBps,
+  DEFAULT_EBAY_AD_RATE_BPS,
   type MarginEstimate,
 } from "@/lib/fees";
 import type { SourcingCandidate } from "./provider";
@@ -24,12 +26,13 @@ function clamp01(x: number): number {
   return Math.max(0, Math.min(1, x));
 }
 
-export function scoreCandidate(c: SourcingCandidate, sitewideDiscountBps = 0): ScoredCandidate {
+export function scoreCandidate(c: SourcingCandidate, sitewideDiscountBps = 0, adRateBps = DEFAULT_EBAY_AD_RATE_BPS): ScoredCandidate {
   const margin = estimateMargin(
     c.marketPriceCents,
     c.costCents,
     c.shippingCostCents,
     sitewideDiscountBps,
+    adRateBps,
   );
 
   const marginScore = clamp01(margin.marginPct / MARGIN_PCT_CEILING);
@@ -51,8 +54,8 @@ export function scoreCandidate(c: SourcingCandidate, sitewideDiscountBps = 0): S
   return { ...c, margin, score };
 }
 
-export function scoreAndRank(candidates: SourcingCandidate[], sitewideDiscountBps = 0): ScoredCandidate[] {
-  return candidates.map((candidate) => scoreCandidate(candidate, sitewideDiscountBps)).sort((a, b) => b.score - a.score);
+export function scoreAndRank(candidates: SourcingCandidate[], sitewideDiscountBps = 0, adRateBps = DEFAULT_EBAY_AD_RATE_BPS): ScoredCandidate[] {
+  return candidates.map((candidate) => scoreCandidate(candidate, sitewideDiscountBps, adRateBps)).sort((a, b) => b.score - a.score);
 }
 
 /**
@@ -64,7 +67,7 @@ export function suggestPriceCents(c: {
   marketPriceCents: number;
   costCents: number;
   shippingCostCents: number;
-}, sitewideDiscountBps = 0): number {
+}, sitewideDiscountBps = 0, adRateBps = DEFAULT_EBAY_AD_RATE_BPS): number {
   const undercut = c.marketPriceCents * 0.97;
   let charm = Math.round(undercut / 100) * 100 - 1;
   if (charm >= c.marketPriceCents) charm -= 100;
@@ -73,7 +76,7 @@ export function suggestPriceCents(c: {
   // suggest selling at a loss.
   const breakEvenFloor = Math.ceil(
     (c.costCents + c.shippingCostCents + EBAY_PER_ORDER_FEE_CENTS + 100) /
-      (1 - EBAY_FINAL_VALUE_RATE),
+      (1 - EBAY_FINAL_VALUE_RATE - normalizeAdRateBps(adRateBps) / 10_000),
   );
   return grossUpEbayPriceCents(Math.max(charm, breakEvenFloor), sitewideDiscountBps);
 }

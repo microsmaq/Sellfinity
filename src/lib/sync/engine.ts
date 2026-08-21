@@ -3,6 +3,7 @@ import { getEbayClientForUser } from "@/lib/ebay";
 import type { EbayClient } from "@/lib/ebay/client";
 import { getSupplierProvider } from "@/lib/sourcing";
 import type { SupplierProvider } from "@/lib/sourcing/provider";
+import { getProtectedPriceListings } from "@/lib/listings/winner";
 import { detectIssues, type DetectedIssue } from "./detect";
 
 export type SyncDeps = {
@@ -68,9 +69,11 @@ export async function runSync(
       where: { userId, status: "ACTIVE" },
       include: { product: true },
     }),
-    db.user.findUnique({ where: { id: userId }, select: { ebaySitewideDiscountBps: true } }),
+    db.user.findUnique({ where: { id: userId }, select: { ebaySitewideDiscountBps: true, ebayAdRateBps: true } }),
   ]);
   const sitewideDiscountBps = user?.ebaySitewideDiscountBps ?? 0;
+  const adRateBps = user?.ebayAdRateBps ?? 300;
+  const winnerListings = await getProtectedPriceListings(userId, adRateBps);
 
   const run = await db.syncRun.create({ data: { userId } });
   let issuesFound = 0;
@@ -98,6 +101,7 @@ export async function runSync(
       { shippingCostCents: listing.product.shippingCostCents },
       state,
       sitewideDiscountBps,
+      adRateBps,
     );
 
     const types = new Set(detected.map((d) => d.type));
@@ -137,7 +141,8 @@ export async function runSync(
       issuesFound++;
       let resolution = "OPEN";
       let resolvedAt: Date | null = null;
-      if (issue.autoFixable) {
+      const winnerPriceLocked = winnerListings.has(listing.id) && issue.fix.kind === "set_price";
+      if (issue.autoFixable && !winnerPriceLocked) {
         await applyFix(listing, issue.fix, deps.ebay);
         resolution = "AUTO_FIXED";
         resolvedAt = new Date();
@@ -193,13 +198,14 @@ export async function fixIssue(
   const state = await deps.provider.getProductState(issue.listing.product.supplierProductId);
   const user = await db.user.findUnique({
     where: { id: userId },
-    select: { ebaySitewideDiscountBps: true },
+    select: { ebaySitewideDiscountBps: true, ebayAdRateBps: true },
   });
   const detected = detectIssues(
     { priceCents: issue.listing.priceCents, quantity: issue.listing.quantity },
     { shippingCostCents: issue.listing.product.shippingCostCents },
     state,
     user?.ebaySitewideDiscountBps ?? 0,
+    user?.ebayAdRateBps ?? 300,
   );
   const current = detected.find((d) => d.type === issue.type);
 

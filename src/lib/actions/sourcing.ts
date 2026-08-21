@@ -39,7 +39,7 @@ export async function importProducts(
       skipped++;
       continue;
     }
-    const scored = scoreCandidate(candidate, user.ebaySitewideDiscountBps);
+    const scored = scoreCandidate(candidate, user.ebaySitewideDiscountBps, user.ebayAdRateBps);
     await db.product.create({
       data: {
         userId: user.id,
@@ -54,7 +54,7 @@ export async function importProducts(
         costCents: candidate.costCents,
         supplierStock: candidate.stock,
         shippingCostCents: candidate.shippingCostCents,
-        suggestedPriceCents: suggestPriceCents(candidate, user.ebaySitewideDiscountBps),
+        suggestedPriceCents: suggestPriceCents(candidate, user.ebaySitewideDiscountBps, user.ebayAdRateBps),
         sourceScore: scored.score,
       },
     });

@@ -23,7 +23,7 @@ export async function addAmazonCatalogProduct(input: string): Promise<string> {
   if (!asin) throw new Error("Enter an Amazon product URL or a 10-character ASIN.");
 
   const product = await getScraper().scrape(url);
-  if (!product) throw new Error("Amazon did not return a usable product for that URL.");
+  if (!product) throw new Error("Amazon did not return a usable product with explicitly verified shipping for that URL.");
   if (!product.inStock || product.priceCents <= 0) {
     throw new Error("This Amazon product is unavailable or has no current price.");
   }
@@ -74,7 +74,7 @@ export async function researchAdminCatalogProduct(id: string): Promise<void> {
         status: "NO_MATCH",
         matchVerdict: "REJECTED",
         matchConfidence: 100,
-        matchReason: "The exact Amazon source is currently unavailable.",
+        matchReason: "The exact Amazon source is unavailable or its shipping cost could not be verified.",
         lastResearchedAt: new Date(),
       },
     });
@@ -219,7 +219,7 @@ export async function refreshAdminAmazonCost(id: string): Promise<void> {
         status: "NO_MATCH",
         matchVerdict: "REJECTED",
         matchConfidence: 100,
-        matchReason: "The exact Amazon source is currently unavailable.",
+        matchReason: "The exact Amazon source is unavailable or its shipping cost could not be verified.",
         lastResearchedAt: new Date(),
       },
     });

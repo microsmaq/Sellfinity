@@ -72,7 +72,11 @@ export default async function SettingsPage({
           initialImproveListingContent={user.improveListingContent}
         />
 
-        <ProfitProtectionPreferences initialDiscountBps={user.ebaySitewideDiscountBps} />
+        <ProfitProtectionPreferences
+          initialDiscountBps={user.ebaySitewideDiscountBps}
+          initialAdRateBps={user.ebayAdRateBps}
+          initialAutoLockProfitableListings={user.autoLockProfitableListings}
+        />
 
         {callback && (
           <p

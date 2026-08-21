@@ -35,6 +35,7 @@ export function detectIssues(
   product: ProductFacts,
   state: SupplierProductState,
   sitewideDiscountBps = 0,
+  adRateBps = 300,
 ): DetectedIssue[] {
   const issues: DetectedIssue[] = [];
 
@@ -97,13 +98,14 @@ export function detectIssues(
       state.costCents,
       shippingCostCents,
       sitewideDiscountBps,
+      adRateBps,
     ).estimatedProfitCents;
     if (profitAtCurrentPrice <= 0) {
       const expectedPrice = suggestPriceCents({
         marketPriceCents: listing.priceCents,
         costCents: state.costCents,
         shippingCostCents,
-      }, sitewideDiscountBps);
+      }, sitewideDiscountBps, adRateBps);
       issues.push({
         type: "COST_RISE",
         details: {

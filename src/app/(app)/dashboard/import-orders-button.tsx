@@ -9,10 +9,11 @@ export function ImportOrdersButton() {
   const [notice, setNotice] = useState<string | null>(null);
 
   return (
-    <div className="flex items-center gap-3">
+    <div className="flex w-full flex-col items-stretch gap-2 sm:w-auto sm:items-end">
       {notice && <p className="text-sm text-slate-500">{notice}</p>}
       <Button
         variant="secondary"
+        className="w-full rounded-xl bg-white sm:w-auto"
         disabled={pending}
         onClick={() => {
           setNotice(null);

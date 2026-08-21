@@ -27,6 +27,7 @@ import { Badge, Button, Card, Input, StatCard, cx } from "@/components/ui";
 import { PremiumProgress } from "@/components/premium-progress";
 
 type AdminScanProgress = {
+  target: number;
   added: number;
   examined: number;
   errors: number;
@@ -298,6 +299,7 @@ export function AdminArbitrageManager({
   const [operation, setOperation] = useState<string | null>(null);
   const [notice, setNotice] = useState<{ text: string; error: boolean } | null>(null);
   const [scanProgress, setScanProgress] = useState<AdminScanProgress | null>(null);
+  const [scanTarget, setScanTarget] = useState(50);
   const [refreshMode, setRefreshMode] = useState<AdminRefreshMode>("MARKET");
   const [refreshCount, setRefreshCount] = useState(25);
   const [refreshProgress, setRefreshProgress] = useState<AdminRefreshProgress | null>(null);
@@ -327,12 +329,13 @@ export function AdminArbitrageManager({
   }
 
   function scan() {
-    const target = 50;
+    const target = scanTarget;
     stopScanRequested.current = false;
     setOperation("Scanning bestseller sources and verifying profitable matches");
     setNotice(null);
     setRefreshProgress(null);
     setScanProgress({
+      target,
       added: 0,
       examined: 0,
       errors: 0,
@@ -346,7 +349,9 @@ export function AdminArbitrageManager({
       let exhausted = false;
 
       while (added < target && !exhausted && !stopScanRequested.current) {
-        const result = await adminScanBestSellers(target - added);
+        // Keep each server checkpoint capped so large scans remain resumable
+        // and comfortably inside the hosting request time limit.
+        const result = await adminScanBestSellers(Math.min(100, target - added));
         if (!result.ok) {
           setNotice({ text: result.message, error: true });
           setScanProgress(null);
@@ -359,6 +364,7 @@ export function AdminArbitrageManager({
         errors += result.errors ?? 0;
         exhausted = result.exhausted;
         setScanProgress({
+          target,
           added,
           examined,
           errors,
@@ -697,14 +703,27 @@ export function AdminArbitrageManager({
                   : `Refreshes exact Amazon price and shipping for up to ${refreshCount} products. Cache hits are free; otherwise allow up to ${refreshCount} Rainforest credits. An automatic prioritized refresh also runs daily at 2:00 AM Los Angeles time before the 3:00 AM scan.`}
               </p>
             </div>
-            <Button
-              variant="secondary"
-              disabled={pending}
-              onClick={scan}
-              className="border-white/30 bg-white/10 text-white hover:bg-white/20"
-            >
-              {scanProgress ? "Adding bestsellers…" : "✦ Add 50 bestsellers"}
-            </Button>
+            <div className="flex gap-2">
+              <select
+                aria-label="Amazon bestsellers to add"
+                value={scanTarget}
+                disabled={pending}
+                onChange={(event) => setScanTarget(Number(event.target.value))}
+                className="rounded-md border border-white/20 bg-slate-900 px-3 py-2 text-sm text-white"
+              >
+                {[50, 100, 250, 500, 1000].map((count) => (
+                  <option key={count} value={count}>{count} products</option>
+                ))}
+              </select>
+              <Button
+                variant="secondary"
+                disabled={pending}
+                onClick={scan}
+                className="flex-1 border-white/30 bg-white/10 text-white hover:bg-white/20"
+              >
+                {scanProgress ? "Adding bestsellers…" : `✦ Add ${scanTarget} bestsellers`}
+              </Button>
+            </div>
           </div>
         </div>
       </Card>
@@ -722,7 +741,7 @@ export function AdminArbitrageManager({
           }
           percentage={
             scanProgress
-              ? (scanProgress.added / 50) * 100
+              ? (scanProgress.added / scanProgress.target) * 100
               : refreshProgress
                 ? (refreshProgress.completed / refreshProgress.total) * 100
                 : undefined
@@ -730,7 +749,7 @@ export function AdminArbitrageManager({
           status={scanProgress?.status ?? "running"}
           stats={scanProgress
             ? [
-                { label: "Products added", value: `${scanProgress.added}/50`, tone: "success" },
+                { label: "Products added", value: `${scanProgress.added}/${scanProgress.target}`, tone: "success" },
                 { label: "Candidates examined", value: scanProgress.examined, tone: "info" },
                 { label: "Temporary failures", value: scanProgress.errors, tone: scanProgress.errors ? "warning" : "default" },
               ]

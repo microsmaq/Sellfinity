@@ -2,26 +2,19 @@ import { requireUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { getEbayClientForUser } from "@/lib/ebay";
 import { ebayEnvConfig } from "@/lib/ebay/oauth";
-import { estimateMargin } from "@/lib/fees";
+import { ebayAdvertisingFeeCents, estimateMargin } from "@/lib/fees";
 import { parseImageUrls } from "@/lib/types";
 import { Badge, PageHeader } from "@/components/ui";
-import { OrdersView, type FulfillmentOrderRow, type FulfillmentStage } from "./orders-view";
+import { OrdersView, type FulfillmentOrderRow } from "./orders-view";
 import { actualAmazonCost } from "@/lib/amazon-email/sync";
 import { verifiedProfitProtectionDecision } from "@/lib/orders/profit-protection-policy";
 import { remoteFulfillmentLookupKeys } from "@/lib/amazon-email/tracking-utils";
+import { fulfillmentStage } from "@/lib/orders/fulfillment-stage";
+import { getListingPriceProtection } from "@/lib/listings/winner";
 
 export const metadata = { title: "Fulfillment — Sellfinity" };
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
-
-function fulfillmentStage(status: string, sourcingStatus: string): FulfillmentStage {
-  if (status === "REFUNDED") return "REFUNDED";
-  if (sourcingStatus === "CANCELLED") return "CANCELLED";
-  if (sourcingStatus === "DELIVERED") return "DELIVERED";
-  if (sourcingStatus === "SHIPPED" || status === "SHIPPED") return "IN_TRANSIT";
-  if (sourcingStatus === "PURCHASED") return "PURCHASED";
-  return "AWAITING";
-}
 
 export default async function OrdersPage() {
   const user = await requireUser();
@@ -35,6 +28,9 @@ export default async function OrdersPage() {
     },
     orderBy: { saleDate: "desc" },
   });
+  const priceProtection = await getListingPriceProtection(user.id, user.ebayAdRateBps);
+  const winnerListings = priceProtection.verifiedWinners;
+  const profitableSaleLocks = priceProtection.profitableSaleLocks;
 
   let fetchError: string | null = null;
   let liveOrders: Awaited<ReturnType<Awaited<ReturnType<typeof getEbayClientForUser>>["getUnfulfilledOrders"]>> = [];
@@ -66,7 +62,15 @@ export default async function OrdersPage() {
     const estimatedCostCents = order.cogsCents + order.shippingCostCents;
     const verifiedCostCents = purchaseItem ? actualAmazonCost(purchaseItem) : null;
     const costCents = verifiedCostCents ?? estimatedCostCents;
-    const stage = fulfillmentStage(order.status, order.sourcingStatus);
+    const advertisingFeeCents = ebayAdvertisingFeeCents(revenueCents, user.ebayAdRateBps);
+    const stage = fulfillmentStage({
+      ebayStatus: order.status,
+      sourcingStatus: order.sourcingStatus,
+      amazonPurchaseStatus: purchase?.status,
+      hasShipmentDetails: Boolean(
+        order.ebayTrackingNumber || purchase?.trackingNumber || purchase?.trackingUrl,
+      ),
+    });
     const protectionDecision = verifiedCostCents === null ? null : verifiedProfitProtectionDecision({
       currentListingPriceCents: order.listing.priceCents,
       orderQuantity: order.quantity,
@@ -74,6 +78,7 @@ export default async function OrdersPage() {
       realizedEbayFeeCents: order.ebayFeeCents,
       verifiedAmazonCostCents: verifiedCostCents,
       sitewideDiscountBps: user.ebaySitewideDiscountBps,
+      adRateBps: user.ebayAdRateBps,
     });
     return {
       id: order.id,
@@ -83,6 +88,7 @@ export default async function OrdersPage() {
         ? `${ebayEnvConfig()?.env === "PRODUCTION" ? "https://www.ebay.com" : "https://sandbox.ebay.com"}/itm/${order.listing.ebayListingId}`
         : null,
       title: order.listing.title,
+      sku: order.listing.product.sku,
       imageUrl: parseImageUrls(order.listing.imageUrlsJson)[0] ?? null,
       buyerUsername: order.buyerUsername,
       saleDate: order.saleDate.toISOString(),
@@ -100,16 +106,21 @@ export default async function OrdersPage() {
       trackingSynced: !!order.ebayTrackingSyncedAt,
       trackingError: order.ebayTrackingSyncError,
       revenueCents,
-      ebayFeeCents: order.ebayFeeCents,
+      soldUnitPriceCents: order.salePriceCents,
+      listingPriceCents: order.listing.priceCents,
+      ebayFeeCents: order.ebayFeeCents + advertisingFeeCents,
       costCents,
       costVerified: verifiedCostCents !== null,
-      profitCents: revenueCents - order.ebayFeeCents - costCents,
+      profitCents: revenueCents - order.ebayFeeCents - advertisingFeeCents - costCents,
       matchConfidence: purchaseItem?.matchConfidence ?? null,
       needsSource: !purchaseItem && !order.listing.product.supplierUrl,
       profitProtectionStatus: order.profitProtectionStatus,
       profitProtectionNewPriceCents: order.profitProtectionNewPriceCents,
       profitProtectionError: order.profitProtectionError,
       suggestedProtectedPriceCents: protectionDecision?.action === "reprice" ? protectionDecision.targetPriceCents : null,
+      verifiedWinner: winnerListings.has(order.listingId),
+      priceLocked: !winnerListings.has(order.listingId) && profitableSaleLocks.has(order.listingId),
+      winnerProtectedUntil: winnerListings.get(order.listingId)?.protectedUntil?.toISOString() ?? null,
     };
   });
 
@@ -136,6 +147,8 @@ export default async function OrdersPage() {
             line.salePriceCents + Math.round(line.shippingChargedCents / line.quantity),
             listing.product.costCents,
             listing.product.shippingCostCents,
+            user.ebaySitewideDiscountBps,
+            user.ebayAdRateBps,
           )
         : null;
       rows.push({
@@ -144,6 +157,7 @@ export default async function OrdersPage() {
         ebayListingId: line.ebayListingId,
         ebayUrl: `${ebayEnvConfig()?.env === "PRODUCTION" ? "https://www.ebay.com" : "https://sandbox.ebay.com"}/itm/${line.ebayListingId}`,
         title: line.title,
+        sku: listing?.product.sku ?? "",
         imageUrl: listing ? parseImageUrls(listing.imageUrlsJson)[0] ?? null : null,
         buyerUsername: order.buyerUsername,
         saleDate: order.createdAt.toISOString(),
@@ -161,6 +175,8 @@ export default async function OrdersPage() {
         trackingSynced: false,
         trackingError: null,
         revenueCents,
+        soldUnitPriceCents: line.salePriceCents,
+        listingPriceCents: listing?.priceCents ?? null,
         ebayFeeCents: margin ? margin.estimatedFeeCents * line.quantity : 0,
         costCents: listing ? (listing.product.costCents + listing.product.shippingCostCents) * line.quantity : null,
         costVerified: false,
@@ -171,6 +187,9 @@ export default async function OrdersPage() {
         profitProtectionNewPriceCents: null,
         profitProtectionError: null,
         suggestedProtectedPriceCents: null,
+        verifiedWinner: listing ? winnerListings.has(listing.id) : false,
+        priceLocked: listing ? !winnerListings.has(listing.id) && profitableSaleLocks.has(listing.id) : false,
+        winnerProtectedUntil: listing ? winnerListings.get(listing.id)?.protectedUntil?.toISOString() ?? null : null,
       });
     }
   }

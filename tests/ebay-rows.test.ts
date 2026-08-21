@@ -41,13 +41,12 @@ function local(
 }
 
 describe("buildEbayRows", () => {
-  it("hides listings the app already ended, even if eBay's list still has them", () => {
+  it("shows listings eBay confirms are active despite a stale local ended status", () => {
     const rows = buildEbayRows(
       [remote("1"), remote("2")],
       [local("1", { status: "ENDED" }), local("2")],
     );
-    expect(rows).toHaveLength(1);
-    expect(rows[0].ebayListingId).toBe("2");
+    expect(rows.map((row) => row.ebayListingId).sort()).toEqual(["1", "2"]);
   });
 
   it("marks untracked listings as unmatched", () => {

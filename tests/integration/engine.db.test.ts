@@ -51,6 +51,15 @@ class RecordingEbay implements EbayClient {
   }
 }
 
+class StatefulOrderEbay extends RecordingEbay {
+  constructor(public orders: RemoteOrder[]) {
+    super();
+  }
+  async getOrders(): Promise<RemoteOrder[]> {
+    return this.orders;
+  }
+}
+
 async function createUserWithActiveListing() {
   const user = await db.user.create({
     data: {
@@ -408,5 +417,31 @@ describe("importOrders (with the sandbox eBay client)", () => {
     const updated = await db.listing.findUniqueOrThrow({ where: { id: listing.id } });
     expect(updated.quantity).toBeGreaterThanOrEqual(0);
     expect(updated.quantity).toBeLessThanOrEqual(5);
+  });
+
+  it("refreshes an existing order to cancelled without decrementing inventory again", async () => {
+    const { user, listing } = await createUserWithActiveListing();
+    const remote: RemoteOrder = {
+      ebayOrderId: "cancelled-order-line",
+      ebayListingId: listing.ebayListingId!,
+      quantity: 1,
+      salePriceCents: listing.priceCents,
+      shippingChargedCents: 0,
+      buyerUsername: "buyer",
+      saleDate: new Date(),
+      status: "PAID",
+      cancelled: false,
+    };
+    const ebay = new StatefulOrderEbay([remote]);
+
+    await importOrders(user.id, ebay);
+    const quantityAfterSale = (await db.listing.findUniqueOrThrow({ where: { id: listing.id } })).quantity;
+    ebay.orders = [{ ...remote, cancelled: true }];
+    await importOrders(user.id, ebay);
+
+    const stored = await db.order.findFirstOrThrow({ where: { userId: user.id, ebayOrderId: remote.ebayOrderId } });
+    const quantityAfterCancellation = (await db.listing.findUniqueOrThrow({ where: { id: listing.id } })).quantity;
+    expect(stored.sourcingStatus).toBe("CANCELLED");
+    expect(quantityAfterCancellation).toBe(quantityAfterSale);
   });
 });

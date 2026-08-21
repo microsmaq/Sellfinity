@@ -5,6 +5,7 @@ export type ListingMarketMetrics = {
   competitorCount: number;
   averageCompetitorPriceCents: number;
   bestSellingPriceCents: number;
+  updatedAt?: Date;
 };
 
 type ResearchMetricRow = {
@@ -14,6 +15,7 @@ type ResearchMetricRow = {
   competitorCount?: number | null;
   avgCompPriceCents?: number | null;
   bestSellingPriceCents?: number | null;
+  updatedAt?: Date;
 };
 
 /** Aggregate the comparable listings already collected by the arbitrage
@@ -64,6 +66,9 @@ export function aggregateListingMarketMetrics(
           bestSellingPriceCents:
             researchedRecommendations[0] ??
             sortedPrices[Math.floor((sortedPrices.length - 1) * 0.25)],
+          ...(asinRows.some((row) => row.updatedAt)
+            ? { updatedAt: new Date(Math.max(...asinRows.flatMap((row) => row.updatedAt ? [row.updatedAt.getTime()] : []))) }
+            : {}),
         },
       ];
     }),
@@ -84,6 +89,7 @@ export async function getListingMarketMetrics(
       competitorCount: true,
       avgCompPriceCents: true,
       bestSellingPriceCents: true,
+      updatedAt: true,
     },
   });
   return aggregateListingMarketMetrics(rows);

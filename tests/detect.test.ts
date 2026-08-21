@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { detectIssues } from "@/lib/sync/detect";
 import { LISTING_QUANTITY_CAP } from "@/lib/listings/generate";
-import { ebayFeeCents, netProfitCents } from "@/lib/fees";
+import { ebayFeeCents, estimateMargin, netProfitCents } from "@/lib/fees";
 
 const healthyListing = { priceCents: 2299, quantity: 5 };
 const product = { shippingCostCents: 450 };
@@ -97,5 +97,27 @@ describe("detectIssues", () => {
     expect(detectIssues(healthyListing, product, state)).toEqual([]);
     const discountedIssues = detectIssues(healthyListing, product, state, 500);
     expect(discountedIssues.map((issue) => issue.type)).toContain("COST_RISE");
+  });
+
+  it("uses the seller ad rate when calculating a Smart Sync reprice", () => {
+    const state = { stock: 100, costCents: 1_400 };
+    expect(detectIssues(healthyListing, product, state)).toEqual([]);
+
+    const issues = detectIssues(healthyListing, product, state, 0, 900);
+    const costRise = issues.find((issue) => issue.type === "COST_RISE");
+    expect(costRise).toBeDefined();
+    if (!costRise || costRise.fix.kind !== "set_price") {
+      throw new Error("expected price fix");
+    }
+
+    expect(
+      estimateMargin(
+        costRise.fix.priceCents,
+        state.costCents,
+        product.shippingCostCents,
+        0,
+        900,
+      ).estimatedProfitCents,
+    ).toBeGreaterThan(0);
   });
 });

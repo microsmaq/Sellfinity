@@ -14,7 +14,7 @@ export default async function SourcingPage() {
     db.product.findMany({ where: { userId: user.id }, select: { sku: true } }),
   ]);
   const importedSkus = new Set(products.map((p) => p.sku));
-  const scored = scoreAndRank(candidates, user.ebaySitewideDiscountBps);
+  const scored = scoreAndRank(candidates, user.ebaySitewideDiscountBps, user.ebayAdRateBps);
 
   const rows: CandidateRow[] = scored.map((c) => ({
     id: c.supplierProductId,

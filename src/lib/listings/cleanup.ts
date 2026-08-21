@@ -8,6 +8,8 @@ import {
   discountedEbayPriceCents,
   grossUpEbayPriceCents,
   normalizeSitewideDiscountBps,
+  normalizeAdRateBps,
+  DEFAULT_EBAY_AD_RATE_BPS,
 } from "@/lib/fees";
 
 /** Assumed eBay Promoted Listings (advertising) rate, applied to the sale
@@ -36,6 +38,7 @@ export function trueProfitCents(
   costCents: number,
   shippingCostCents: number,
   sitewideDiscountBps = 0,
+  adRateBps = DEFAULT_EBAY_AD_RATE_BPS,
 ): number {
   const buyerPriceCents = discountedEbayPriceCents(priceCents, sitewideDiscountBps);
   // eBay's final-value fee and the advertising allowance are charged and
@@ -43,7 +46,7 @@ export function trueProfitCents(
   // the 15% floor cannot miss by a cent at rounding boundaries.
   const variableFees =
     Math.round(buyerPriceCents * EBAY_FINAL_VALUE_RATE) +
-    Math.round(buyerPriceCents * AD_RATE);
+    Math.round(buyerPriceCents * normalizeAdRateBps(adRateBps) / 10_000);
   return (
     buyerPriceCents - variableFees - EBAY_PER_ORDER_FEE_CENTS - costCents - shippingCostCents
   );
@@ -63,8 +66,9 @@ export function targetPriceCents(
   costCents: number,
   shippingCostCents: number,
   sitewideDiscountBps = 0,
+  adRateBps = DEFAULT_EBAY_AD_RATE_BPS,
 ): number {
-  const keep = 1 - EBAY_FINAL_VALUE_RATE - AD_RATE; // fraction of price kept
+  const keep = 1 - EBAY_FINAL_VALUE_RATE - normalizeAdRateBps(adRateBps) / 10_000;
   const fixed = EBAY_PER_ORDER_FEE_CENTS + costCents + shippingCostCents;
   const priceForProfit = (TARGET_PROFIT_CENTS + fixed) / keep;
   const priceForMargin = fixed / (keep - TARGET_MARGIN);
@@ -81,8 +85,9 @@ export function marginFloorPriceCents(
   shippingCostCents: number,
   margin: number,
   sitewideDiscountBps = 0,
+  adRateBps = DEFAULT_EBAY_AD_RATE_BPS,
 ): number {
-  const keep = 1 - EBAY_FINAL_VALUE_RATE - AD_RATE;
+  const keep = 1 - EBAY_FINAL_VALUE_RATE - normalizeAdRateBps(adRateBps) / 10_000;
   const fixed = EBAY_PER_ORDER_FEE_CENTS + costCents + shippingCostCents;
   let price = Math.max(99, grossUpEbayPriceCents(
     Math.ceil(fixed / (keep - margin)),
@@ -91,7 +96,7 @@ export function marginFloorPriceCents(
   // trueProfitCents rounds variable fees to cents, so close the occasional
   // one-cent rounding gap rather than ever returning below the hard margin.
   while (
-    trueProfitCents(price, costCents, shippingCostCents, sitewideDiscountBps) /
+    trueProfitCents(price, costCents, shippingCostCents, sitewideDiscountBps, adRateBps) /
       discountedEbayPriceCents(price, sitewideDiscountBps) < margin
   ) {
     price++;
@@ -106,20 +111,65 @@ export function profitCapPriceCents(
   shippingCostCents: number,
   profitCents = AI_MAX_TARGET_PROFIT_CENTS,
   sitewideDiscountBps = 0,
+  adRateBps = DEFAULT_EBAY_AD_RATE_BPS,
 ): number {
-  const keep = 1 - EBAY_FINAL_VALUE_RATE - AD_RATE;
+  const keep = 1 - EBAY_FINAL_VALUE_RATE - normalizeAdRateBps(adRateBps) / 10_000;
   const fixed = EBAY_PER_ORDER_FEE_CENTS + costCents + shippingCostCents;
   let price = Math.max(99, grossUpEbayPriceCents(
     Math.floor((fixed + profitCents) / keep),
     sitewideDiscountBps,
   ));
-  while (price > 99 && trueProfitCents(price, costCents, shippingCostCents, sitewideDiscountBps) > profitCents) {
+  while (price > 99 && trueProfitCents(price, costCents, shippingCostCents, sitewideDiscountBps, adRateBps) > profitCents) {
     price--;
   }
   while (
-    trueProfitCents(price + 1, costCents, shippingCostCents, sitewideDiscountBps) <= profitCents
+    trueProfitCents(price + 1, costCents, shippingCostCents, sitewideDiscountBps, adRateBps) <= profitCents
   ) {
     price++;
+  }
+  return price;
+}
+
+/** Lowest listing price whose modeled net profit reaches a requested dollar
+ * amount after the sitewide discount, eBay final-value fee, promoted-listing
+ * rate, per-order fee, Amazon item cost, and shipping. The small correction
+ * loops make the result exact at cent-rounding boundaries. */
+export function targetNetProfitPriceCents(
+  costCents: number,
+  shippingCostCents: number,
+  targetProfitCents: number,
+  sitewideDiscountBps = 0,
+  adRateBps = DEFAULT_EBAY_AD_RATE_BPS,
+): number {
+  const target = Math.max(0, Math.round(targetProfitCents));
+  const keep = 1 - EBAY_FINAL_VALUE_RATE - normalizeAdRateBps(adRateBps) / 10_000;
+  const fixed = EBAY_PER_ORDER_FEE_CENTS + costCents + shippingCostCents;
+  let price = Math.max(99, grossUpEbayPriceCents(
+    Math.ceil((fixed + target) / keep),
+    sitewideDiscountBps,
+  ));
+  while (
+    trueProfitCents(
+      price,
+      costCents,
+      shippingCostCents,
+      sitewideDiscountBps,
+      adRateBps,
+    ) < target
+  ) {
+    price++;
+  }
+  while (
+    price > 99 &&
+    trueProfitCents(
+      price - 1,
+      costCents,
+      shippingCostCents,
+      sitewideDiscountBps,
+      adRateBps,
+    ) >= target
+  ) {
+    price--;
   }
   return price;
 }
@@ -137,6 +187,7 @@ export function aiSuggestedListingPriceCents(
   ebayRecommendedPriceCents?: number | null,
   averageCompetitorPriceCents?: number | null,
   sitewideDiscountBps = 0,
+  adRateBps = DEFAULT_EBAY_AD_RATE_BPS,
 ): number {
   const discountBps = normalizeSitewideDiscountBps(sitewideDiscountBps);
   if (discountBps > 0) {
@@ -146,6 +197,8 @@ export function aiSuggestedListingPriceCents(
         shippingCostCents,
         ebayRecommendedPriceCents,
         averageCompetitorPriceCents,
+        0,
+        adRateBps,
       ),
       discountBps,
     );
@@ -154,11 +207,15 @@ export function aiSuggestedListingPriceCents(
     costCents,
     shippingCostCents,
     AI_MIN_MARGIN,
+    0,
+    adRateBps,
   );
   const preferred = marginFloorPriceCents(
     costCents,
     shippingCostCents,
     AI_TARGET_MARGIN,
+    0,
+    adRateBps,
   );
   const average =
     averageCompetitorPriceCents && averageCompetitorPriceCents > 0
@@ -184,12 +241,12 @@ export function aiSuggestedListingPriceCents(
   }
 
   if (
-    trueProfitCents(minimum, costCents, shippingCostCents) >
+    trueProfitCents(minimum, costCents, shippingCostCents, 0, adRateBps) >
     AI_MAX_TARGET_PROFIT_CENTS
   ) {
     return Math.min(
       suggested,
-      profitCapPriceCents(costCents, shippingCostCents),
+      profitCapPriceCents(costCents, shippingCostCents, AI_MAX_TARGET_PROFIT_CENTS, 0, adRateBps),
     );
   }
   return suggested;
@@ -203,15 +260,16 @@ export function suggestedListingPriceCents(
   shippingCostCents: number,
   averageCompetitorPriceCents?: number | null,
   sitewideDiscountBps = 0,
+  adRateBps = DEFAULT_EBAY_AD_RATE_BPS,
 ): number {
   const discountBps = normalizeSitewideDiscountBps(sitewideDiscountBps);
   if (discountBps > 0) {
     return grossUpEbayPriceCents(
-      suggestedListingPriceCents(costCents, shippingCostCents, averageCompetitorPriceCents),
+      suggestedListingPriceCents(costCents, shippingCostCents, averageCompetitorPriceCents, 0, adRateBps),
       discountBps,
     );
   }
-  const profitableFloor = targetPriceCents(costCents, shippingCostCents);
+  const profitableFloor = targetPriceCents(costCents, shippingCostCents, 0, adRateBps);
   if (!averageCompetitorPriceCents || averageCompetitorPriceCents <= 0) {
     return profitableFloor;
   }
@@ -231,9 +289,10 @@ export function classifyListing(
   costCents: number,
   shippingCostCents: number,
   sitewideDiscountBps = 0,
+  adRateBps = DEFAULT_EBAY_AD_RATE_BPS,
 ): CleanupDecision {
   const buyerPriceCents = discountedEbayPriceCents(priceCents, sitewideDiscountBps);
-  const profit = trueProfitCents(priceCents, costCents, shippingCostCents, sitewideDiscountBps);
+  const profit = trueProfitCents(priceCents, costCents, shippingCostCents, sitewideDiscountBps, adRateBps);
   const margin = buyerPriceCents > 0 ? profit / buyerPriceCents : -1;
 
   if (margin >= TARGET_MARGIN || profit >= TARGET_PROFIT_CENTS) {
@@ -242,7 +301,7 @@ export function classifyListing(
   if (margin <= END_MARGIN) {
     return { action: "end" };
   }
-  const newPriceCents = targetPriceCents(costCents, shippingCostCents, sitewideDiscountBps);
+  const newPriceCents = targetPriceCents(costCents, shippingCostCents, sitewideDiscountBps, adRateBps);
   // Never lower a price during clean-up; if the target math lands at or
   // below the current price (rounding edge), the listing is close enough.
   if (newPriceCents <= priceCents) return { action: "ok" };

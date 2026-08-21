@@ -18,6 +18,25 @@ export function remoteFulfillmentKey(orderId: string, lineItemId: string): strin
   return `${orderId}-${lineItemId}`;
 }
 
+export function amazonStatusCanUploadTracking(status: string): boolean {
+  return status === "SHIPPED" || status === "DELIVERED";
+}
+
+export function trackingCandidateForUpload(input: {
+  storedTrackingNumber?: string | null;
+  storedCarrier?: string | null;
+  amazonTrackingNumber?: string | null;
+  amazonCarrier?: string | null;
+  amazonStatus?: string | null;
+  amazonAttributionSafe: boolean;
+}): { trackingNumber: string; carrier: string | null } | null {
+  if (input.storedTrackingNumber) {
+    return { trackingNumber: input.storedTrackingNumber, carrier: input.storedCarrier ?? input.amazonCarrier ?? null };
+  }
+  if (!input.amazonTrackingNumber || !input.amazonStatus || !amazonStatusCanUploadTracking(input.amazonStatus) || !input.amazonAttributionSafe) return null;
+  return { trackingNumber: input.amazonTrackingNumber, carrier: input.amazonCarrier ?? null };
+}
+
 /** New imports use order+line identity. Older single-line imports stored only
  * eBay's order id, so expose that alias only when it cannot be ambiguous. */
 export function remoteFulfillmentLookupKeys(orderId: string, lineItemId: string, lineCount: number): string[] {

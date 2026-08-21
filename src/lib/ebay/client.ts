@@ -10,6 +10,8 @@ export type CreateListingInput = {
   imageUrls: string[];
   sku: string;
   category: string;
+  /** Manufacturer brand retained from the source marketplace. */
+  brand?: string;
 };
 
 export type ListingUpdate = {
@@ -35,6 +37,10 @@ export type RemoteOrder = {
   shippingAddressLine1?: string | null;
   shippingPostalCode?: string | null;
   saleDate: Date;
+  /** Current eBay lifecycle state, refreshed on every order import. */
+  status?: "PAID" | "SHIPPED" | "REFUNDED";
+  /** Any active or completed eBay cancellation removes the order from work. */
+  cancelled?: boolean;
 };
 
 export type RemoteFulfillmentLine = {
@@ -92,7 +98,18 @@ export type ListingTrafficMetric = {
   salesConversionRate: number | null;
 };
 
-export class EbayApiError extends Error {}
+export type ListingTrafficDayMetric = {
+  date: string;
+  impressions: number;
+  views: number;
+};
+
+export class EbayApiError extends Error {
+  constructor(message: string, public readonly status?: number) {
+    super(message);
+    this.name = "EbayApiError";
+  }
+}
 
 export interface EbayClient {
   /** Publish a listing; returns the live eBay listing id. */
@@ -122,6 +139,20 @@ export interface EbayClient {
     start: Date,
     end: Date,
   ): Promise<ListingTrafficMetric[]>;
+  /** Daily traffic totals across the requested listings. */
+  getListingTrafficTrend?(
+    userId: string,
+    ebayListingIds: string[],
+    start: Date,
+    end: Date,
+  ): Promise<ListingTrafficDayMetric[]>;
+  /** Account-wide daily traffic, fetched in one report instead of one call
+   * per day and listing batch. */
+  getAccountTrafficTrend?(
+    userId: string,
+    start: Date,
+    end: Date,
+  ): Promise<ListingTrafficDayMetric[]>;
 }
 
 /** Validation eBay itself enforces; the mock applies it too so failures show up in dev. */

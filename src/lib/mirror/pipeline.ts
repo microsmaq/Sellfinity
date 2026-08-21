@@ -107,9 +107,10 @@ export async function mirrorUrl(
 
   const user = await db.user.findUnique({
     where: { id: userId },
-    select: { ebaySitewideDiscountBps: true },
+    select: { ebaySitewideDiscountBps: true, ebayAdRateBps: true },
   });
   const sitewideDiscountBps = user?.ebaySitewideDiscountBps ?? 0;
+  const adRateBps = user?.ebayAdRateBps ?? 300;
   const priceCents =
     opts.sourceMarkupPct !== undefined
       ? grossUpEbayPriceCents(sourceMarkupPriceCents(
@@ -124,7 +125,7 @@ export async function mirrorUrl(
             ),
           costCents: scraped.priceCents,
           shippingCostCents: scraped.shippingCostCents,
-        }, sitewideDiscountBps);
+        }, sitewideDiscountBps, adRateBps);
   const supplierStock = scraped.inStock ? NOMINAL_IN_STOCK : 0;
 
   const contentImprovement = opts.improveListingContent
@@ -156,6 +157,7 @@ export async function mirrorUrl(
         userId,
         sku: scraped.sourceId,
         title: scraped.title,
+        brand: scraped.brand,
         description: scraped.description,
         imageUrlsJson: serializeImageUrls(scraped.imageUrls),
         category: scraped.category,

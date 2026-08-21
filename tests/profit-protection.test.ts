@@ -8,7 +8,7 @@ import {
   verifiedProfitProtectionDecision,
 } from "@/lib/orders/profit-protection-policy";
 
-const feeBps = 1_325;
+const feeBps = 1_625;
 
 function futureProfit(priceCents: number, costCents: number): number {
   return priceCents - Math.ceil((priceCents * feeBps) / 10_000) - EBAY_PER_ORDER_FEE_CENTS - costCents;
@@ -70,6 +70,29 @@ describe("verified profit protection", () => {
     if (withoutDiscount.action !== "reprice" || withDiscount.action !== "reprice") return;
     expect(withDiscount.targetPriceCents).toBeGreaterThan(withoutDiscount.targetPriceCents);
     expect(discountedSalePriceCents(withDiscount.targetPriceCents, 500)).toBeGreaterThanOrEqual(withoutDiscount.targetPriceCents);
+  });
+
+  it("raises the protected price when the seller uses a higher ad rate", () => {
+    const standard = verifiedProfitProtectionDecision({
+      currentListingPriceCents: 1_500,
+      orderQuantity: 1,
+      realizedRevenueCents: 1_500,
+      realizedEbayFeeCents: 229,
+      verifiedAmazonCostCents: 1_300,
+      adRateBps: 300,
+    });
+    const promoted = verifiedProfitProtectionDecision({
+      currentListingPriceCents: 1_500,
+      orderQuantity: 1,
+      realizedRevenueCents: 1_500,
+      realizedEbayFeeCents: 229,
+      verifiedAmazonCostCents: 1_300,
+      adRateBps: 900,
+    });
+    expect(standard.action).toBe("reprice");
+    expect(promoted.action).toBe("reprice");
+    if (standard.action !== "reprice" || promoted.action !== "reprice") return;
+    expect(promoted.targetPriceCents).toBeGreaterThan(standard.targetPriceCents);
   });
 
   it("caps an expensive item's target at $7 net instead of requiring 5%", () => {
