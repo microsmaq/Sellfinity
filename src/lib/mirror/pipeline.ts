@@ -13,6 +13,7 @@ import { LISTING_QUANTITY_CAP } from "@/lib/listings/generate";
 import { suggestPriceCents } from "@/lib/sourcing/scoring";
 import { serializeImageUrls } from "@/lib/types";
 import { grossUpEbayPriceCents } from "@/lib/fees";
+import { targetNetProfitPriceCents } from "@/lib/listings/cleanup";
 import { improveMainListingImage } from "./improve-main-image";
 import { improveListingContent } from "./improve-listing-content";
 
@@ -107,12 +108,21 @@ export async function mirrorUrl(
 
   const user = await db.user.findUnique({
     where: { id: userId },
-    select: { ebaySitewideDiscountBps: true, ebayAdRateBps: true },
+    select: { ebaySitewideDiscountBps: true, ebayAdRateBps: true, targetProfitEnabled: true, targetProfitCents: true },
   });
   const sitewideDiscountBps = user?.ebaySitewideDiscountBps ?? 0;
   const adRateBps = user?.ebayAdRateBps ?? 300;
+  const targetProfitCents = user?.targetProfitEnabled ? user.targetProfitCents : null;
   const priceCents =
-    opts.sourceMarkupPct !== undefined
+    targetProfitCents !== null
+      ? targetNetProfitPriceCents(
+          scraped.priceCents,
+          scraped.shippingCostCents,
+          targetProfitCents,
+          sitewideDiscountBps,
+          adRateBps,
+        )
+      : opts.sourceMarkupPct !== undefined
       ? grossUpEbayPriceCents(sourceMarkupPriceCents(
           scraped.priceCents + scraped.shippingCostCents,
           opts.sourceMarkupPct,
@@ -125,7 +135,7 @@ export async function mirrorUrl(
             ),
           costCents: scraped.priceCents,
           shippingCostCents: scraped.shippingCostCents,
-        }, sitewideDiscountBps, adRateBps);
+        }, sitewideDiscountBps, adRateBps, targetProfitCents);
   const supplierStock = scraped.inStock ? NOMINAL_IN_STOCK : 0;
 
   const contentImprovement = opts.improveListingContent
