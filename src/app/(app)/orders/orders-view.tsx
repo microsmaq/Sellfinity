@@ -1,3 +1,7 @@
+Exit code: 0
+Wall time: 0.5 seconds
+Total output lines: 718
+Output:
 "use client";
 
 /* eslint-disable @next/next/no-img-element */
@@ -9,7 +13,7 @@ import { PremiumProgress } from "@/components/premium-progress";
 import { formatCents } from "@/lib/money";
 import { protectOrderMargin, setAutoProfitProtection } from "@/lib/actions/profit-protection";
 import { syncAmazonEmailsNow } from "@/lib/actions/amazon-email";
-import { markOrderCancelled, reassignAmazonPurchase, setAutoRestockFulfilledListings, submitManualOrderTracking } from "@/lib/actions/orders";
+import { linkAmazonPurchase, markOrderCancelled, reassignAmazonPurchase, setAutoRestockFulfilledListings, submitManualOrderTracking } from "@/lib/actions/orders";
 import { fulfillmentNeedsAction, type FulfillmentStage } from "@/lib/orders/fulfillment-stage";
 
 export type FulfillmentOrderRow = {
@@ -127,6 +131,8 @@ export function OrdersView({ orders, fetchError, profitProtectionEnabled, autoRe
   const [savingTrackingOrderId, setSavingTrackingOrderId] = useState<string | null>(null);
   const [cancellingOrderId, setCancellingOrderId] = useState<string | null>(null);
   const [reassigningOrderId, setReassigningOrderId] = useState<string | null>(null);
+  const [amazonOrderNumbers, setAmazonOrderNumbers] = useState<Record<string, string>>({});
+  const [linkingOrderId, setLinkingOrderId] = useState<string | null>(null);
   const displayOrders = useMemo(() => orders.map((order) => ({ ...order, ...orderOverrides[order.id] })), [orderOverrides, orders]);
 
   function duplicateAwaitingOrders(order: FulfillmentOrderRow) {
@@ -149,6 +155,21 @@ export function OrdersView({ orders, fetchError, profitProtectionEnabled, autoRe
         return;
       }
       setRefreshMessage(`Amazon order moved to ${target.buyerUsername}.`);
+      router.refresh();
+    });
+  }
+
+  function linkKnownAmazonOrder(order: FulfillmentOrderRow) {
+    const amazonOrderId = amazonOrderNumbers[order.id]?.trim() ?? "";
+    setLinkingOrderId(order.id);
+    startTransition(async () => {
+      const result = await linkAmazonPurchase(order.id, amazonOrderId);
+      setLinkingOrderId(null);
+      if (result.error) {
+        setRefreshMessage(result.error);
+        return;
+      }
+      setRefreshMessage(`Amazon order ${result.amazonOrderId} linked to ${order.buyerUsername}.`);
       router.refresh();
     });
   }
@@ -377,204 +398,7 @@ export function OrdersView({ orders, fetchError, profitProtectionEnabled, autoRe
         } : current);
         router.refresh();
       } catch {
-        const message = "Could not complete the Amazon and eBay refresh. Please try again.";
-        setRefreshMessage(message);
-        setRefreshRun((current) => current ? { ...current, server: "error", result: message } : current);
-      }
-    });
-  }
-
-  function cancelOrder(order: FulfillmentOrderRow) {
-    if (!window.confirm(`Mark “${order.title}” as cancelled in Sellfinity? This does not cancel the order on eBay.`)) return;
-    setCancellingOrderId(order.id);
-    startTransition(async () => {
-      try {
-        const result = await markOrderCancelled(order.id);
-        if (!("error" in result)) {
-          setOrderOverrides((current) => ({ ...current, [order.id]: { stage: "CANCELLED" } }));
-          router.refresh();
-        }
-      } finally {
-        setCancellingOrderId(null);
-      }
-    });
-  }
-
-  const helperStartingTimedOut = refreshRun?.helper === "starting" && refreshElapsed >= 8;
-  const refreshWorking = !!refreshRun && (
-    refreshRun.server === "running" || refreshRun.helper === "running" || (refreshRun.helper === "starting" && !helperStartingTimedOut)
-  );
-  const refreshComplete = !!refreshRun && !refreshWorking && refreshRun.server === "complete";
-  const refreshStatus = refreshWorking ? "running" : refreshComplete ? "complete" : "error";
-  const helperRatio = refreshRun?.trackingTotal
-    ? refreshRun.trackingProcessed / refreshRun.trackingTotal
-    : 1;
-  const refreshPercentage = !refreshRun
-    ? 0
-    : refreshComplete
-      ? 100
-      : refreshWorking
-        ? Math.min(96, Math.max(8, refreshRun.server === "running" ? 12 + refreshElapsed * 0.8 : 60, 55 + helperRatio * 40))
-        : 100;
-  const refreshSubtitle = !refreshRun
-    ? ""
-    : refreshRun.server === "running"
-      ? refreshElapsed < 8
-        ? "Importing current eBay orders and preparing the Amazon email scan…"
-        : refreshElapsed < 35
-          ? "Scanning Amazon purchase, shipment, and delivery emails…"
-          : refreshElapsed < 90
-            ? "Resolving tracking links and matching purchases to fulfillment rows…"
-            : "Still working normally—large email histories and Amazon tracking pages can take several minutes."
-      : refreshRun.helper === "running"
-        ? "Email and eBay refresh finished. The signed-in browser helper is still checking tracking pages."
-        : refreshRun.result ?? "Refresh finished.";
-
-  const tabCounts = useMemo(() => ({
-    ALL: displayOrders.length,
-    NEEDS_ACTION: displayOrders.filter((order) => tabMatches(order, "NEEDS_ACTION")).length,
-    PURCHASED: displayOrders.filter((order) => order.stage === "PURCHASED").length,
-    IN_TRANSIT: displayOrders.filter((order) => order.stage === "IN_TRANSIT").length,
-    DELIVERED: displayOrders.filter((order) => order.stage === "DELIVERED").length,
-    EXCEPTIONS: displayOrders.filter((order) => tabMatches(order, "EXCEPTIONS")).length,
-  }), [displayOrders]);
-
-  const filtered = useMemo(() => {
-    const needle = query.trim().toLowerCase();
-    return displayOrders
-      .filter((order) => tabMatches(order, tab))
-      .filter((order) => !needle || [order.ebayOrderId, order.ebayListingId ?? "", order.title, order.buyerUsername, order.amazonOrderId ?? "", order.amazonTitle ?? "", order.trackingNumber ?? ""].some((value) => value.toLowerCase().includes(needle)))
-      .sort((a, b) => {
-        if (sort === "PROFIT") return (b.profitCents ?? -Infinity) - (a.profitCents ?? -Infinity);
-        if (sort === "SHIP_BY") return (a.shipByDate ? new Date(a.shipByDate).getTime() : Infinity) - (b.shipByDate ? new Date(b.shipByDate).getTime() : Infinity);
-        return new Date(b.saleDate).getTime() - new Date(a.saleDate).getTime();
-      });
-  }, [displayOrders, query, sort, tab]);
-
-  const financialOrders = displayOrders.filter((order) => order.stage !== "CANCELLED" && order.stage !== "REFUNDED");
-  const realizedProfit = financialOrders.filter((order) => order.costVerified && order.profitCents !== null).reduce((sum, order) => sum + (order.profitCents ?? 0), 0);
-  const revenue = financialOrders.reduce((sum, order) => sum + order.revenueCents, 0);
-  const delivered = displayOrders.filter((order) => order.stage === "DELIVERED").length;
-
-  const tabs: { value: Tab; label: string }[] = [
-    { value: "NEEDS_ACTION", label: "Needs action" },
-    { value: "ALL", label: "All orders" },
-    { value: "PURCHASED", label: "Awaiting Amazon shipment" },
-    { value: "IN_TRANSIT", label: "Shipped orders" },
-    { value: "DELIVERED", label: "Delivered" },
-    { value: "EXCEPTIONS", label: "Exceptions" },
-  ];
-
-  return (
-    <div className="space-y-5">
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <StatCard label="Needs action" value={tabCounts.NEEDS_ACTION.toLocaleString()} sub="Orders requiring your attention" tone={tabCounts.NEEDS_ACTION ? "negative" : "positive"} />
-        <StatCard label="Shipped" value={tabCounts.IN_TRANSIT.toLocaleString()} sub="Tracking received and on the way" />
-        <StatCard label="Delivered" value={delivered.toLocaleString()} sub={`${displayOrders.length.toLocaleString()} total orders`} tone="positive" />
-        <StatCard label="Verified profit" value={formatCents(realizedProfit)} sub={`${formatCents(revenue)} total revenue`} tone={realizedProfit >= 0 ? "positive" : "negative"} />
-      </div>
-
-      <Card className="overflow-hidden border-indigo-200 bg-gradient-to-r from-indigo-50/80 via-white to-emerald-50/60">
-        <div className="flex flex-col gap-4 p-5 lg:flex-row lg:items-center lg:justify-between">
-          <div className="max-w-3xl">
-            <div className="flex flex-wrap items-center gap-2">
-              <h2 className="font-semibold text-slate-950">Verified profit protection</h2>
-              <Badge tone={protectionEnabled ? "green" : "slate"}>{protectionEnabled ? "Automatic" : "Optional"}</Badge>
-            </div>
-            <p className="mt-1.5 text-sm leading-6 text-slate-600">When a matched Amazon purchase proves an order earned less than both 5% net margin and $7 net profit, Sellfinity raises that active eBay listing for future orders. Listings locked after a profitable sale and Verified Winners keep their protected price unless you confirm a change; the lock releases after seven days without a profitable sale. Expensive items target $7 instead of exceeding the cap. Estimated costs never trigger a price change, and affected order rows show that their current listing price remains unchanged until Amazon provides a verified total.{sitewideDiscountBps > 0 ? ` Prices are grossed up for your ${(sitewideDiscountBps / 100).toFixed(2).replace(/\.00$/, "")}% sitewide eBay discount.` : ""}</p>
-            {protectionMessage && <p className="mt-2 text-sm font-medium text-indigo-700" role="status">{protectionMessage}</p>}
-          </div>
-          <Button variant={protectionEnabled ? "secondary" : "primary"} disabled={pending} onClick={toggleProfitProtection} className="shrink-0">
-            {pending ? "Updating…" : protectionEnabled ? "Turn off automatic" : "Protect future orders"}
-          </Button>
-        </div>
-      </Card>
-
-      <Card className="overflow-hidden border-emerald-200 bg-gradient-to-r from-emerald-50/80 via-white to-sky-50/60">
-        <div className="flex flex-col gap-4 p-5 lg:flex-row lg:items-center lg:justify-between">
-          <div className="max-w-3xl">
-            <div className="flex flex-wrap items-center gap-2">
-              <h2 className="font-semibold text-slate-950">Automatic stock refill</h2>
-              <Badge tone={restockEnabled ? "green" : "slate"}>{restockEnabled ? "On" : "Off"}</Badge>
-            </div>
-            <p className="mt-1.5 text-sm leading-6 text-slate-600">After fulfillment refreshes, Sellfinity checks the live eBay quantity of active listings that have sold. When stock is 0 or 1, it resets the listing to 5. Listings whose live quantity eBay does not confirm are left unchanged.</p>
-            {restockMessage && <p className="mt-2 text-sm font-medium text-emerald-700" role="status">{restockMessage}</p>}
-          </div>
-          <Button variant={restockEnabled ? "secondary" : "primary"} disabled={pending} onClick={toggleAutoRestock} className="shrink-0">
-            {pending ? "Updating…" : restockEnabled ? "Turn off auto-restock" : "Turn on auto-restock"}
-          </Button>
-        </div>
-      </Card>
-
-      <Card className="overflow-hidden">
-        <div className="overflow-x-auto border-b border-slate-200 bg-slate-50/70 px-3 pt-3">
-          <div className="flex min-w-max gap-1" role="tablist" aria-label="Fulfillment status">
-            {tabs.map((item) => (
-              <button key={item.value} type="button" role="tab" aria-selected={tab === item.value} onClick={() => setTab(item.value)} className={cx("rounded-t-lg border-b-2 px-3 py-2.5 text-sm font-medium transition-colors", tab === item.value ? "border-indigo-600 bg-white text-indigo-700" : "border-transparent text-slate-500 hover:text-slate-900")}>
-                {item.label} <span className={cx("ml-1 rounded-full px-1.5 py-0.5 text-[11px]", tab === item.value ? "bg-indigo-100 text-indigo-700" : "bg-slate-200 text-slate-600")}>{tabCounts[item.value]}</span>
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <div className="grid gap-2 border-b border-slate-200 p-3 sm:flex sm:flex-wrap sm:items-center sm:p-4">
-          <div className="min-w-[260px] flex-1"><Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search order, buyer, item, Amazon order, or tracking…" aria-label="Search fulfillment orders" /></div>
-          <select value={sort} onChange={(event) => setSort(event.target.value as typeof sort)} className="min-h-10 rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-700" aria-label="Sort orders">
-            <option value="NEWEST">Newest first</option><option value="SHIP_BY">Ship-by date</option><option value="PROFIT">Highest profit</option>
-          </select>
-          <Button data-sellfinity-refresh="true" variant="secondary" disabled={refreshWorking} onClick={refreshFulfillment}>{refreshWorking ? "Refresh in progress…" : "↻ Refresh Amazon & eBay"}</Button>
-          <a href="/downloads/sellfinity-tracking-helper.zip" download className="inline-flex min-h-10 items-center justify-center rounded-lg border border-slate-300 bg-white px-3 text-sm font-medium text-slate-700 hover:bg-slate-50">Download Chrome tracking helper</a>
-        </div>
-
-        {refreshRun ? (
-          <div className="border-b border-slate-200 bg-slate-50/70 p-4" role="status" aria-live="polite">
-            <PremiumProgress
-              title={refreshWorking ? "Refreshing fulfillment" : refreshComplete ? "Fulfillment refresh complete" : "Fulfillment refresh needs attention"}
-              subtitle={refreshSubtitle}
-              percentage={refreshPercentage}
-              status={refreshStatus}
-              stats={[
-                { label: "elapsed", value: elapsedLabel(refreshElapsed), tone: "info" },
-                { label: "tracking links checked", value: `${refreshRun.trackingProcessed}/${refreshRun.trackingTotal}` },
-                { label: "tracking IDs found", value: refreshRun.trackingFound, tone: refreshRun.trackingFound ? "success" : "default" },
-              ]}
-              className="border-0 shadow-none"
-            />
-            <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-              {[
-                { label: "eBay orders", active: refreshRun.server === "running" && refreshElapsed < 8, done: refreshRun.server !== "running" },
-                { label: "Amazon emails", active: refreshRun.server === "running" && refreshElapsed >= 8, done: refreshRun.server !== "running" },
-                { label: "Tracking pages", active: refreshRun.helper === "running" || (refreshRun.helper === "starting" && !helperStartingTimedOut), done: refreshRun.helper === "complete" },
-                { label: "Prices & stock", active: refreshRun.server === "running" && refreshElapsed >= 35, done: refreshRun.server === "complete" },
-              ].map((stage) => (
-                <div key={stage.label} className={cx("flex items-center gap-2 rounded-lg border px-3 py-2 text-xs font-medium transition-colors", stage.done ? "border-emerald-200 bg-emerald-50 text-emerald-700" : stage.active ? "border-indigo-200 bg-indigo-50 text-indigo-700" : "border-slate-200 bg-white text-slate-400")}>
-                  <span className={cx("flex h-5 w-5 items-center justify-center rounded-full", stage.done ? "bg-emerald-600 text-white" : stage.active ? "animate-pulse bg-indigo-600 text-white" : "bg-slate-200 text-slate-500")}>{stage.done ? "✓" : stage.active ? "•" : ""}</span>
-                  {stage.label}
-                </div>
-              ))}
-            </div>
-          </div>
-        ) : refreshMessage && <p className="border-b border-indigo-100 bg-indigo-50 px-4 py-3 text-sm text-indigo-800" role="status">{refreshMessage}</p>}
-
-        {fetchError && <p className="border-b border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">Live status is temporarily unavailable: {fetchError}</p>}
-
-        <div className="space-y-3 bg-slate-50/60 p-3 md:hidden">
-          {filtered.map((order) => {
-            const meta = stageMeta[order.stage];
-            const overdue = order.stage === "AWAITING" && order.shipByDate && new Date(order.shipByDate).getTime() < renderedAt;
-            const protectionFailed = order.profitProtectionStatus === "FAILED";
-            const protectionReview = order.profitProtectionStatus === "REVIEW_REQUIRED";
-            const protectionApplied = ["ADJUSTED", "RELISTED", "ALREADY_PROTECTED"].includes(order.profitProtectionStatus ?? "");
-            const awaitingVerifiedCost = order.profitCents !== null
-              && order.profitCents < 0
-              && !order.costVerified
-              && order.profitProtectionStatus === null;
-            const priceChangedSinceSale = awaitingVerifiedCost
-              && order.listingPriceCents !== null
-              && order.listingPriceCents !== order.soldUnitPriceCents;
-            const futurePriceCents = protectionApplied || protectionFailed || protectionReview
-              ? order.profitProtectionNewPriceCents
-              : order.suggestedProtectedPriceCents;
+        const message = "Could no…3614 tokens truncated…tedProtectedPriceCents;
             return (
               <article key={order.id} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
                 <div className="flex items-start gap-3">
@@ -631,6 +455,16 @@ export function OrdersView({ orders, fetchError, profitProtectionEnabled, autoRe
                     </div>
                   </details>
                 )}
+                {order.stage === "AWAITING" && !order.amazonOrderId && (
+                  <details className="mt-3 rounded-xl border border-slate-200 bg-slate-50/70 p-3">
+                    <summary className="cursor-pointer text-xs font-semibold text-slate-700">Already purchased on Amazon?</summary>
+                    <p className="mt-2 text-[11px] leading-4 text-slate-500">Link the confirmation only when automatic matching needs help.</p>
+                    <div className="mt-2 grid gap-2">
+                      <Input value={amazonOrderNumbers[order.id] ?? ""} onChange={(event) => setAmazonOrderNumbers((current) => ({ ...current, [order.id]: event.target.value }))} placeholder="123-1234567-1234567" aria-label={`Amazon order number for ${order.ebayOrderId}`} />
+                      <Button size="sm" variant="secondary" disabled={pending || linkingOrderId === order.id} onClick={() => linkKnownAmazonOrder(order)}>{linkingOrderId === order.id ? "Validating…" : "Link purchase"}</Button>
+                    </div>
+                  </details>
+                )}
               </article>
             );
           })}
@@ -658,7 +492,7 @@ export function OrdersView({ orders, fetchError, profitProtectionEnabled, autoRe
                     <td className="whitespace-nowrap px-5 py-4"><p className="font-semibold text-slate-900">#{order.ebayOrderId}</p><p className="mt-1 text-xs text-slate-500">{displayDate(order.saleDate)}</p>{order.shipByDate && <p className={cx("mt-1 text-xs", overdue ? "font-semibold text-red-600" : "text-slate-500")}>Ship by {displayDate(order.shipByDate)}</p>}</td>
                     <td className="max-w-[330px] px-4 py-4"><div className="flex gap-3">{order.imageUrl ? /* External marketplace image hosts are dynamic. */
                       <img src={order.imageUrl} alt="" className="h-12 w-12 shrink-0 rounded-lg border border-slate-200 bg-white object-contain" /> : <div className="h-12 w-12 shrink-0 rounded-lg bg-slate-100" />}<div className="min-w-0">{order.ebayUrl ? <a href={order.ebayUrl} target="_blank" rel="noreferrer" className="line-clamp-2 font-medium text-slate-900 hover:text-indigo-700">{order.title}</a> : <p className="line-clamp-2 font-medium text-slate-900">{order.title}</p>}<p className="mt-1 text-xs text-slate-500">{order.buyerUsername} · Qty {order.quantity}</p>{order.verifiedWinner && <div className="mt-1.5"><Badge tone="amber">🏆 Verified winner · price locked</Badge></div>}{!order.verifiedWinner && order.priceLocked && <div className="mt-1.5"><Badge tone="indigo">🔒 Price locked · profitable sale</Badge></div>}{order.variation && <p className="mt-0.5 truncate text-xs text-violet-700">{order.variation}</p>}</div></div></td>
-                    <td className="px-4 py-4"><Badge tone={meta.tone}>{meta.label}</Badge>{order.amazonOrderId && <p className="mt-2 text-xs text-slate-500">Amazon #{order.amazonOrderId}</p>}{order.matchConfidence !== null && <p className="mt-0.5 text-[11px] text-slate-400">{order.matchConfidence}% source match</p>}{order.amazonOrderId && duplicateAwaitingOrders(order).length > 0 && <details className="mt-2"><summary className="cursor-pointer text-[11px] font-semibold text-amber-700">Correct match</summary><div className="mt-1.5 grid gap-1">{duplicateAwaitingOrders(order).map((target) => <button key={target.id} type="button" disabled={pending || reassigningOrderId === order.id} onClick={() => moveAmazonMatch(order, target)} className="rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-left text-[11px] font-medium text-amber-900 hover:bg-amber-100 disabled:opacity-50">{reassigningOrderId === order.id ? "Moving…" : `Move to ${target.buyerUsername}`}</button>)}</div></details>}</td>
+                    <td className="px-4 py-4"><Badge tone={meta.tone}>{meta.label}</Badge>{order.amazonOrderId && <p className="mt-2 text-xs text-slate-500">Amazon #{order.amazonOrderId}</p>}{order.matchConfidence !== null && <p className="mt-0.5 text-[11px] text-slate-400">{order.matchConfidence}% source match</p>}{order.amazonOrderId && duplicateAwaitingOrders(order).length > 0 && <details className="mt-2"><summary className="cursor-pointer text-[11px] font-semibold text-amber-700">Correct match</summary><div className="mt-1.5 grid gap-1">{duplicateAwaitingOrders(order).map((target) => <button key={target.id} type="button" disabled={pending || reassigningOrderId === order.id} onClick={() => moveAmazonMatch(order, target)} className="rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-left text-[11px] font-medium text-amber-900 hover:bg-amber-100 disabled:opacity-50">{reassigningOrderId === order.id ? "Moving…" : `Move to ${target.buyerUsername}`}</button>)}</div></details>}{order.stage === "AWAITING" && !order.amazonOrderId && <details className="mt-2"><summary className="cursor-pointer text-[11px] font-semibold text-slate-600">Already purchased?</summary><div className="mt-1.5 grid gap-1.5"><input value={amazonOrderNumbers[order.id] ?? ""} onChange={(event) => setAmazonOrderNumbers((current) => ({ ...current, [order.id]: event.target.value }))} placeholder="Amazon order number" aria-label={`Amazon order number for ${order.ebayOrderId}`} className="w-44 rounded-md border border-slate-300 bg-white px-2 py-1.5 text-xs text-slate-900 placeholder-slate-400 focus:border-indigo-500 focus:outline-none" /><Button size="sm" variant="secondary" disabled={pending || linkingOrderId === order.id} onClick={() => linkKnownAmazonOrder(order)}>{linkingOrderId === order.id ? "Validating…" : "Link purchase"}</Button></div></details>}</td>
                     <td className="max-w-[240px] px-4 py-4">{order.trackingNumber ? <><a href={trackingUrl(order.carrier, order.trackingNumber)} target="_blank" rel="noreferrer" className="break-all font-medium text-indigo-700 hover:underline">{order.trackingNumber}</a><p className="mt-1 text-xs text-slate-500">{order.carrier ?? "Carrier pending"}{order.trackingSynced ? " · sent to eBay" : order.stage === "DELIVERED" ? " · saved" : " · waiting for eBay"}</p></> : <>{order.amazonTrackingUrl ? <><a href={order.amazonTrackingUrl} target="_blank" rel="noreferrer" className="font-medium text-indigo-700 hover:underline">Open Amazon tracking ↗</a><p className="mt-1 text-xs text-amber-700">Tracking number pending</p></> : <span className="text-slate-400">Not available yet</span>}{order.stage !== "CANCELLED" && order.stage !== "REFUNDED" && <div className="mt-2 space-y-1.5"><input data-order-id={order.id} value={manualTracking[order.id] ?? ""} onChange={(event) => setManualTracking((current) => ({ ...current, [order.id]: event.target.value }))} onKeyDown={(event) => { if (event.key === "Enter") submitTracking(order, event.currentTarget.value); }} placeholder="Enter tracking number" aria-label={`Tracking number for ${order.ebayOrderId}`} className="w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-xs text-slate-900 placeholder-slate-400 focus:border-indigo-500 focus:outline-none" /><Button size="sm" variant="secondary" disabled={pending || savingTrackingOrderId === order.id} onClick={() => submitTracking(order)} className="w-full">{savingTrackingOrderId === order.id ? "Saving…" : order.stage === "DELIVERED" ? "Save tracking" : "Save & mark shipped"}</Button></div>}</>}</td>
                     <td className="whitespace-nowrap px-4 py-4 text-right"><p className="font-semibold tabular-nums text-slate-900">{formatCents(order.revenueCents)}</p><p className="mt-1 text-[11px] text-slate-400">eBay sale</p></td>
                     <td className="whitespace-nowrap px-4 py-4 text-right"><p className="font-medium tabular-nums text-slate-700">{order.costCents === null ? "—" : formatCents(order.costCents + order.ebayFeeCents)}</p><p className="mt-1 text-[11px] text-slate-400">{order.costVerified ? "Verified" : "Estimated"} · incl. fees</p></td>
@@ -688,3 +522,4 @@ export function OrdersView({ orders, fetchError, profitProtectionEnabled, autoRe
     </div>
   );
 }
+
