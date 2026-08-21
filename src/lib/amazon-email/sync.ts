@@ -1,3 +1,6 @@
+Exit code: 0
+Wall time: 0.5 seconds
+Output:
 import "server-only";
 import { db } from "@/lib/db";
 import { decryptToken, encryptToken } from "./crypto";
@@ -11,10 +14,10 @@ import { AMAZON_EMAIL_SEARCH_QUERY } from "./search-query";
 
 type GmailPart = { mimeType?: string; body?: { data?: string }; parts?: GmailPart[] };
 type GmailMessage = { id: string; internalDate?: string; payload?: { headers?: { name: string; value: string }[] } & GmailPart };
-// Version 9 reparses recent Ordered confirmations so purchases saved before
-// current signed-product-link and recipient extraction can rebuild missing
-// item rows and reconcile to fulfillment automatically.
-const AMAZON_EMAIL_SYNC_VERSION = 9;
+// Version 10 also repairs the ASIN on an existing single-item purchase. Older
+// parser versions could create the item row before learning its signed Amazon
+// product link, leaving otherwise exact fulfillment matches ambiguous.
+const AMAZON_EMAIL_SYNC_VERSION = 10;
 
 function decode(data?: string): string {
   if (!data) return "";
@@ -250,6 +253,7 @@ export async function syncAmazonPurchaseEmails(
           ?? (prior.items.length === 1 && itemData.length === 1 ? prior.items[0] : null);
         if (!existing) continue;
         await db.amazonPurchaseItem.update({ where: { id: existing.id }, data: {
+          asin: existing.asin ?? item.asin,
           title: item.title || existing.title,
           quantity: item.quantity || existing.quantity,
           unitPriceCents: existing.unitPriceCents ?? item.unitPriceCents,
@@ -311,3 +315,4 @@ export function actualAmazonCost(item: { lineTotalCents: number | null; allocate
   if (item.lineTotalCents === null) return null;
   return item.lineTotalCents + item.allocatedShippingCents + item.allocatedTaxCents - item.allocatedDiscountCents;
 }
+
