@@ -79,6 +79,7 @@ export default async function OrdersPage() {
       verifiedAmazonCostCents: verifiedCostCents,
       sitewideDiscountBps: user.ebaySitewideDiscountBps,
       adRateBps: user.ebayAdRateBps,
+      targetProfitCents: user.targetProfitEnabled ? user.targetProfitCents : null,
     });
     return {
       id: order.id,
@@ -212,6 +213,8 @@ export default async function OrdersPage() {
           profitProtectionEnabled={user.autoProtectVerifiedProfit}
           autoRestockEnabled={user.autoRestockFulfilledListings}
           sitewideDiscountBps={user.ebaySitewideDiscountBps}
+          targetProfitEnabled={user.targetProfitEnabled}
+          targetProfitCents={user.targetProfitCents}
         />
       </div>
     </>
