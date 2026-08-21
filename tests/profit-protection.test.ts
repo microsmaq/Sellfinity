@@ -122,4 +122,30 @@ describe("verified profit protection", () => {
 
     expect(result.action).toBe("already_protected");
   });
+
+  it("uses the seller's configured per-item target instead of the legacy floor", () => {
+    const result = verifiedProfitProtectionDecision({
+      currentListingPriceCents: 1_500,
+      orderQuantity: 1,
+      realizedRevenueCents: 1_500,
+      realizedEbayFeeCents: 229,
+      verifiedAmazonCostCents: 1_300,
+      targetProfitCents: 1_200,
+    });
+    expect(result.action).toBe("reprice");
+    if (result.action !== "reprice") return;
+    expect(futureProfit(result.targetPriceCents, 1_300)).toBe(1_200);
+  });
+
+  it("evaluates the configured target for every unit sold", () => {
+    const result = verifiedProfitProtectionDecision({
+      currentListingPriceCents: 2_000,
+      orderQuantity: 2,
+      realizedRevenueCents: 4_000,
+      realizedEbayFeeCents: 650,
+      verifiedAmazonCostCents: 2_000,
+      targetProfitCents: 700,
+    });
+    expect(result.action).toBe("reprice");
+  });
 });
