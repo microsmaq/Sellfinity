@@ -9,7 +9,7 @@ import { PremiumProgress } from "@/components/premium-progress";
 import { formatCents } from "@/lib/money";
 import { protectOrderMargin, setAutoProfitProtection } from "@/lib/actions/profit-protection";
 import { syncAmazonEmailsNow } from "@/lib/actions/amazon-email";
-import { markOrderCancelled, reassignAmazonPurchase, setAutoRestockFulfilledListings, submitManualOrderTracking } from "@/lib/actions/orders";
+import { linkAmazonPurchase, markOrderCancelled, reassignAmazonPurchase, setAutoRestockFulfilledListings, submitManualOrderTracking } from "@/lib/actions/orders";
 import { fulfillmentNeedsAction, type FulfillmentStage } from "@/lib/orders/fulfillment-stage";
 
 export type FulfillmentOrderRow = {
@@ -127,6 +127,8 @@ export function OrdersView({ orders, fetchError, profitProtectionEnabled, autoRe
   const [savingTrackingOrderId, setSavingTrackingOrderId] = useState<string | null>(null);
   const [cancellingOrderId, setCancellingOrderId] = useState<string | null>(null);
   const [reassigningOrderId, setReassigningOrderId] = useState<string | null>(null);
+  const [amazonOrderNumbers, setAmazonOrderNumbers] = useState<Record<string, string>>({});
+  const [linkingOrderId, setLinkingOrderId] = useState<string | null>(null);
   const displayOrders = useMemo(() => orders.map((order) => ({ ...order, ...orderOverrides[order.id] })), [orderOverrides, orders]);
 
   function duplicateAwaitingOrders(order: FulfillmentOrderRow) {
@@ -149,6 +151,21 @@ export function OrdersView({ orders, fetchError, profitProtectionEnabled, autoRe
         return;
       }
       setRefreshMessage(`Amazon order moved to ${target.buyerUsername}.`);
+      router.refresh();
+    });
+  }
+
+  function linkKnownAmazonOrder(order: FulfillmentOrderRow) {
+    const amazonOrderId = amazonOrderNumbers[order.id]?.trim() ?? "";
+    setLinkingOrderId(order.id);
+    startTransition(async () => {
+      const result = await linkAmazonPurchase(order.id, amazonOrderId);
+      setLinkingOrderId(null);
+      if (result.error) {
+        setRefreshMessage(result.error);
+        return;
+      }
+      setRefreshMessage(`Amazon order ${result.amazonOrderId} linked to ${order.buyerUsername}.`);
       router.refresh();
     });
   }
@@ -631,6 +648,16 @@ export function OrdersView({ orders, fetchError, profitProtectionEnabled, autoRe
                     </div>
                   </details>
                 )}
+                {order.stage === "AWAITING" && !order.amazonOrderId && (
+                  <details className="mt-3 rounded-xl border border-slate-200 bg-slate-50/70 p-3">
+                    <summary className="cursor-pointer text-xs font-semibold text-slate-700">Already purchased on Amazon?</summary>
+                    <p className="mt-2 text-[11px] leading-4 text-slate-500">Link the confirmation only when automatic matching needs help.</p>
+                    <div className="mt-2 grid gap-2">
+                      <Input value={amazonOrderNumbers[order.id] ?? ""} onChange={(event) => setAmazonOrderNumbers((current) => ({ ...current, [order.id]: event.target.value }))} placeholder="123-1234567-1234567" aria-label={`Amazon order number for ${order.ebayOrderId}`} />
+                      <Button size="sm" variant="secondary" disabled={pending || linkingOrderId === order.id} onClick={() => linkKnownAmazonOrder(order)}>{linkingOrderId === order.id ? "Validating…" : "Link purchase"}</Button>
+                    </div>
+                  </details>
+                )}
               </article>
             );
           })}
@@ -658,7 +685,7 @@ export function OrdersView({ orders, fetchError, profitProtectionEnabled, autoRe
                     <td className="whitespace-nowrap px-5 py-4"><p className="font-semibold text-slate-900">#{order.ebayOrderId}</p><p className="mt-1 text-xs text-slate-500">{displayDate(order.saleDate)}</p>{order.shipByDate && <p className={cx("mt-1 text-xs", overdue ? "font-semibold text-red-600" : "text-slate-500")}>Ship by {displayDate(order.shipByDate)}</p>}</td>
                     <td className="max-w-[330px] px-4 py-4"><div className="flex gap-3">{order.imageUrl ? /* External marketplace image hosts are dynamic. */
                       <img src={order.imageUrl} alt="" className="h-12 w-12 shrink-0 rounded-lg border border-slate-200 bg-white object-contain" /> : <div className="h-12 w-12 shrink-0 rounded-lg bg-slate-100" />}<div className="min-w-0">{order.ebayUrl ? <a href={order.ebayUrl} target="_blank" rel="noreferrer" className="line-clamp-2 font-medium text-slate-900 hover:text-indigo-700">{order.title}</a> : <p className="line-clamp-2 font-medium text-slate-900">{order.title}</p>}<p className="mt-1 text-xs text-slate-500">{order.buyerUsername} · Qty {order.quantity}</p>{order.verifiedWinner && <div className="mt-1.5"><Badge tone="amber">🏆 Verified winner · price locked</Badge></div>}{!order.verifiedWinner && order.priceLocked && <div className="mt-1.5"><Badge tone="indigo">🔒 Price locked · profitable sale</Badge></div>}{order.variation && <p className="mt-0.5 truncate text-xs text-violet-700">{order.variation}</p>}</div></div></td>
-                    <td className="px-4 py-4"><Badge tone={meta.tone}>{meta.label}</Badge>{order.amazonOrderId && <p className="mt-2 text-xs text-slate-500">Amazon #{order.amazonOrderId}</p>}{order.matchConfidence !== null && <p className="mt-0.5 text-[11px] text-slate-400">{order.matchConfidence}% source match</p>}{order.amazonOrderId && duplicateAwaitingOrders(order).length > 0 && <details className="mt-2"><summary className="cursor-pointer text-[11px] font-semibold text-amber-700">Correct match</summary><div className="mt-1.5 grid gap-1">{duplicateAwaitingOrders(order).map((target) => <button key={target.id} type="button" disabled={pending || reassigningOrderId === order.id} onClick={() => moveAmazonMatch(order, target)} className="rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-left text-[11px] font-medium text-amber-900 hover:bg-amber-100 disabled:opacity-50">{reassigningOrderId === order.id ? "Moving…" : `Move to ${target.buyerUsername}`}</button>)}</div></details>}</td>
+                    <td className="px-4 py-4"><Badge tone={meta.tone}>{meta.label}</Badge>{order.amazonOrderId && <p className="mt-2 text-xs text-slate-500">Amazon #{order.amazonOrderId}</p>}{order.matchConfidence !== null && <p className="mt-0.5 text-[11px] text-slate-400">{order.matchConfidence}% source match</p>}{order.amazonOrderId && duplicateAwaitingOrders(order).length > 0 && <details className="mt-2"><summary className="cursor-pointer text-[11px] font-semibold text-amber-700">Correct match</summary><div className="mt-1.5 grid gap-1">{duplicateAwaitingOrders(order).map((target) => <button key={target.id} type="button" disabled={pending || reassigningOrderId === order.id} onClick={() => moveAmazonMatch(order, target)} className="rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-left text-[11px] font-medium text-amber-900 hover:bg-amber-100 disabled:opacity-50">{reassigningOrderId === order.id ? "Moving…" : `Move to ${target.buyerUsername}`}</button>)}</div></details>}{order.stage === "AWAITING" && !order.amazonOrderId && <details className="mt-2"><summary className="cursor-pointer text-[11px] font-semibold text-slate-600">Already purchased?</summary><div className="mt-1.5 grid gap-1.5"><input value={amazonOrderNumbers[order.id] ?? ""} onChange={(event) => setAmazonOrderNumbers((current) => ({ ...current, [order.id]: event.target.value }))} placeholder="Amazon order number" aria-label={`Amazon order number for ${order.ebayOrderId}`} className="w-44 rounded-md border border-slate-300 bg-white px-2 py-1.5 text-xs text-slate-900 placeholder-slate-400 focus:border-indigo-500 focus:outline-none" /><Button size="sm" variant="secondary" disabled={pending || linkingOrderId === order.id} onClick={() => linkKnownAmazonOrder(order)}>{linkingOrderId === order.id ? "Validating…" : "Link purchase"}</Button></div></details>}</td>
                     <td className="max-w-[240px] px-4 py-4">{order.trackingNumber ? <><a href={trackingUrl(order.carrier, order.trackingNumber)} target="_blank" rel="noreferrer" className="break-all font-medium text-indigo-700 hover:underline">{order.trackingNumber}</a><p className="mt-1 text-xs text-slate-500">{order.carrier ?? "Carrier pending"}{order.trackingSynced ? " · sent to eBay" : order.stage === "DELIVERED" ? " · saved" : " · waiting for eBay"}</p></> : <>{order.amazonTrackingUrl ? <><a href={order.amazonTrackingUrl} target="_blank" rel="noreferrer" className="font-medium text-indigo-700 hover:underline">Open Amazon tracking ↗</a><p className="mt-1 text-xs text-amber-700">Tracking number pending</p></> : <span className="text-slate-400">Not available yet</span>}{order.stage !== "CANCELLED" && order.stage !== "REFUNDED" && <div className="mt-2 space-y-1.5"><input data-order-id={order.id} value={manualTracking[order.id] ?? ""} onChange={(event) => setManualTracking((current) => ({ ...current, [order.id]: event.target.value }))} onKeyDown={(event) => { if (event.key === "Enter") submitTracking(order, event.currentTarget.value); }} placeholder="Enter tracking number" aria-label={`Tracking number for ${order.ebayOrderId}`} className="w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-xs text-slate-900 placeholder-slate-400 focus:border-indigo-500 focus:outline-none" /><Button size="sm" variant="secondary" disabled={pending || savingTrackingOrderId === order.id} onClick={() => submitTracking(order)} className="w-full">{savingTrackingOrderId === order.id ? "Saving…" : order.stage === "DELIVERED" ? "Save tracking" : "Save & mark shipped"}</Button></div>}</>}</td>
                     <td className="whitespace-nowrap px-4 py-4 text-right"><p className="font-semibold tabular-nums text-slate-900">{formatCents(order.revenueCents)}</p><p className="mt-1 text-[11px] text-slate-400">eBay sale</p></td>
                     <td className="whitespace-nowrap px-4 py-4 text-right"><p className="font-medium tabular-nums text-slate-700">{order.costCents === null ? "—" : formatCents(order.costCents + order.ebayFeeCents)}</p><p className="mt-1 text-[11px] text-slate-400">{order.costVerified ? "Verified" : "Estimated"} · incl. fees</p></td>
