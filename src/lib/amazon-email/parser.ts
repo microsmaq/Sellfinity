@@ -98,6 +98,7 @@ function asinFromHref(value: string): string | null {
 
 function recipientName(text: string): string | null {
   const patterns = [
+    /(?:arriving|expected(?: delivery)?)\s+[^\r\n]{1,80}\r?\n\s*([\p{L}][\p{L}\p{M}.'’ -]{1,79})\s+-\s*[^\r\n]{2,80}/iu,
     /(?:ship(?:ping)?|deliver(?:ing|ed)?)\s+to\s*:?\s*(?:\r?\n\s*)?([^\r\n|]{2,80})/i,
     /(?:recipient|addressee)\s*:\s*([^\r\n|]{2,80})/i,
   ];
@@ -138,7 +139,10 @@ export function parseAmazonEmail(input: { subject: string; html?: string; text?:
     const href = decodeEntities(match[1]).trim();
     const asin = asinFromHref(href);
     const title = (textFromHtml(match[2]).trim() || match[2].match(/\balt=["']([^"']+)["']/i)?.[1] || "").trim();
-    if (title.length < 8 || /amazon|view (?:your )?order|your orders|track (?:your )?package|order details|shop now|buy again/i.test(title)) continue;
+    if (
+      title.length < 8
+      || /^(?:amazon(?:\.com)?|view (?:your )?order|your orders|track (?:your )?package|order details|shop now|buy again)\s*$/i.test(title)
+    ) continue;
     // Amazon's newer mail templates wrap product names in signed /gp/r.html
     // links. Those links often contain no visible ASIN, but the item name is
     // still useful and is intentionally retained for eBay-title matching.
