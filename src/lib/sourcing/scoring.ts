@@ -8,6 +8,7 @@ import {
   type MarginEstimate,
 } from "@/lib/fees";
 import type { SourcingCandidate } from "./provider";
+import { targetNetProfitPriceCents } from "@/lib/listings/cleanup";
 
 export type ScoredCandidate = SourcingCandidate & {
   margin: MarginEstimate;
@@ -67,7 +68,16 @@ export function suggestPriceCents(c: {
   marketPriceCents: number;
   costCents: number;
   shippingCostCents: number;
-}, sitewideDiscountBps = 0, adRateBps = DEFAULT_EBAY_AD_RATE_BPS): number {
+}, sitewideDiscountBps = 0, adRateBps = DEFAULT_EBAY_AD_RATE_BPS, targetProfitCents: number | null = null): number {
+  if (targetProfitCents !== null) {
+    return targetNetProfitPriceCents(
+      c.costCents,
+      c.shippingCostCents,
+      targetProfitCents,
+      sitewideDiscountBps,
+      adRateBps,
+    );
+  }
   const undercut = c.marketPriceCents * 0.97;
   let charm = Math.round(undercut / 100) * 100 - 1;
   if (charm >= c.marketPriceCents) charm -= 100;

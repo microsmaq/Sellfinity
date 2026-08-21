@@ -22,10 +22,12 @@ function futureProfitCents(listPriceCents: number, unitCostCents: number, variab
   return salePriceCents - fee - unitCostCents;
 }
 
-function clearsFutureFloor(listPriceCents: number, unitCostCents: number, variableFeeBps: number, discountBps: number): boolean {
+function clearsFutureFloor(listPriceCents: number, unitCostCents: number, variableFeeBps: number, discountBps: number, targetProfitCents: number | null): boolean {
   const salePriceCents = discountedSalePriceCents(listPriceCents, discountBps);
   const profit = futureProfitCents(listPriceCents, unitCostCents, variableFeeBps, discountBps);
-  return profit >= VERIFIED_PROFIT_TARGET_CENTS || profit * 10_000 >= salePriceCents * VERIFIED_MARGIN_TARGET_BPS;
+  return targetProfitCents !== null
+    ? profit >= targetProfitCents
+    : profit >= VERIFIED_PROFIT_TARGET_CENTS || profit * 10_000 >= salePriceCents * VERIFIED_MARGIN_TARGET_BPS;
 }
 
 /**
@@ -42,6 +44,7 @@ export function verifiedProfitProtectionDecision(input: {
   verifiedAmazonCostCents: number;
   sitewideDiscountBps?: number;
   adRateBps?: number;
+  targetProfitCents?: number | null;
 }): VerifiedProfitDecision {
   const adRateBps = normalizeAdRateBps(input.adRateBps);
   const totalRealizedFeeCents = input.realizedEbayFeeCents
@@ -51,7 +54,16 @@ export function verifiedProfitProtectionDecision(input: {
     ? Math.floor((realizedProfitCents * 10_000) / input.realizedRevenueCents)
     : -10_000;
 
-  if (realizedProfitCents >= VERIFIED_PROFIT_TARGET_CENTS || realizedMarginBps >= VERIFIED_MARGIN_TARGET_BPS) {
+  const configuredTarget = input.targetProfitCents === null || input.targetProfitCents === undefined
+    ? null
+    : Math.max(0, Math.round(input.targetProfitCents));
+  const realizedTargetCents = configuredTarget === null
+    ? VERIFIED_PROFIT_TARGET_CENTS
+    : configuredTarget * Math.max(1, input.orderQuantity);
+  const realizedClearsTarget = configuredTarget === null
+    ? realizedProfitCents >= VERIFIED_PROFIT_TARGET_CENTS || realizedMarginBps >= VERIFIED_MARGIN_TARGET_BPS
+    : realizedProfitCents >= realizedTargetCents;
+  if (realizedClearsTarget) {
     return { action: "not_required", realizedProfitCents, realizedMarginBps };
   }
 
@@ -63,8 +75,8 @@ export function verifiedProfitProtectionDecision(input: {
   const variableFeeBps = Math.max(Math.round(EBAY_FINAL_VALUE_RATE * 10_000) + adRateBps, observedVariableFeeBps);
   const discountBps = Math.max(0, Math.min(9_000, Math.round(input.sitewideDiscountBps ?? 0)));
 
-  // Solve both targets, then take the cheaper one because the policy is 5%
-  // OR $7 net profit. Verify with integer fee rounding before returning.
+  // A configured target is authoritative. Otherwise retain the legacy 5%
+  // OR $7 policy. Verify with integer fee rounding before returning.
   const marginDenominator = 10_000 - variableFeeBps - VERIFIED_MARGIN_TARGET_BPS;
   const fivePercentPrice = marginDenominator > 0
     ? Math.ceil(((unitCostCents + EBAY_PER_ORDER_FEE_CENTS) * 10_000) / marginDenominator)
@@ -73,10 +85,18 @@ export function verifiedProfitProtectionDecision(input: {
     ((unitCostCents + EBAY_PER_ORDER_FEE_CENTS + VERIFIED_PROFIT_TARGET_CENTS) * 10_000) /
       (10_000 - variableFeeBps),
   );
-  const targetSalePriceCents = Math.min(fivePercentPrice, sevenDollarPrice);
+  const configuredProfitPrice = configuredTarget === null
+    ? Number.MAX_SAFE_INTEGER
+    : Math.ceil(
+        ((unitCostCents + EBAY_PER_ORDER_FEE_CENTS + configuredTarget) * 10_000) /
+          (10_000 - variableFeeBps),
+      );
+  const targetSalePriceCents = configuredTarget === null
+    ? Math.min(fivePercentPrice, sevenDollarPrice)
+    : configuredProfitPrice;
   let targetPriceCents = Math.ceil((targetSalePriceCents * 10_000) / (10_000 - discountBps));
-  while (!clearsFutureFloor(targetPriceCents, unitCostCents, variableFeeBps, discountBps)) targetPriceCents++;
-  while (targetPriceCents > 0 && clearsFutureFloor(targetPriceCents - 1, unitCostCents, variableFeeBps, discountBps)) targetPriceCents--;
+  while (!clearsFutureFloor(targetPriceCents, unitCostCents, variableFeeBps, discountBps, configuredTarget)) targetPriceCents++;
+  while (targetPriceCents > 0 && clearsFutureFloor(targetPriceCents - 1, unitCostCents, variableFeeBps, discountBps, configuredTarget)) targetPriceCents--;
 
   if (targetPriceCents <= input.currentListingPriceCents) {
     return { action: "already_protected", realizedProfitCents, realizedMarginBps, targetPriceCents };

@@ -30,6 +30,7 @@ export function arbitrageSuggestedPriceCents(
   shippingCostCents = 0,
   sitewideDiscountBps = 0,
   adRateBps = 300,
+  targetProfitCents: number | null = null,
 ): number {
   const anchor = arbitrageMarketAnchorCents(
     ebayPriceCents,
@@ -43,5 +44,6 @@ export function arbitrageSuggestedPriceCents(
     positive(averageCompetitorPriceCents) ?? positive(ebayPriceCents),
     sitewideDiscountBps,
     adRateBps,
+    targetProfitCents,
   );
 }

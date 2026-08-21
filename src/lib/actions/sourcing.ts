@@ -54,7 +54,7 @@ export async function importProducts(
         costCents: candidate.costCents,
         supplierStock: candidate.stock,
         shippingCostCents: candidate.shippingCostCents,
-        suggestedPriceCents: suggestPriceCents(candidate, user.ebaySitewideDiscountBps, user.ebayAdRateBps),
+        suggestedPriceCents: suggestPriceCents(candidate, user.ebaySitewideDiscountBps, user.ebayAdRateBps, user.targetProfitEnabled ? user.targetProfitCents : null),
         sourceScore: scored.score,
       },
     });

@@ -89,7 +89,7 @@ export async function getProductAnalyticsOverview(options: {
     db.product.findMany({
       where: options.userId ? { userId: options.userId } : undefined,
       include: {
-        user: { select: { ebayAdRateBps: true, ebaySitewideDiscountBps: true, ebayConnection: { select: { status: true } } } },
+        user: { select: { ebayAdRateBps: true, ebaySitewideDiscountBps: true, targetProfitEnabled: true, targetProfitCents: true, ebayConnection: { select: { status: true } } } },
         listings: { include: { orders: true } },
       },
       orderBy: { createdAt: "desc" },
@@ -234,6 +234,7 @@ export async function getProductAnalyticsOverview(options: {
       product.costCents, listing.priceCents, market.bestSellingPriceCents,
       market.averageCompetitorPriceCents, product.shippingCostCents,
       product.user.ebaySitewideDiscountBps, product.user.ebayAdRateBps,
+      product.user.targetProfitEnabled ? product.user.targetProfitCents : null,
     ));
   }
 

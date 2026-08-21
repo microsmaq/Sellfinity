@@ -38,6 +38,10 @@ model User {
   // Reprice active listings after a matched order proves the realized margin
   // missed the 5% / $7 net-profit floor.
   autoProtectVerifiedProfit    Boolean   @default(false)
+  // When enabled, seller-facing pricing uses this modeled net-profit target
+  // per unit after Amazon landed cost and eBay fees.
+  targetProfitEnabled          Boolean   @default(true)
+  targetProfitCents            Int       @default(700)
   // Give a listing a separate price lock after its first profitable sale.
   // The lock expires after seven days without another profitable sale.
   autoLockProfitableListings   Boolean   @default(true)

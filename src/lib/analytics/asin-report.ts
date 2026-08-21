@@ -134,6 +134,8 @@ export async function getAsinReport(
           ebayConnection: { select: { status: true, ebayUsername: true } },
           ebayAdRateBps: true,
           ebaySitewideDiscountBps: true,
+          targetProfitEnabled: true,
+          targetProfitCents: true,
         },
       },
       listings: {
@@ -270,6 +272,7 @@ export async function getAsinReport(
       listing.product.shippingCostCents,
       listing.seller.ebaySitewideDiscountBps,
       listing.seller.ebayAdRateBps,
+      listing.seller.targetProfitEnabled ? listing.seller.targetProfitCents : null,
     ) : listing.product.suggestedPriceCents || catalog?.suggestedPriceCents || null;
     const averageCompetitorPriceCents = market?.averageCompetitorPriceCents ?? catalog?.averageCompetitorPriceCents ?? null;
     return {
