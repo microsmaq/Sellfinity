@@ -18,6 +18,26 @@ describe("Amazon purchase email parser", () => {
     expect(parsed?.totalCents).toBe(6493);
   });
 
+  it("parses the signed-link Ordered template used by current Amazon emails", () => {
+    const parsed = parseAmazonEmail({
+      subject: 'Ordered: "Amazon Basics High-Density..."',
+      sentAt: new Date("2026-08-20T07:04:00Z"),
+      html: `Order # 114-9770902-8292235
+        <div>Arriving Saturday</div><div>jeanne - SANTA ROSA, CA</div>
+        <a href="https://www.amazon.com/gp/r.html?C=signed&amp;U=https%3A%2F%2Fwww.amazon.com%2Fdp%2FB00XM2MXK8%3Fref_%3Demail">
+          Amazon Basics High-Density Foam Roller for Exercise and Recovery, 18 Inches, Black
+        </a>
+        Quantity: 1 $12.99 Grand Total: $14.29`,
+    });
+    expect(parsed?.amazonOrderId).toBe("114-9770902-8292235");
+    expect(parsed?.recipientName).toBe("jeanne");
+    expect(parsed?.items[0]).toMatchObject({
+      asin: "B00XM2MXK8",
+      title: "Amazon Basics High-Density Foam Roller for Exercise and Recovery, 18 Inches, Black",
+    });
+    expect(parsed?.totalCents).toBe(1429);
+  });
+
   it("extracts an order, exact ASIN, quantities, and actual charges", () => {
     const parsed = parseAmazonEmail({
       subject: "Your Amazon.com order #111-2222222-3333333",
