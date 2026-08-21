@@ -11,10 +11,10 @@ import { AMAZON_EMAIL_SEARCH_QUERY } from "./search-query";
 
 type GmailPart = { mimeType?: string; body?: { data?: string }; parts?: GmailPart[] };
 type GmailMessage = { id: string; internalDate?: string; payload?: { headers?: { name: string; value: string }[] } & GmailPart };
-// Version 10 also repairs the ASIN on an existing single-item purchase. Older
-// parser versions could create the item row before learning its signed Amazon
-// product link, leaving otherwise exact fulfillment matches ambiguous.
-const AMAZON_EMAIL_SYNC_VERSION = 10;
+// Version 11 also rebuilds a parsed item when legacy parser output left
+// multiple unusable rows, and lets current signed-link evidence replace a
+// stale identifier.
+const AMAZON_EMAIL_SYNC_VERSION = 11;
 
 function decode(data?: string): string {
   if (!data) return "";
@@ -248,9 +248,12 @@ export async function syncAmazonPurchaseEmails(
       for (const item of itemData) {
         const existing = prior.items.find((candidate) => item.asin && candidate.asin === item.asin)
           ?? (prior.items.length === 1 && itemData.length === 1 ? prior.items[0] : null);
-        if (!existing) continue;
+        if (!existing) {
+          await db.amazonPurchaseItem.create({ data: { purchaseId: prior.id, ...item } });
+          continue;
+        }
         await db.amazonPurchaseItem.update({ where: { id: existing.id }, data: {
-          asin: existing.asin ?? item.asin,
+          asin: item.asin ?? existing.asin,
           title: item.title || existing.title,
           quantity: item.quantity || existing.quantity,
           unitPriceCents: existing.unitPriceCents ?? item.unitPriceCents,
