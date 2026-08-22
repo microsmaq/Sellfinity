@@ -11,7 +11,8 @@ import {
   type BulkResult,
 } from "@/lib/actions/listings";
 import { assessPriceCompetitiveness } from "@/lib/arbitrage/price-competitiveness";
-import { estimateMargin } from "@/lib/fees";
+import { discountedEbayPriceCents } from "@/lib/fees";
+import { trueProfitWithBuyerShippingCents } from "@/lib/listings/shipping-strategy";
 import { formatCents, parseDollarsToCents } from "@/lib/money";
 import { Badge, Button, Card, cx } from "@/components/ui";
 import { PremiumProgress } from "@/components/premium-progress";
@@ -34,6 +35,8 @@ export type ListingRow = {
   sku: string;
   imageUrl: string | null;
   priceCents: number;
+  shippingStrategy: string;
+  buyerShippingCents: number;
   quantity: number;
   costCents: number;
   shippingCostCents: number;
@@ -41,6 +44,7 @@ export type ListingRow = {
   supplierUrl: string;
   category: string;
   suggestedPriceCents: number;
+  suggestedBuyerShippingCents: number;
   status: "DRAFT" | "ACTIVE" | "ENDED";
   ebayListingId: string | null;
   ebayUrl: string | null;
@@ -210,13 +214,9 @@ function ListingMarketRow({
   onUpdateDone: (result: BulkResult) => void;
 }) {
   const landedCostCents = row.costCents + row.shippingCostCents;
-  const margin = estimateMargin(
-    row.priceCents,
-    row.costCents,
-    row.shippingCostCents,
-    sitewideDiscountBps,
-    adRateBps,
-  );
+  const estimatedProfitCents = trueProfitWithBuyerShippingCents(row.priceCents, row.buyerShippingCents, row.costCents, row.shippingCostCents, sitewideDiscountBps, adRateBps);
+  const buyerTotalCents = discountedEbayPriceCents(row.priceCents, sitewideDiscountBps) + row.buyerShippingCents;
+  const margin = { estimatedProfitCents, marginPct: buyerTotalCents > 0 ? estimatedProfitCents / buyerTotalCents * 100 : 0 };
   const competitiveness = assessPriceCompetitiveness(
     row.priceCents,
     row.priceCents,
@@ -268,6 +268,7 @@ function ListingMarketRow({
               {row.verifiedWinner && <Badge tone="amber">🏆 Verified winner · price locked</Badge>}
               {!row.verifiedWinner && row.priceLocked && <Badge tone="indigo">🔒 Price locked · profitable sale</Badge>}
               <Badge tone={statusTone[row.status]}>{row.status}</Badge>
+              <Badge tone={row.buyerShippingCents > 0 ? "indigo" : "slate"}>{row.buyerShippingCents > 0 ? `${formatCents(row.buyerShippingCents)} shipping` : "Free shipping"}</Badge>
               <Badge tone={confidenceTone(row.sourceMatchConfidence)}>
                 {row.sourceMatchVerdict}
                 {row.sourceMatchConfidence !== null ? ` ${row.sourceMatchConfidence}%` : ""}
@@ -309,6 +310,10 @@ function ListingMarketRow({
           onDone={onUpdateDone}
         />
       </td>
+      <td className="whitespace-nowrap px-4 py-4 text-left">
+        <Badge tone={row.buyerShippingCents > 0 ? "indigo" : "slate"}>{row.buyerShippingCents > 0 ? "Buyer paid" : "Free shipping"}</Badge>
+        {row.buyerShippingCents > 0 && <p className="mt-1 text-xs font-medium text-slate-600">{formatCents(row.buyerShippingCents)}</p>}
+      </td>
       <td className="whitespace-nowrap px-4 py-4 text-right">
         {row.averageCompetitorPriceCents === null ? "-" : formatCents(row.averageCompetitorPriceCents)}
         <p className="mt-0.5 text-[10px] text-slate-400">{marketFreshness(row.marketUpdatedAt)}</p>
@@ -318,6 +323,7 @@ function ListingMarketRow({
       </td>
       <td className="whitespace-nowrap px-4 py-4 text-right font-semibold text-indigo-700">
         {formatCents(row.suggestedPriceCents)}
+        <p className="mt-0.5 text-[10px] font-normal text-slate-500">{row.suggestedBuyerShippingCents > 0 ? `+ ${formatCents(row.suggestedBuyerShippingCents)} shipping` : "Free shipping"}</p>
       </td>
       <td className="min-w-[260px] px-4 py-4">
         <Badge tone={competitiveness.tone}>{competitiveness.label}</Badge>
@@ -689,7 +695,7 @@ export function ListingsView({
               expandedTable ? "min-h-0 flex-1" : "max-h-[72vh]",
             )}
           >
-          <table className="w-full min-w-[2850px] text-sm">
+          <table className="w-full min-w-[3000px] text-sm">
             <thead className="text-xs font-semibold uppercase tracking-wide text-slate-500">
               <tr>
                 <th className="sticky left-0 top-0 z-50 w-12 bg-slate-50 px-3 py-3">
@@ -702,6 +708,7 @@ export function ListingsView({
                 <th className="sticky top-0 z-30 bg-slate-50 px-4 py-3 text-right">Amazon landed</th>
                 <th className="sticky top-0 z-30 bg-slate-50 px-4 py-3 text-left">Source match</th>
                 <th className="sticky top-0 z-30 bg-slate-50 px-4 py-3 text-right">Listing price / qty</th>
+                <th className="sticky top-0 z-30 bg-slate-50 px-4 py-3 text-left">Shipping strategy</th>
                 <th className="sticky top-0 z-30 bg-slate-50 px-4 py-3 text-right">Competitor avg</th>
                 <th className="sticky top-0 z-30 bg-slate-50 px-4 py-3 text-right">eBay recommended</th>
                 <th className="sticky top-0 z-30 bg-slate-50 px-4 py-3 text-right">AI suggested</th>
@@ -741,7 +748,7 @@ export function ListingsView({
               ))}
               {filteredByStatus[tab].length === 0 && (
                 <tr>
-                  <td colSpan={18} className="px-4 py-12 text-center text-slate-500">
+                  <td colSpan={19} className="px-4 py-12 text-center text-slate-500">
                     {normalizedSearch ? "No listings match your search." : `No ${tab.toLowerCase()} listings.`}
                   </td>
                 </tr>
@@ -784,3 +791,4 @@ export function ListingsView({
     </div>
   );
 }
+
