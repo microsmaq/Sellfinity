@@ -253,4 +253,3 @@ export class MockEbayClient implements EbayClient {
     // The demo sandbox accepts the fulfillment without contacting eBay.
   }
 }
-
