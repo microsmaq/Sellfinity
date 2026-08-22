@@ -5,6 +5,7 @@ import { db } from "@/lib/db";
 import { protectVerifiedOrderMargins } from "@/lib/orders/profit-protection";
 import { getProtectedPriceListings } from "@/lib/listings/winner";
 import { revalidatePath } from "next/cache";
+import { normalizePricingStrategy, type PricingStrategy } from "@/lib/listings/shipping-strategy";
 
 export async function setAutoProfitProtection(enabled: boolean) {
   const user = await requireUser();
@@ -57,6 +58,15 @@ export async function setDefaultTargetProfit(enabled: boolean, dollars: number) 
   revalidatePath("/orders");
   revalidatePath("/analytics");
   return { enabled, targetProfitCents };
+}
+
+export async function setPricingStrategy(strategy: PricingStrategy) {
+  const user = await requireUser();
+  const normalized = normalizePricingStrategy(strategy);
+  await db.user.update({ where: { id: user.id }, data: { pricingStrategy: normalized } });
+  revalidatePath("/settings");
+  revalidatePath("/listings");
+  return { strategy: normalized };
 }
 
 export async function setAutoLockProfitableListings(enabled: boolean) {
@@ -116,3 +126,4 @@ export async function protectOrderMargin(orderId: string, confirmVerifiedWinner 
   });
   return { summary, order };
 }
+
