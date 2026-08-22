@@ -5,7 +5,6 @@ import { useMemo, useState, useTransition } from "react";
 import {
   cleanupEbayListings,
   applyTargetProfitPrice,
-  cleanupListingSourcesBatch,
   enhanceEbayListing,
   endEbayListing,
   exportEbayListings,
@@ -14,9 +13,10 @@ import {
   repriceEbayListing,
   recordSuggestedPriceActivity,
   unmatchEbayListing,
-  startListingHealthSync,
+  prepareConfigurableSmartSync,
+  processConfigurableSmartSyncItem,
 } from "@/lib/actions/ebay-listings";
-import type { CleanupItemResult } from "@/lib/actions/ebay-listings";
+import type { CleanupItemResult, SmartSyncItemResult } from "@/lib/actions/ebay-listings";
 import {
   trueProfitCents,
 } from "@/lib/listings/cleanup";
@@ -30,6 +30,12 @@ import { listingNeedsAttention } from "@/lib/listings/attention";
 import { assessListingHealth } from "@/lib/listings/health";
 import { discountedEbayPriceCents } from "@/lib/fees";
 import { isSuggestedPriceCandidate } from "@/lib/listings/suggested-price-candidate";
+import {
+  DEFAULT_SMART_SYNC_OPTIONS,
+  hasSelectedSmartSyncOption,
+  selectedSmartSyncOptionCount,
+  type SmartSyncOptions,
+} from "@/lib/listings/smart-sync-options";
 
 export type EbayRow = {
   ebayListingId: string;
@@ -214,19 +220,50 @@ function formatFreshness(value: string | null | undefined): string {
 }
 
 type ListingSyncProgress = {
-  stage: "preparing" | "sources" | "complete";
+  stage: "preparing" | "running" | "complete";
   completed: number;
   total: number;
-  activeQueued: number;
-  recoveryQueued: number;
-  freshSkipped: number;
-  kept: number;
-  replaced: number;
+  successful: number;
+  errors: number;
+  needsAttention: number;
+  updated: number;
   ended: number;
   relisted: number;
-  stillUnavailable: number;
-  review: number;
 };
+
+type SmartSyncResultFilter = "all" | "success" | "needs_attention" | "errors";
+
+const SMART_SYNC_OPTION_META: Array<{
+  key: keyof SmartSyncOptions;
+  label: string;
+  description: string;
+}> = [
+  {
+    key: "refreshAmazonData",
+    label: "Refresh Amazon cost & availability",
+    description: "Sync the latest administrator-stored price, shipping, stock, and product details.",
+  },
+  {
+    key: "applySuggestedPrices",
+    label: "Apply profitable suggested prices",
+    description: "Update only unlocked listings whose item price or buyer shipping should change.",
+  },
+  {
+    key: "updateListingImages",
+    label: "Update eBay product images",
+    description: "Use admin-maintained Amazon images and automatically meet eBay image-size requirements.",
+  },
+  {
+    key: "endUnavailableListings",
+    label: "End unavailable-source listings",
+    description: "Prevent new orders when the administrator catalog marks the Amazon source unavailable.",
+  },
+  {
+    key: "relistRecoveredProducts",
+    label: "Relist recovered products",
+    description: "Relist Sellfinity-ended products after their Amazon source becomes available again.",
+  },
+];
 
 type ListingOperationProgress = {
   kind: "enhance" | "match" | "pricing" | "targetProfit";
@@ -255,42 +292,74 @@ function SmartSyncIcon({ spinning = false }: { spinning?: boolean }) {
   );
 }
 
-function SmartSyncStatus({ progress }: { progress: ListingSyncProgress }) {
-  const sourceRatio = progress.total > 0 ? progress.completed / progress.total : 1;
-  const percentage =
-    progress.stage === "preparing"
-      ? 3
-      : progress.stage === "sources"
-        ? Math.max(5, Math.round(sourceRatio * 75))
-        : 100;
-  const title =
-    progress.stage === "preparing"
-      ? "Preparing your inventory health scan"
-      : progress.stage === "sources"
-        ? `Verifying Amazon variants · ${progress.completed}/${progress.total}`
-        : "Smart inventory sync complete";
-  const subtitle =
-    progress.stage === "sources" && progress.recoveryQueued > 0
-      ? `${progress.recoveryQueued} ended listing${progress.recoveryQueued === 1 ? " is" : "s are"} also being checked for recovery.`
-      : progress.stage === "complete"
-        ? "Your refreshed listings and recovered products are ready."
-        : "This page can remain open while Sellfinity works through each item.";
-
+function SmartSyncStatus({
+  progress,
+  results,
+  showResults,
+  resultFilter,
+  onToggleResults,
+  onResultFilterChange,
+}: {
+  progress: ListingSyncProgress;
+  results: SmartSyncItemResult[];
+  showResults: boolean;
+  resultFilter: SmartSyncResultFilter;
+  onToggleResults: () => void;
+  onResultFilterChange: (filter: SmartSyncResultFilter) => void;
+}) {
+  const percentage = progress.stage === "preparing"
+    ? 3
+    : progress.total > 0 ? Math.round(progress.completed / progress.total * 100) : 100;
+  const filteredResults = results.filter((result) =>
+    resultFilter === "all"
+      ? true
+      : resultFilter === "errors"
+        ? result.status === "error"
+        : result.status === resultFilter,
+  );
   return (
-    <PremiumProgress
-      title={title}
-      subtitle={subtitle}
-      percentage={percentage}
-      status={progress.stage === "complete" ? "complete" : "running"}
-      stats={[
-        { label: "verified", value: progress.kept },
-        ...(progress.freshSkipped > 0 ? [{ label: "recent checks reused", value: progress.freshSkipped, tone: "info" as const }] : []),
-        { label: "sources replaced", value: progress.replaced },
-        { label: "recovered & relisted", value: progress.relisted, tone: "success" },
-        { label: "delisted", value: progress.ended, tone: "warning" },
-        ...(progress.review > 0 ? [{ label: "need review", value: progress.review, tone: "danger" as const }] : []),
-      ]}
-    />
+    <div className="space-y-3">
+      <PremiumProgress
+        title={progress.stage === "complete" ? "Smart Sync complete" : progress.stage === "preparing" ? "Preparing Smart Sync" : "Smart Sync is updating your listings"}
+        subtitle={progress.stage === "complete" ? "Selected operations are complete. Item-level activity remains available below." : "Using administrator-maintained Amazon data. Keep this page open while the selected operations run."}
+        percentage={percentage}
+        status={progress.stage === "complete" ? "complete" : "running"}
+        action={results.length > 0 ? <Button size="sm" variant="secondary" onClick={onToggleResults}>{showResults ? "Hide activity" : `Show activity (${results.length})`}</Button> : undefined}
+        stats={[
+          { label: "processed", value: `${progress.completed}/${progress.total}` },
+          { label: "successful", value: progress.successful, tone: "success" },
+          ...(progress.errors > 0 ? [{ label: "errors", value: progress.errors, tone: "danger" as const }] : []),
+          ...(progress.needsAttention > 0 ? [{ label: "need attention", value: progress.needsAttention, tone: "warning" as const }] : []),
+        ]}
+      />
+      {showResults && (
+        <Card className="overflow-hidden border-indigo-100 animate-fade-in">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-4 py-3">
+            <div><p className="text-sm font-semibold text-slate-900">Smart Sync activity</p><p className="text-xs text-slate-500">Results and exact errors for every processed listing.</p></div>
+            <div className="flex max-w-full overflow-x-auto rounded-xl bg-slate-100 p-1 text-xs font-semibold">
+              {(["all", "success", "needs_attention", "errors"] as const).map((filter) => (
+                <button key={filter} type="button" onClick={() => onResultFilterChange(filter)} className={cx("shrink-0 rounded-lg px-3 py-1.5 transition", resultFilter === filter ? "bg-white text-indigo-700 shadow-sm" : "text-slate-500 hover:text-slate-800")}>{filter === "needs_attention" ? "Needs attention" : filter[0].toUpperCase() + filter.slice(1)}</button>
+              ))}
+            </div>
+          </div>
+          <div className="max-h-96 divide-y divide-slate-100 overflow-y-auto">
+            {filteredResults.map((result) => (
+              <div key={result.listingId} className="flex items-start gap-3 px-4 py-3">
+                <span className={cx("mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-full text-xs font-bold", result.status === "success" ? "bg-emerald-50 text-emerald-700" : result.status === "error" ? "bg-red-50 text-red-700" : "bg-amber-50 text-amber-700")}>{result.status === "success" ? "✓" : "!"}</span>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-semibold text-slate-800" title={result.title}>{result.title}</p>
+                  {result.actions.length > 0 && <p className="mt-0.5 text-xs leading-5 text-slate-600">{result.actions.join(" · ")}</p>}
+                  {result.originalPriceCents !== result.newPriceCents && <p className="mt-0.5 text-xs font-medium tabular-nums text-slate-600">{formatCents(result.originalPriceCents)} <span className="px-1 text-slate-400">→</span> {formatCents(result.newPriceCents)}</p>}
+                  {result.error && <p className={cx("mt-1 whitespace-normal break-words text-xs leading-5", result.status === "error" ? "text-red-700" : "text-amber-700")}>{result.error}</p>}
+                </div>
+                <span className={cx("shrink-0 text-[11px] font-semibold capitalize", result.status === "success" ? "text-emerald-700" : result.status === "error" ? "text-red-700" : "text-amber-700")}>{result.outcome.replace("_", " ")}</span>
+              </div>
+            ))}
+            {filteredResults.length === 0 && <p className="px-4 py-8 text-center text-sm text-slate-500">No matching activity yet.</p>}
+          </div>
+        </Card>
+      )}
+    </div>
   );
 }
 
@@ -547,6 +616,11 @@ export function EbayListingsTable({
   const [showPricingResults, setShowPricingResults] = useState(false);
   const [pricingResultFilter, setPricingResultFilter] = useState<PricingResultFilter>("all");
   const [syncProgress, setSyncProgress] = useState<ListingSyncProgress | null>(null);
+  const [smartSyncOpen, setSmartSyncOpen] = useState(false);
+  const [smartSyncOptions, setSmartSyncOptions] = useState<SmartSyncOptions>({ ...DEFAULT_SMART_SYNC_OPTIONS });
+  const [syncResults, setSyncResults] = useState<SmartSyncItemResult[]>([]);
+  const [showSyncResults, setShowSyncResults] = useState(false);
+  const [syncResultFilter, setSyncResultFilter] = useState<SmartSyncResultFilter>("all");
   const [sortKey, setSortKey] = useState<ListingSortKey>("margin");
   const [sortDescending, setSortDescending] = useState(true);
   const [pageSize, setPageSize] = useState(25);
@@ -795,86 +869,117 @@ export function EbayListingsTable({
   }
 
   function syncListingHealth() {
-    if (
-      !confirm(
-        "Smart Sync will check Amazon sources and listing availability. Ended listings may be relisted when a profitable source is available. Continue?",
-      )
-    ) {
+    if (!hasSelectedSmartSyncOption(smartSyncOptions)) {
+      setNotice({ text: "Select at least one Smart Sync operation before starting.", error: true });
       return;
     }
     setNotice(null);
     setBulkProgress(null);
+    setSyncResults([]);
+    setShowSyncResults(false);
+    setSyncResultFilter("all");
     setSyncProgress({
       stage: "preparing",
       completed: 0,
       total: 0,
-      activeQueued: 0,
-      recoveryQueued: 0,
-      freshSkipped: 0,
-      kept: 0,
-      replaced: 0,
+      successful: 0,
+      errors: 0,
+      needsAttention: 0,
+      updated: 0,
       ended: 0,
       relisted: 0,
-      stillUnavailable: 0,
-      review: 0,
     });
     startTransition(async () => {
-      const totals = { processed: 0, kept: 0, replaced: 0, ended: 0, relisted: 0, stillUnavailable: 0, review: 0 };
-      const started = await startListingHealthSync();
-      setSyncProgress({
-        stage: "sources",
-        completed: 0,
-        total: started.queued,
-        activeQueued: started.activeQueued,
-        recoveryQueued: started.recoveryQueued,
-        freshSkipped: started.freshSkipped,
-        kept: 0,
-        replaced: 0,
-        ended: 0,
-        relisted: 0,
-        stillUnavailable: 0,
-        review: 0,
-      });
-      async function worker() {
-        while (true) {
-          const result = await cleanupListingSourcesBatch();
-          if (result.processed === 0) break;
-          totals.processed += result.processed;
-          totals.kept += result.kept;
-          totals.replaced += result.replaced;
-          totals.ended += result.ended;
-          totals.relisted += result.relisted;
-          totals.stillUnavailable += result.stillUnavailable;
-          totals.review += result.review;
-          if (result.endedIds.length > 0) {
-            const ended = new Set(result.endedIds);
-            setRows((current) => current.filter((row) => !ended.has(row.ebayListingId)));
-          }
-          setSyncProgress({
-            stage: "sources",
-            completed: totals.processed,
-            total: started.queued,
-            activeQueued: started.activeQueued,
-            recoveryQueued: started.recoveryQueued,
-            freshSkipped: started.freshSkipped,
-            kept: totals.kept,
-            replaced: totals.replaced,
-            ended: totals.ended,
-            relisted: totals.relisted,
-            stillUnavailable: totals.stillUnavailable,
-            review: totals.review,
-          });
-        }
-      }
-      await Promise.all(Array.from({ length: 4 }, () => worker()));
+      try {
+        const started = await prepareConfigurableSmartSync(smartSyncOptions);
+        if (started.error) throw new Error(started.error);
+        const candidates = started.candidates;
+        const totals = {
+          completed: 0,
+          successful: 0,
+          errors: 0,
+          needsAttention: 0,
+          updated: 0,
+          ended: 0,
+          relisted: 0,
+        };
+        const allResults: SmartSyncItemResult[] = [];
+        setSyncProgress({ stage: "running", total: candidates.length, ...totals });
 
-      setNotice({
-        text: `Smart Sync complete: ${totals.kept} verified, ${totals.replaced} sources updated, ${totals.relisted} relisted, and ${totals.ended} ended${totals.review ? `. ${totals.review} need review` : ""}. Market intelligence continues to come from the administrator catalog.`,
-        error: totals.review > 0,
-      });
-      setSyncProgress((current) => current && ({ ...current, stage: "complete", completed: current.total }));
-      await new Promise((resolve) => setTimeout(resolve, 900));
-      window.location.reload();
+        let cursor = 0;
+        async function worker() {
+          while (true) {
+            const index = cursor;
+            cursor += 1;
+            const candidate = candidates[index];
+            if (!candidate) break;
+
+            let result: SmartSyncItemResult;
+            try {
+              result = await processConfigurableSmartSyncItem(candidate.listingId, smartSyncOptions);
+            } catch (error) {
+              result = {
+                listingId: candidate.listingId,
+                ebayListingId: null,
+                title: candidate.title,
+                status: "error",
+                outcome: "unchanged",
+                actions: [],
+                originalPriceCents: 0,
+                newPriceCents: 0,
+                error: error instanceof Error ? error.message : "Smart Sync could not process this listing.",
+              };
+            }
+
+            allResults.push(result);
+            totals.completed += 1;
+            if (result.status === "success") totals.successful += 1;
+            else if (result.status === "error") totals.errors += 1;
+            else totals.needsAttention += 1;
+            if (result.outcome === "updated") totals.updated += 1;
+            else if (result.outcome === "ended") totals.ended += 1;
+            else if (result.outcome === "relisted") totals.relisted += 1;
+
+            setSyncResults([...allResults]);
+            setSyncProgress({ stage: "running", total: candidates.length, ...totals });
+
+            if (result.ebayListingId && result.outcome === "ended") {
+              setRows((current) => current.filter((row) => row.ebayListingId !== result.ebayListingId));
+            } else if (result.ebayListingId && result.originalPriceCents !== result.newPriceCents) {
+              setRows((current) => current.map((row) => row.ebayListingId === result.ebayListingId
+                ? { ...row, priceCents: result.newPriceCents }
+                : row));
+            }
+          }
+        }
+        await Promise.all(Array.from({ length: 3 }, () => worker()));
+
+        const changedPrices: CleanupItemResult[] = allResults
+          .filter((result) => Boolean(result.ebayListingId) && result.status !== "error" && result.originalPriceCents !== result.newPriceCents)
+          .map((result) => ({
+            ebayListingId: result.ebayListingId!,
+            listingId: result.listingId,
+            title: result.title,
+            action: "repriced",
+            originalPriceCents: result.originalPriceCents,
+            newPriceCents: result.newPriceCents,
+            suggestedPriceCents: result.newPriceCents,
+          }));
+        if (changedPrices.length > 0) await recordSuggestedPriceActivity(changedPrices);
+
+        setSyncProgress({ stage: "complete", total: candidates.length, ...totals });
+        setNotice({
+          text: candidates.length === 0
+            ? "Smart Sync found no eligible listings for the selected operations."
+            : `Smart Sync complete: ${totals.successful} successful, ${totals.needsAttention} need attention, and ${totals.errors} errors. ${totals.updated} updated, ${totals.ended} ended, and ${totals.relisted} relisted.`,
+          error: totals.errors > 0,
+        });
+        setSmartSyncOpen(false);
+        router.refresh();
+      } catch (error) {
+        setSyncProgress((current) => current && ({ ...current, stage: "complete" }));
+        setNotice({ text: error instanceof Error ? error.message : "Smart Sync could not start.", error: true });
+      }
     });
   }
 
@@ -1212,9 +1317,9 @@ export function EbayListingsTable({
             <select value={pageSize} onChange={(event) => { setPageSize(Number(event.target.value)); setPage(1); }} className="h-11 rounded-xl border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700 outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100" aria-label="Items per page">
               <option value={25}>25 per page</option><option value={50}>50 per page</option><option value={100}>100 per page</option>
             </select>
-            <Button size="sm" disabled={pending} onClick={syncListingHealth} className="col-span-2 h-11 border-0 bg-gradient-to-r from-indigo-600 to-violet-600 px-4 text-white shadow-md shadow-indigo-200/70 hover:from-indigo-500 hover:to-violet-500 sm:col-auto">
+            <Button size="sm" disabled={pending} onClick={() => setSmartSyncOpen((current) => !current)} className="col-span-2 h-11 border-0 bg-gradient-to-r from-indigo-600 to-violet-600 px-4 text-white shadow-md shadow-indigo-200/70 hover:from-indigo-500 hover:to-violet-500 sm:col-auto">
               <SmartSyncIcon spinning={syncProgress !== null && syncProgress.stage !== "complete"} />
-              {syncProgress && syncProgress.stage !== "complete" ? "Syncing…" : "Smart Sync"}
+              {syncProgress && syncProgress.stage !== "complete" ? "Syncing…" : smartSyncOpen ? "Close Smart Sync" : "Smart Sync"}
             </Button>
             <details className="relative col-span-2 sm:col-auto">
               <summary className="flex h-11 cursor-pointer list-none items-center justify-center rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50">More actions ···</summary>
@@ -1247,6 +1352,54 @@ export function EbayListingsTable({
         </div>
         {protectedWinnerCandidateCount > 0 && <p className="mt-2 text-[11px] text-amber-700">🔒 {protectedWinnerCandidateCount} profitable price{protectedWinnerCandidateCount === 1 ? " is" : "s are"} protected and excluded from automatic price changes.</p>}
       </Card>
+
+      {smartSyncOpen && (
+        <Card className="overflow-hidden border-indigo-200 bg-gradient-to-br from-white via-white to-indigo-50/70 p-0 shadow-lg shadow-indigo-950/5 animate-fade-in">
+          <div className="flex flex-col gap-3 border-b border-indigo-100 px-4 py-4 sm:flex-row sm:items-start sm:justify-between sm:px-5">
+            <div className="min-w-0">
+              <div className="flex items-center gap-2">
+                <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-gradient-to-br from-indigo-600 to-violet-600 text-white shadow-sm"><SmartSyncIcon /></span>
+                <div>
+                  <h3 className="font-semibold text-slate-900">Configure Smart Sync</h3>
+                  <p className="text-xs text-slate-500">Choose exactly what this run may change.</p>
+                </div>
+              </div>
+              <p className="mt-3 max-w-3xl text-xs leading-5 text-slate-600">Amazon pricing and availability come only from the administrator-maintained catalog. Running this user sync does not spend Rainforest API credits.</p>
+            </div>
+            <Badge tone="indigo">{selectedSmartSyncOptionCount(smartSyncOptions)} selected</Badge>
+          </div>
+          <div className="grid gap-2 p-3 sm:grid-cols-2 sm:p-4 xl:grid-cols-3">
+            {SMART_SYNC_OPTION_META.map((option) => (
+              <label key={option.key} className={cx("group flex cursor-pointer items-start gap-3 rounded-2xl border p-3.5 transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md", smartSyncOptions[option.key] ? "border-indigo-300 bg-indigo-50/70 shadow-sm shadow-indigo-950/5" : "border-slate-200 bg-white hover:border-indigo-200")}>
+                <span className="relative mt-0.5 grid h-5 w-5 shrink-0 place-items-center">
+                  <input
+                    type="checkbox"
+                    checked={smartSyncOptions[option.key]}
+                    onChange={(event) => setSmartSyncOptions((current) => ({ ...current, [option.key]: event.target.checked }))}
+                    className="peer h-5 w-5 appearance-none rounded-md border border-slate-300 bg-white transition checked:border-indigo-600 checked:bg-indigo-600 focus:outline-none focus:ring-4 focus:ring-indigo-100"
+                  />
+                  <svg viewBox="0 0 16 16" fill="none" aria-hidden="true" className="pointer-events-none absolute h-3.5 w-3.5 scale-75 text-white opacity-0 transition peer-checked:scale-100 peer-checked:opacity-100"><path d="m3 8 3 3 7-7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                </span>
+                <span className="min-w-0">
+                  <span className="block text-sm font-semibold text-slate-800">{option.label}</span>
+                  <span className="mt-1 block text-xs leading-5 text-slate-500">{option.description}</span>
+                </span>
+              </label>
+            ))}
+          </div>
+          <div className="flex flex-col gap-3 border-t border-slate-100 bg-white/80 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-5">
+            <p className="text-[11px] leading-5 text-slate-500">Price-protected and verified-winner listings remain locked unless you change them separately with confirmation.</p>
+            <div className="flex flex-wrap items-center gap-2">
+              <button type="button" disabled={pending} onClick={() => setSmartSyncOptions({ ...DEFAULT_SMART_SYNC_OPTIONS })} className="rounded-lg px-2.5 py-2 text-xs font-semibold text-slate-500 transition hover:bg-slate-100 hover:text-slate-800 disabled:opacity-50">Recommended</button>
+              <button type="button" disabled={pending} onClick={() => setSmartSyncOptions({ refreshAmazonData: true, applySuggestedPrices: true, updateListingImages: true, endUnavailableListings: true, relistRecoveredProducts: true })} className="rounded-lg px-2.5 py-2 text-xs font-semibold text-slate-500 transition hover:bg-slate-100 hover:text-slate-800 disabled:opacity-50">Select all</button>
+              <Button disabled={pending || !hasSelectedSmartSyncOption(smartSyncOptions)} onClick={syncListingHealth} className="min-w-36 border-0 bg-gradient-to-r from-indigo-600 to-violet-600 text-white shadow-md shadow-indigo-200/70 hover:from-indigo-500 hover:to-violet-500">
+                <SmartSyncIcon spinning={pending} />
+                {pending ? "Syncing…" : "Run Smart Sync"}
+              </Button>
+            </div>
+          </div>
+        </Card>
+      )}
 
       {notice && <div className={cx("animate-fade-in rounded-xl border px-4 py-3 text-sm", notice.error ? "border-red-200 bg-red-50 text-red-700" : "border-emerald-200 bg-emerald-50 text-emerald-700")}>{notice.text}</div>}
 
@@ -1294,7 +1447,16 @@ export function EbayListingsTable({
           onTogglePricingResults={() => setShowPricingResults((current) => !current)}
           onPricingResultFilterChange={setPricingResultFilter}
         />
-      ) : syncProgress && <SmartSyncStatus progress={syncProgress} />}
+      ) : syncProgress && (
+        <SmartSyncStatus
+          progress={syncProgress}
+          results={syncResults}
+          showResults={showSyncResults}
+          resultFilter={syncResultFilter}
+          onToggleResults={() => setShowSyncResults((current) => !current)}
+          onResultFilterChange={setSyncResultFilter}
+        />
+      )}
 
       {fetchError && (
         <p className="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800">

@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { requireUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { getEbayClientForUser } from "@/lib/ebay";
-import { EbayApiError } from "@/lib/ebay/client";
+import { EbayApiError, type ListingUpdate } from "@/lib/ebay/client";
 import { isAlreadyEndedEbayError } from "@/lib/ebay/errors";
 import { isEbayPicturePolicyError, prepareEbayImages } from "@/lib/ebay/image-policy";
 import { researchEbayMarket } from "@/lib/ebay/market";
@@ -38,6 +38,7 @@ import { improveListingContent } from "@/lib/mirror/improve-listing-content";
 import { generateMirrorDescription } from "@/lib/mirror/seo";
 import { recordListingActivity } from "@/lib/listings/activity-history";
 import { SMART_SYNC_RECOVERABLE_END_REASONS } from "@/lib/listings/smart-sync-policy";
+import { hasSelectedSmartSyncOption, type SmartSyncOptions } from "@/lib/listings/smart-sync-options";
 
 export type EbayListingResult = { error?: string };
 
@@ -856,6 +857,255 @@ export type SourceCleanupBatchResult = {
   endedIds: string[];
   relistedIds: string[];
 };
+
+export type SmartSyncCandidate = {
+  listingId: string;
+  title: string;
+};
+
+export type SmartSyncItemResult = {
+  listingId: string;
+  ebayListingId: string | null;
+  title: string;
+  status: "success" | "needs_attention" | "error";
+  outcome: "unchanged" | "updated" | "ended" | "relisted";
+  actions: string[];
+  originalPriceCents: number;
+  newPriceCents: number;
+  error?: string;
+};
+
+export async function prepareConfigurableSmartSync(
+  options: SmartSyncOptions,
+): Promise<{ candidates: SmartSyncCandidate[]; error?: string }> {
+  const user = await requireUser();
+  if (!hasSelectedSmartSyncOption(options)) {
+    return { candidates: [], error: "Select at least one Smart Sync action." };
+  }
+  const candidates = await db.listing.findMany({
+    where: {
+      userId: user.id,
+      OR: [
+        { status: "ACTIVE", ebayListingId: { not: null } },
+        ...(options.relistRecoveredProducts
+          ? [{ status: "ENDED" as const, endedReason: { in: [...SMART_SYNC_RECOVERABLE_END_REASONS] } }]
+          : []),
+      ],
+    },
+    select: { id: true, title: true },
+    orderBy: [{ status: "asc" }, { publishedAt: "asc" }, { id: "asc" }],
+    take: 1_000,
+  });
+  return {
+    candidates: candidates.map((listing) => ({ listingId: listing.id, title: listing.title })),
+  };
+}
+
+function adminListingImages(adminSource: {
+  amazonImageUrl: string | null;
+  amazonImageUrlsJson: string;
+}): string[] {
+  return [...new Set([
+    ...parseImageUrls(adminSource.amazonImageUrlsJson),
+    ...(adminSource.amazonImageUrl ? [adminSource.amazonImageUrl] : []),
+  ])].slice(0, 12);
+}
+
+export async function processConfigurableSmartSyncItem(
+  listingId: string,
+  options: SmartSyncOptions,
+): Promise<SmartSyncItemResult> {
+  const user = await requireUser();
+  if (!hasSelectedSmartSyncOption(options)) throw new Error("Select at least one Smart Sync action.");
+  const listing = await db.listing.findFirst({
+    where: { id: listingId, userId: user.id },
+    include: { product: true },
+  });
+  if (!listing) throw new Error("The listing is no longer available.");
+  const base = {
+    listingId: listing.id,
+    ebayListingId: listing.ebayListingId,
+    title: listing.title,
+    originalPriceCents: listing.priceCents,
+  };
+  const actions: string[] = [];
+
+  try {
+    const asin = listing.product.supplierProductId.trim().toUpperCase();
+    const adminSource = await db.adminArbitrageProduct.findUnique({
+      where: { asin },
+      select: {
+        asin: true,
+        amazonTitle: true,
+        amazonPriceCents: true,
+        amazonShippingCents: true,
+        amazonUrl: true,
+        amazonImageUrl: true,
+        amazonImageUrlsJson: true,
+        amazonBrand: true,
+        amazonDescription: true,
+        amazonInStock: true,
+        ebayRecommendedPriceCents: true,
+        averageCompetitorPriceCents: true,
+      },
+    });
+    if (!adminSource || adminSource.amazonPriceCents <= 0) {
+      return {
+        ...base,
+        status: "needs_attention",
+        outcome: "unchanged",
+        actions,
+        newPriceCents: listing.priceCents,
+        error: "Administrator Amazon data is not available for this ASIN. The listing was left unchanged.",
+      };
+    }
+
+    if (options.refreshAmazonData) {
+      await db.product.update({
+        where: { id: listing.product.id },
+        data: {
+          title: adminSource.amazonTitle || listing.product.title,
+          brand: adminSource.amazonBrand || listing.product.brand,
+          description: adminSource.amazonDescription || listing.product.description,
+          supplierUrl: adminSource.amazonUrl,
+          costCents: adminSource.amazonPriceCents,
+          shippingCostCents: adminSource.amazonShippingCents,
+          supplierStock: adminSource.amazonInStock ? 50 : 0,
+        },
+      });
+      actions.push("Amazon price and availability refreshed");
+    }
+
+    if (!adminSource.amazonInStock) {
+      if (listing.status === "ACTIVE" && options.endUnavailableListings && listing.ebayListingId) {
+        const ended = await endEbayListingForUser(user.id, listing.ebayListingId, "SOURCE_UNAVAILABLE");
+        if (ended.error) throw new Error(ended.error);
+        actions.push("Unavailable listing ended on eBay");
+        return { ...base, status: "success", outcome: "ended", actions, newPriceCents: listing.priceCents };
+      }
+      return {
+        ...base,
+        status: "needs_attention",
+        outcome: "unchanged",
+        actions,
+        newPriceCents: listing.priceCents,
+        error: listing.status === "ENDED"
+          ? "Amazon still marks this product unavailable, so it was not relisted."
+          : "Amazon marks this product unavailable; ending unavailable listings is not selected.",
+      };
+    }
+
+    const winnerListings = options.applySuggestedPrices
+      ? await getProtectedPriceListings(user.id, user.ebayAdRateBps)
+      : new Map();
+    const priceLocked = winnerListings.has(listing.id);
+    const plan = listingPricePlan({
+      amazonCostCents: adminSource.amazonPriceCents,
+      amazonShippingCents: adminSource.amazonShippingCents,
+      currentEbayPriceCents: listing.priceCents,
+      ebayRecommendedPriceCents: adminSource.ebayRecommendedPriceCents,
+      averageCompetitorPriceCents: adminSource.averageCompetitorPriceCents,
+      sitewideDiscountBps: user.ebaySitewideDiscountBps,
+      adRateBps: user.ebayAdRateBps,
+      targetProfitCents: user.targetProfitEnabled ? user.targetProfitCents : null,
+      pricingStrategy: user.pricingStrategy,
+    });
+    const nextPriceCents = options.applySuggestedPrices && !priceLocked
+      ? plan.itemPriceCents
+      : listing.priceCents;
+    const nextBuyerShippingCents = options.applySuggestedPrices && !priceLocked
+      ? plan.buyerShippingCents
+      : listing.buyerShippingCents;
+    if (options.applySuggestedPrices && priceLocked) actions.push("Protected price preserved");
+
+    let preparedImageUrls: string[] | undefined;
+    let imageWarning: string | undefined;
+    if (options.updateListingImages) {
+      const sourceImages = adminListingImages(adminSource);
+      if (sourceImages.length === 0) {
+        imageWarning = "Administrator Amazon data has no product image; the current eBay images were preserved.";
+      } else {
+        const prepared = await prepareEbayImages(user.id, sourceImages);
+        if (prepared.imageUrls.length === 0) {
+          imageWarning = "No eBay-compliant Amazon image could be prepared; the current images were preserved.";
+        } else {
+          preparedImageUrls = prepared.imageUrls;
+        }
+      }
+    }
+
+    if (listing.status === "ENDED") {
+      if (!options.relistRecoveredProducts) {
+        return { ...base, status: imageWarning ? "needs_attention" : "success", outcome: "unchanged", actions, newPriceCents: nextPriceCents, ...(imageWarning && { error: imageWarning }) };
+      }
+      await db.listing.update({
+        where: { id: listing.id },
+        data: {
+          priceCents: nextPriceCents,
+          buyerShippingCents: nextBuyerShippingCents,
+          shippingStrategy: nextBuyerShippingCents > 0 ? "BUYER_PAID_SHIPPING" : "FREE_SHIPPING",
+          quantity: Math.max(1, listing.quantity),
+          ...(preparedImageUrls && { imageUrlsJson: serializeImageUrls(preparedImageUrls) }),
+        },
+      });
+      const published = await publishListingForUser(user.id, listing.id, {
+        recoverEndedReasons: [...SMART_SYNC_RECOVERABLE_END_REASONS],
+      });
+      if (!published.ok) throw new Error(published.error);
+      actions.push("Recovered product relisted on eBay");
+      if (options.applySuggestedPrices && !priceLocked) actions.push("Suggested price applied");
+      if (preparedImageUrls) actions.push("Amazon product images updated");
+      return { ...base, ebayListingId: published.ebayListingId, status: imageWarning ? "needs_attention" : "success", outcome: "relisted", actions, newPriceCents: nextPriceCents, ...(imageWarning && { error: imageWarning }) };
+    }
+
+    if (!listing.ebayListingId) throw new Error("The active listing has no eBay item ID.");
+    const listingUpdate: ListingUpdate = {};
+    if (nextPriceCents !== listing.priceCents) listingUpdate.priceCents = nextPriceCents;
+    if (nextBuyerShippingCents !== listing.buyerShippingCents) listingUpdate.buyerShippingCents = nextBuyerShippingCents;
+    if (preparedImageUrls) listingUpdate.imageUrls = preparedImageUrls;
+    if (Object.keys(listingUpdate).length > 0) {
+      const client = await getEbayClientForUser(user.id);
+      try {
+        await client.updateListing(listing.ebayListingId, listingUpdate);
+      } catch (updateError) {
+        const message = updateError instanceof Error ? updateError.message : "eBay listing update failed";
+        if (!isEbayPicturePolicyError(message) || preparedImageUrls) throw updateError;
+        const repaired = await prepareEbayImages(user.id, parseImageUrls(listing.imageUrlsJson));
+        if (repaired.imageUrls.length === 0) throw updateError;
+        preparedImageUrls = repaired.imageUrls;
+        await client.updateListing(listing.ebayListingId, { ...listingUpdate, imageUrls: preparedImageUrls });
+      }
+      await db.listing.update({
+        where: { id: listing.id },
+        data: {
+          priceCents: nextPriceCents,
+          buyerShippingCents: nextBuyerShippingCents,
+          shippingStrategy: nextBuyerShippingCents > 0 ? "BUYER_PAID_SHIPPING" : "FREE_SHIPPING",
+          ...(preparedImageUrls && { imageUrlsJson: serializeImageUrls(preparedImageUrls) }),
+        },
+      });
+      if (nextPriceCents !== listing.priceCents || nextBuyerShippingCents !== listing.buyerShippingCents) actions.push("Suggested price applied");
+      if (preparedImageUrls) actions.push("Amazon product images updated");
+    }
+    return {
+      ...base,
+      status: imageWarning ? "needs_attention" : "success",
+      outcome: Object.keys(listingUpdate).length > 0 || actions.length > 0 ? "updated" : "unchanged",
+      actions: actions.length > 0 ? actions : ["Already current"],
+      newPriceCents: nextPriceCents,
+      ...(imageWarning && { error: imageWarning }),
+    };
+  } catch (error) {
+    return {
+      ...base,
+      status: "error",
+      outcome: "unchanged",
+      actions,
+      newPriceCents: listing.priceCents,
+      error: error instanceof Error ? error.message.slice(0, 500) : "Smart Sync failed for this listing.",
+    };
+  }
+}
 
 export async function startListingHealthSync(): Promise<{
   queued: number;
