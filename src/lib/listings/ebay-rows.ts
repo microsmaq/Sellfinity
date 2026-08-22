@@ -184,4 +184,3 @@ export function buildEbayRows(
     return (a.match?.profitCents ?? 0) - (b.match?.profitCents ?? 0);
   });
 }
-
