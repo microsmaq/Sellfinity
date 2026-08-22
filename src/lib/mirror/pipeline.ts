@@ -14,6 +14,7 @@ import { suggestPriceCents } from "@/lib/sourcing/scoring";
 import { serializeImageUrls } from "@/lib/types";
 import { grossUpEbayPriceCents } from "@/lib/fees";
 import { targetNetProfitPriceCents } from "@/lib/listings/cleanup";
+import { listingPricePlan } from "@/lib/listings/shipping-strategy";
 import { improveMainListingImage } from "./improve-main-image";
 import { improveListingContent } from "./improve-listing-content";
 
@@ -108,12 +109,12 @@ export async function mirrorUrl(
 
   const user = await db.user.findUnique({
     where: { id: userId },
-    select: { ebaySitewideDiscountBps: true, ebayAdRateBps: true, targetProfitEnabled: true, targetProfitCents: true },
+    select: { ebaySitewideDiscountBps: true, ebayAdRateBps: true, targetProfitEnabled: true, targetProfitCents: true, pricingStrategy: true },
   });
   const sitewideDiscountBps = user?.ebaySitewideDiscountBps ?? 0;
   const adRateBps = user?.ebayAdRateBps ?? 300;
   const targetProfitCents = user?.targetProfitEnabled ? user.targetProfitCents : null;
-  const priceCents =
+  const legacyPriceCents =
     targetProfitCents !== null
       ? targetNetProfitPriceCents(
           scraped.priceCents,
@@ -136,6 +137,17 @@ export async function mirrorUrl(
           costCents: scraped.priceCents,
           shippingCostCents: scraped.shippingCostCents,
         }, sitewideDiscountBps, adRateBps, targetProfitCents);
+  const pricingPlan = listingPricePlan({
+    amazonCostCents: scraped.priceCents,
+    amazonShippingCents: scraped.shippingCostCents,
+    ebayRecommendedPriceCents: opts.marketPriceCents ?? legacyPriceCents,
+    averageCompetitorPriceCents: opts.marketPriceCents ?? null,
+    sitewideDiscountBps,
+    adRateBps,
+    targetProfitCents,
+    pricingStrategy: user?.pricingStrategy,
+  });
+  const priceCents = pricingPlan.itemPriceCents;
   const supplierStock = scraped.inStock ? NOMINAL_IN_STOCK : 0;
 
   const contentImprovement = opts.improveListingContent
@@ -188,6 +200,8 @@ export async function mirrorUrl(
         title,
         description,
         priceCents,
+        shippingStrategy: pricingPlan.shippingStrategy,
+        buyerShippingCents: pricingPlan.buyerShippingCents,
         quantity: Math.min(LISTING_QUANTITY_CAP, supplierStock),
         imageUrlsJson: serializeImageUrls(listingImages),
         status: "DRAFT",
@@ -218,3 +232,4 @@ export function parseUrlLines(input: string, max: number): string[] {
       .filter(Boolean),
   )].slice(0, max);
 }
+
