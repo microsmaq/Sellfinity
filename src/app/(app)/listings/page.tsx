@@ -1,6 +1,5 @@
 import { requireUser } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { getEbayClientForUser } from "@/lib/ebay";
 import { ebayEnvConfig } from "@/lib/ebay/oauth";
 import { buildEbayRows } from "@/lib/listings/ebay-rows";
 import { getListingMarketMetrics } from "@/lib/listings/market-metrics";
@@ -13,6 +12,7 @@ import { getListingPriceProtection } from "@/lib/listings/winner";
 import { actualAmazonCost } from "@/lib/amazon-email/sync";
 import { summarize, windowStartUtc } from "@/lib/orders/stats";
 import { listingPricePlan } from "@/lib/listings/shipping-strategy";
+import { retainedEbayListings } from "@/lib/listings/local-ebay-cache";
 
 export const metadata = { title: "Listings — Sellfinity" };
 
@@ -87,8 +87,8 @@ export default async function ListingsPage() {
   const winnerListings = priceProtection.verifiedWinners;
   const profitableSaleLocks = priceProtection.profitableSaleLocks;
 
-  let products = initialProducts;
-  let listings = initialListings;
+  const products = initialProducts;
+  const listings = initialListings;
   const ebayConnected = !!connection && connection.status !== "DISCONNECTED";
   const marketMetrics = await getListingMarketMetrics(
     listings.map((listing) => listing.product.sku),
@@ -123,97 +123,50 @@ export default async function ListingsPage() {
     });
   }
 
-  // The seller's live eBay listings, joined to tracked products for margin.
-  let ebayRows: EbayRow[] = [];
-  let ebayFetchError: string | null = null;
-  if (ebayConnected) {
-    try {
-      const client = await getEbayClientForUser(user.id);
-      const remote = await client.getSellerListings(user.id);
-      // eBay's active-list pagination is not a reliable negative signal: a
-      // temporarily incomplete response used to mark every omitted local row
-      // as ENDED. Treat eBay's positive evidence as authoritative instead and
-      // repair only rows that were previously ended by that reconciliation.
-      // Listings explicitly ended by the seller or Smart Sync remain ended;
-      // their suppression records also keep eBay's eventual-consistency lag
-      // from showing them as live again.
-      const remoteIds = [...new Set(remote.map((r) => r.ebayListingId))];
-      const restored = remoteIds.length > 0 ? await db.listing.updateMany({
-        where: {
-          userId: user.id,
-          status: "ENDED",
-          ebayListingId: { in: remoteIds },
-          OR: [{ endedReason: null }, { endedReason: "EBAY_ENDED" }],
-        },
-        data: { status: "ACTIVE", endedAt: null, endedReason: null },
-      }) : { count: 0 };
-
-      // The initial reads intentionally run in parallel with eBay. Refresh
-      // them only when reconciliation repaired rows so this render immediately
-      // reflects the corrected Active/Ended counts and inventory grouping.
-      if (restored.count > 0) {
-        [products, listings] = await Promise.all([
-          db.product.findMany({
-            where: { userId: user.id },
-            include: { listings: { where: { status: { in: ["DRAFT", "ACTIVE"] } } } },
-            orderBy: { createdAt: "desc" },
-          }),
-          db.listing.findMany({
-            where: { userId: user.id },
-            include: {
-              product: {
-                select: {
-                  sku: true,
-                  title: true,
-                  imageUrlsJson: true,
-                  category: true,
-                  costCents: true,
-                  shippingCostCents: true,
-                  supplierStock: true,
-                  supplierUrl: true,
-                },
-              },
-            },
-            orderBy: { updatedAt: "desc" },
-          }),
-        ]);
-      }
-      const localByEbayId = new Map(
-        listings.flatMap((listing) => listing.ebayListingId ? [[listing.ebayListingId, listing] as const] : []),
-      );
-      ebayRows = buildEbayRows(
-        remote,
-        listings,
-        new Set(suppressions.map((item) => item.ebayListingId)),
-        marketMetrics,
-        user.ebaySitewideDiscountBps,
-        user.ebayAdRateBps,
-        user.targetProfitEnabled ? user.targetProfitCents : null,
-        user.pricingStrategy,
-      ).map((row) => {
-        const local = localByEbayId.get(row.ebayListingId);
-        const winner = local ? winnerListings.get(local.id) : null;
-        const priceLock = local ? profitableSaleLocks.get(local.id) : null;
-        return {
-          ...row,
-          marketUpdatedAt: (marketMetrics.get(row.ebayListingId)?.updatedAt ?? (local ? marketMetrics.get(local.product.sku)?.updatedAt : null))?.toISOString() ?? null,
-          performance: local ? orderPerformance.get(local.id) ?? null : null,
-          verifiedWinner: winner ? {
-            profitableUnits: winner.profitableUnits,
-            profitableSaleDays: winner.profitableSaleDays,
-            lastProfitableSaleAt: winner.lastProfitableSaleAt?.toISOString() ?? null,
-            protectedUntil: winner.protectedUntil?.toISOString() ?? null,
-          } : null,
-          priceLocked: !winner && priceLock ? {
-            lastProfitableSaleAt: priceLock.lastProfitableSaleAt?.toISOString() ?? null,
-            protectedUntil: priceLock.protectedUntil?.toISOString() ?? null,
-          } : null,
-        };
-      });
-    } catch (e) {
-      ebayFetchError = e instanceof Error ? e.message.slice(0, 200) : "eBay lookup failed";
-    }
-  }
+  // Render from Sellfinity's retained listing records. Opening this page used
+  // to run a full GetMyeBaySelling scan every time, needlessly consuming eBay's
+  // legacy Trading API quota and making the whole table unavailable when that
+  // quota was exhausted. All app-originated publish, edit, price, end, relist,
+  // and Smart Sync operations already update these records after eBay accepts
+  // the change, so the database is the reliable read path for normal browsing.
+  const ebayItemHost =
+    ebayEnvConfig()?.env === "PRODUCTION"
+      ? "https://www.ebay.com"
+      : "https://sandbox.ebay.com";
+  const suppressedEbayIds = new Set(suppressions.map((item) => item.ebayListingId));
+  const cachedRemote = retainedEbayListings(listings, suppressedEbayIds, ebayItemHost);
+  const localByEbayId = new Map(
+    listings.flatMap((listing) => listing.ebayListingId ? [[listing.ebayListingId, listing] as const] : []),
+  );
+  const ebayRows: EbayRow[] = buildEbayRows(
+    cachedRemote,
+    listings,
+    suppressedEbayIds,
+    marketMetrics,
+    user.ebaySitewideDiscountBps,
+    user.ebayAdRateBps,
+    user.targetProfitEnabled ? user.targetProfitCents : null,
+    user.pricingStrategy,
+  ).map((row) => {
+    const local = localByEbayId.get(row.ebayListingId);
+    const winner = local ? winnerListings.get(local.id) : null;
+    const priceLock = local ? profitableSaleLocks.get(local.id) : null;
+    return {
+      ...row,
+      marketUpdatedAt: (marketMetrics.get(row.ebayListingId)?.updatedAt ?? (local ? marketMetrics.get(local.product.sku)?.updatedAt : null))?.toISOString() ?? null,
+      performance: local ? orderPerformance.get(local.id) ?? null : null,
+      verifiedWinner: winner ? {
+        profitableUnits: winner.profitableUnits,
+        profitableSaleDays: winner.profitableSaleDays,
+        lastProfitableSaleAt: winner.lastProfitableSaleAt?.toISOString() ?? null,
+        protectedUntil: winner.protectedUntil?.toISOString() ?? null,
+      } : null,
+      priceLocked: !winner && priceLock ? {
+        lastProfitableSaleAt: priceLock.lastProfitableSaleAt?.toISOString() ?? null,
+        protectedUntil: priceLock.protectedUntil?.toISOString() ?? null,
+      } : null,
+    };
+  });
 
   const unlisted: UnlistedRow[] = products
     .filter((p) => p.listings.length === 0)
@@ -227,10 +180,6 @@ export default async function ListingsPage() {
       supplierStock: p.supplierStock,
     }));
 
-  const ebayItemHost =
-    ebayEnvConfig()?.env === "PRODUCTION"
-      ? "https://www.ebay.com"
-      : "https://sandbox.ebay.com";
   const rows: ListingRow[] = listings.map((l) => {
     const metric =
       (l.ebayListingId ? marketMetrics.get(l.ebayListingId) : null) ??
@@ -292,7 +241,7 @@ export default async function ListingsPage() {
           listings={rows}
           ebayConnected={ebayConnected}
           ebayRows={ebayRows}
-          ebayFetchError={ebayFetchError}
+          ebayFetchError={null}
           improveMainImage={user.improveMainImage}
           improveListingContent={user.improveListingContent}
           sitewideDiscountBps={user.ebaySitewideDiscountBps}
