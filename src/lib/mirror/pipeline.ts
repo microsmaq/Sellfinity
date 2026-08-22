@@ -232,4 +232,3 @@ export function parseUrlLines(input: string, max: number): string[] {
       .filter(Boolean),
   )].slice(0, max);
 }
-
