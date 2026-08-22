@@ -12,6 +12,8 @@ export type CreateListingInput = {
   category: string;
   /** Manufacturer brand retained from the source marketplace. */
   brand?: string;
+  /** Flat-rate amount charged to the buyer. Zero means free shipping. */
+  buyerShippingCents?: number;
 };
 
 export type ListingUpdate = {
@@ -20,6 +22,7 @@ export type ListingUpdate = {
   title?: string;
   description?: string;
   imageUrls?: string[];
+  buyerShippingCents?: number;
 };
 
 /** An order as returned by eBay (Fulfillment API shape, simplified). */
@@ -165,5 +168,7 @@ export function validateListingInput(input: CreateListingInput): string | null {
   if (input.priceCents < 99) return "Price must be at least $0.99";
   if (input.quantity < 1) return "Quantity must be at least 1";
   if (input.imageUrls.length === 0) return "At least one image is required";
+  if ((input.buyerShippingCents ?? 0) < 0 || (input.buyerShippingCents ?? 0) > 700) return "Buyer-paid shipping must be between $0 and $7";
   return null;
 }
+
