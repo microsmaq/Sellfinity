@@ -791,4 +791,3 @@ export function ListingsView({
     </div>
   );
 }
-
