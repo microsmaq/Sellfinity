@@ -42,6 +42,10 @@ model User {
   // per unit after Amazon landed cost and eBay fees.
   targetProfitEnabled          Boolean   @default(true)
   targetProfitCents            Int       @default(700)
+  // AI | FREE_SHIPPING | BUYER_PAID_SHIPPING. AI prefers free shipping and
+  // uses up to $7 buyer-paid shipping only when a competitive item price
+  // cannot reach the configured profit target.
+  pricingStrategy              String    @default("AI")
   // Give a listing a separate price lock after its first profitable sale.
   // The lock expires after seven days without another profitable sale.
   autoLockProfitableListings   Boolean   @default(true)
@@ -420,6 +424,10 @@ model Listing {
   title                 String
   description           String
   priceCents            Int
+  // The item-level price presentation selected when this listing was last
+  // priced. Buyer-paid shipping is capped at $7 by application policy.
+  shippingStrategy      String    @default("FREE_SHIPPING")
+  buyerShippingCents    Int       @default(0)
   quantity              Int
   imageUrlsJson         String    @default("[]")
   // DRAFT | ACTIVE | ENDED

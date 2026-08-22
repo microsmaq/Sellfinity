@@ -10,6 +10,7 @@ import { parseImageUrls } from "@/lib/types";
 import { publishListingForUser } from "@/lib/listings/publish";
 import { recordListingActivity } from "@/lib/listings/activity-history";
 import { getProtectedPriceListings } from "@/lib/listings/winner";
+import { listingPricePlan } from "@/lib/listings/shipping-strategy";
 
 export type BulkResult = { done: number; failed: number; error?: string };
 
@@ -44,13 +45,16 @@ export async function createDrafts(productIds: string[]): Promise<BulkResult> {
       suggestedPriceCents: product.suggestedPriceCents,
       supplierStock: product.supplierStock,
     });
+    const plan = listingPricePlan({ amazonCostCents: product.costCents, amazonShippingCents: product.shippingCostCents, ebayRecommendedPriceCents: product.suggestedPriceCents, sitewideDiscountBps: user.ebaySitewideDiscountBps, adRateBps: user.ebayAdRateBps, targetProfitCents: user.targetProfitEnabled ? user.targetProfitCents : null, pricingStrategy: user.pricingStrategy });
     await db.listing.create({
       data: {
         userId: user.id,
         productId: product.id,
         title: content.title,
         description: content.description,
-        priceCents: content.priceCents,
+        priceCents: plan.itemPriceCents,
+        shippingStrategy: plan.shippingStrategy,
+        buyerShippingCents: plan.buyerShippingCents,
         quantity: content.quantity,
         imageUrlsJson: JSON.stringify(content.imageUrls),
         status: "DRAFT",

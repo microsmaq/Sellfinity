@@ -137,6 +137,7 @@ export class RealEbayClient implements EbayClient {
     paymentPolicyId: string;
     returnPolicyId: string;
   }>;
+  private buyerPaidPolicyPromise?: Promise<string>;
 
   constructor(
     private userId: string,
@@ -241,14 +242,14 @@ export class RealEbayClient implements EbayClient {
       const q = `marketplace_id=${MARKETPLACE}`;
 
       const [fulfillment, payment, returns] = await Promise.all([
-        this.request<{ fulfillmentPolicies?: { fulfillmentPolicyId: string }[] }>("GET", `/sell/account/v1/fulfillment_policy?${q}`),
+        this.request<{ fulfillmentPolicies?: { fulfillmentPolicyId: string; name?: string }[] }>("GET", `/sell/account/v1/fulfillment_policy?${q}`),
         this.request<{ paymentPolicies?: { paymentPolicyId: string }[] }>("GET", `/sell/account/v1/payment_policy?${q}`),
         this.request<{ returnPolicies?: { returnPolicyId: string }[] }>("GET", `/sell/account/v1/return_policy?${q}`),
       ]);
 
       const categoryTypes = [{ name: "ALL_EXCLUDING_MOTORS_VEHICLES" }];
 
-      let fulfillmentPolicyId = fulfillment.fulfillmentPolicies?.[0]?.fulfillmentPolicyId;
+      let fulfillmentPolicyId = fulfillment.fulfillmentPolicies?.find((policy) => policy.name === `${POLICY_PREFIX} shipping`)?.fulfillmentPolicyId;
       if (!fulfillmentPolicyId) {
         const created = await this.request<{ fulfillmentPolicyId: string }>(
           "POST",
@@ -317,6 +318,47 @@ export class RealEbayClient implements EbayClient {
     return this.policiesPromise;
   }
 
+  /** Use one non-free policy and override its flat rate on each Inventory
+   * offer. This is eBay's supported per-listing mechanism and avoids creating
+   * hundreds of business policies for cent-level shipping amounts. */
+  private ensureShippingPolicy(buyerShippingCents: number): Promise<string> {
+    const cents = Math.max(0, Math.min(700, Math.round(buyerShippingCents)));
+    if (cents === 0) return this.ensurePolicies().then((policies) => policies.fulfillmentPolicyId);
+    this.buyerPaidPolicyPromise ??= (async () => {
+      const q = `marketplace_id=${MARKETPLACE}`;
+      const name = `${POLICY_PREFIX} buyer-paid shipping`;
+      const policies = await this.request<{ fulfillmentPolicies?: Array<{ fulfillmentPolicyId: string; name?: string }> }>("GET", `/sell/account/v1/fulfillment_policy?${q}`);
+      const matched = policies.fulfillmentPolicies?.find((policy) => policy.name === name);
+      if (matched) return matched.fulfillmentPolicyId;
+      const created = await this.request<{ fulfillmentPolicyId: string }>("POST", "/sell/account/v1/fulfillment_policy", {
+        name,
+        marketplaceId: MARKETPLACE,
+        categoryTypes: [{ name: "ALL_EXCLUDING_MOTORS_VEHICLES" }],
+        handlingTime: { value: 1, unit: "DAY" },
+        shippingOptions: [{
+          costType: "FLAT_RATE",
+          optionType: "DOMESTIC",
+          shippingServices: [{
+            shippingCarrierCode: "USPS",
+            shippingServiceCode: "USPSPriority",
+            freeShipping: false,
+            shippingCost: { value: "0.01", currency: "USD" },
+            additionalShippingCost: { value: "0.01", currency: "USD" },
+          }],
+        }],
+      });
+      return created.fulfillmentPolicyId;
+    })();
+    return this.buyerPaidPolicyPromise;
+  }
+
+  private shippingCostOverrides(buyerShippingCents: number) {
+    const cents = Math.max(0, Math.min(700, Math.round(buyerShippingCents)));
+    if (cents === 0) return undefined;
+    const amount = { value: (cents / 100).toFixed(2), currency: "USD" };
+    return [{ priority: 1, shippingServiceType: "DOMESTIC", shippingCost: amount, additionalShippingCost: amount }];
+  }
+
   private async suggestCategoryId(title: string): Promise<string> {
     const res = await this.request<{
       categorySuggestions?: { category: { categoryId: string } }[];
@@ -369,6 +411,12 @@ export class RealEbayClient implements EbayClient {
       this.suggestCategoryId(input.title),
     ]);
     const aspects = await this.requiredAspects(categoryId, input.brand);
+    const buyerShippingCents = input.buyerShippingCents ?? 0;
+    const listingPolicies = {
+      ...policies,
+      fulfillmentPolicyId: await this.ensureShippingPolicy(buyerShippingCents),
+      ...(buyerShippingCents > 0 && { shippingCostOverrides: this.shippingCostOverrides(buyerShippingCents) }),
+    };
     const description = fitEbayDescription(input.description);
     const brand = ebayProductBrand(input.brand);
     const mpn = ebayProductMpn();
@@ -400,7 +448,7 @@ export class RealEbayClient implements EbayClient {
       availableQuantity: input.quantity,
       categoryId,
       listingDescription: description,
-      listingPolicies: policies,
+      listingPolicies,
       pricingSummary: {
         price: { value: (input.priceCents / 100).toFixed(2), currency: "USD" },
       },
@@ -533,9 +581,31 @@ ${innerXml}
               .map((url) => `<PictureURL>${escapeTradingXml(url)}</PictureURL>`)
               .join("")}</PictureDetails>`
           : "",
+        update.buyerShippingCents !== undefined
+          ? `<ShippingDetails><ShippingType>Flat</ShippingType><ShippingServiceOptions><ShippingService>USPSPriority</ShippingService><ShippingServicePriority>1</ShippingServicePriority><ShippingServiceCost currencyID="USD">${(update.buyerShippingCents / 100).toFixed(2)}</ShippingServiceCost><FreeShipping>${update.buyerShippingCents === 0}</FreeShipping></ShippingServiceOptions></ShippingDetails>`
+          : "",
       ].join("");
       await this.tradingRequest("ReviseFixedPriceItem", `<Item>${fields}</Item>`);
       return;
+    }
+    if (update.buyerShippingCents !== undefined) {
+      const fulfillmentPolicyId = await this.ensureShippingPolicy(update.buyerShippingCents);
+      const current = await this.request<Record<string, unknown> & { listingPolicies?: Record<string, unknown> }>(
+        "GET",
+        `/sell/inventory/v1/offer/${offer.offerId}`,
+      );
+      const writable = { ...current };
+      delete writable.offerId;
+      delete writable.listing;
+      delete writable.status;
+      await this.request("PUT", `/sell/inventory/v1/offer/${offer.offerId}`, {
+        ...writable,
+        listingPolicies: {
+          ...(current.listingPolicies ?? {}),
+          fulfillmentPolicyId,
+          shippingCostOverrides: this.shippingCostOverrides(update.buyerShippingCents),
+        },
+      });
     }
     if (
       update.title !== undefined ||

@@ -55,6 +55,7 @@ export function ordersForListingDay(listing: {
   ebayListingId: string;
   priceCents: number;
   publishedAt: Date;
+  buyerShippingCents?: number;
 }, dayNumber: number): RemoteOrder[] {
   const publishedDay = Math.floor(listing.publishedAt.getTime() / DAY_MS);
   if (dayNumber < publishedDay) return [];
@@ -68,12 +69,13 @@ export function ordersForListingDay(listing: {
   const count = rand() < p ? (rand() < 0.2 ? 2 : 1) : 0;
   for (let i = 0; i < count; i++) {
     const hourOffset = Math.floor(rand() * 24);
+    const quantity = rand() < 0.12 ? 2 : 1;
     orders.push({
       ebayOrderId: `SBX-${hashString(`${listing.ebayListingId}:${dayNumber}:${i}`).toString(36).toUpperCase()}`,
       ebayListingId: listing.ebayListingId,
-      quantity: rand() < 0.12 ? 2 : 1,
+      quantity,
       salePriceCents: listing.priceCents,
-      shippingChargedCents: 0, // free-shipping listings
+      shippingChargedCents: (listing.buyerShippingCents ?? 0) * quantity,
       buyerUsername: BUYERS[Math.floor(rand() * BUYERS.length)],
       saleDate: new Date(dayNumber * DAY_MS + hourOffset * 3_600_000),
     });
@@ -103,6 +105,9 @@ export class MockEbayClient implements EbayClient {
     }
     if (update.imageUrls !== undefined && update.imageUrls.length === 0) {
       throw new EbayApiError("At least one image is required");
+    }
+    if (update.buyerShippingCents !== undefined && (update.buyerShippingCents < 0 || update.buyerShippingCents > 700)) {
+      throw new EbayApiError("Buyer-paid shipping must be between $0 and $7");
     }
     // Real client would call eBay here; sandbox accepts silently.
   }

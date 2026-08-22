@@ -1,11 +1,11 @@
 // Assemble the "Active on eBay" repricer rows: the live eBay listing set
 // joined with locally tracked products for margin data.
 
-import { estimateMargin } from "@/lib/fees";
+import { discountedEbayPriceCents } from "@/lib/fees";
 import type { RemoteListing } from "@/lib/ebay/client";
 import type { EbayRow } from "@/app/(app)/listings/ebay-listings-table";
 import type { ListingMarketMetrics } from "./market-metrics";
-import { arbitrageSuggestedPriceCents } from "@/lib/arbitrage/pricing";
+import { listingPricePlan, trueProfitWithBuyerShippingCents } from "./shipping-strategy";
 
 export type LocalListingFacts = {
   ebayListingId: string | null;
@@ -16,6 +16,8 @@ export type LocalListingFacts = {
   sourceMatchMethod: string | null;
   imageUrlsJson: string;
   publishedAt: Date | null;
+  shippingStrategy?: string;
+  buyerShippingCents?: number;
   product: {
     sku: string;
     title: string;
@@ -58,6 +60,7 @@ export function buildEbayRows(
   sitewideDiscountBps = 0,
   adRateBps = 300,
   targetProfitCents: number | null = null,
+  pricingStrategy = "AI",
 ): EbayRow[] {
   const byEbayId = new Map(
     local.filter((l) => l.ebayListingId).map((l) => [l.ebayListingId!, l]),
@@ -90,8 +93,11 @@ export function buildEbayRows(
         source: null,
         market: marketMetrics.get(r.ebayListingId) ?? null,
         suggestedPriceCents: null,
+        suggestedBuyerShippingCents: null,
         match: null,
         sourceAssessment: null,
+        shippingStrategy: null,
+        buyerShippingCents: null,
       });
       continue;
     }
@@ -112,6 +118,7 @@ export function buildEbayRows(
         source: sourceFacts(localListing),
         market,
         suggestedPriceCents: null,
+        suggestedBuyerShippingCents: null,
         match: null,
         sourceAssessment: {
           verdict: localListing.sourceMatchVerdict,
@@ -120,20 +127,19 @@ export function buildEbayRows(
           method: localListing.sourceMatchMethod,
           amazonUrl: localListing.product.supplierUrl,
         },
+        shippingStrategy: localListing.shippingStrategy ?? "FREE_SHIPPING",
+        buyerShippingCents: localListing.buyerShippingCents ?? 0,
       });
       continue;
     }
-    const margin = estimateMargin(
-      r.priceCents,
-      localListing.product.costCents,
-      localListing.product.shippingCostCents,
-      sitewideDiscountBps,
-      adRateBps,
-    );
+    const buyerShippingCents = localListing.buyerShippingCents ?? 0;
+    const currentProfitCents = trueProfitWithBuyerShippingCents(r.priceCents, buyerShippingCents, localListing.product.costCents, localListing.product.shippingCostCents, sitewideDiscountBps, adRateBps);
+    const buyerTotalCents = discountedEbayPriceCents(r.priceCents, sitewideDiscountBps) + buyerShippingCents;
     const market =
       marketMetrics.get(r.ebayListingId) ??
       marketMetrics.get(localListing.product.sku) ??
       null;
+    const suggestedPlan = listingPricePlan({ amazonCostCents: localListing.product.costCents, amazonShippingCents: localListing.product.shippingCostCents, currentEbayPriceCents: r.priceCents, ebayRecommendedPriceCents: market?.bestSellingPriceCents, averageCompetitorPriceCents: market?.averageCompetitorPriceCents, sitewideDiscountBps, adRateBps, targetProfitCents, pricingStrategy });
     rows.push({
       ebayListingId: r.ebayListingId,
       title: r.title,
@@ -145,23 +151,15 @@ export function buildEbayRows(
         r.listingDate?.toISOString() ?? localListing.publishedAt?.toISOString() ?? null,
       source: sourceFacts(localListing),
       market,
-      suggestedPriceCents: arbitrageSuggestedPriceCents(
-        localListing.product.costCents,
-        r.priceCents,
-        market?.bestSellingPriceCents,
-        market?.averageCompetitorPriceCents,
-        localListing.product.shippingCostCents,
-        sitewideDiscountBps,
-        adRateBps,
-        targetProfitCents,
-      ),
+      suggestedPriceCents: suggestedPlan.itemPriceCents,
+      suggestedBuyerShippingCents: suggestedPlan.buyerShippingCents,
       match: {
         sku: localListing.product.sku,
         amazonPriceCents: localListing.product.costCents,
         shippingCostCents: localListing.product.shippingCostCents,
         amazonUrl: localListing.product.supplierUrl,
-        profitCents: margin.estimatedProfitCents,
-        marginPct: Math.round(margin.marginPct),
+        profitCents: currentProfitCents,
+        marginPct: buyerTotalCents > 0 ? Math.round(currentProfitCents / buyerTotalCents * 100) : 0,
         unavailable: localListing.product.supplierStock === 0,
       },
       sourceAssessment: {
@@ -171,6 +169,8 @@ export function buildEbayRows(
         method: localListing.sourceMatchMethod,
         amazonUrl: localListing.product.supplierUrl,
       },
+      shippingStrategy: localListing.shippingStrategy ?? "FREE_SHIPPING",
+      buyerShippingCents: localListing.buyerShippingCents ?? 0,
     });
   }
 

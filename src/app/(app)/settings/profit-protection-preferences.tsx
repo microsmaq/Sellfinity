@@ -2,14 +2,16 @@
 
 import { useState, useTransition } from "react";
 import { Button, Card, Input } from "@/components/ui";
-import { setAutoLockProfitableListings, setDefaultTargetProfit, setEbayAdRate, setEbaySitewideDiscount } from "@/lib/actions/profit-protection";
+import { setAutoLockProfitableListings, setDefaultTargetProfit, setEbayAdRate, setEbaySitewideDiscount, setPricingStrategy } from "@/lib/actions/profit-protection";
+import type { PricingStrategy } from "@/lib/listings/shipping-strategy";
 
-export function ProfitProtectionPreferences({ initialDiscountBps, initialAdRateBps, initialAutoLockProfitableListings, initialTargetProfitEnabled, initialTargetProfitCents }: { initialDiscountBps: number; initialAdRateBps: number; initialAutoLockProfitableListings: boolean; initialTargetProfitEnabled: boolean; initialTargetProfitCents: number }) {
+export function ProfitProtectionPreferences({ initialDiscountBps, initialAdRateBps, initialAutoLockProfitableListings, initialTargetProfitEnabled, initialTargetProfitCents, initialPricingStrategy }: { initialDiscountBps: number; initialAdRateBps: number; initialAutoLockProfitableListings: boolean; initialTargetProfitEnabled: boolean; initialTargetProfitCents: number; initialPricingStrategy: string }) {
   const [discount, setDiscount] = useState(String(initialDiscountBps / 100));
   const [adRate, setAdRate] = useState(String(initialAdRateBps / 100));
   const [autoLockProfitable, setAutoLockProfitable] = useState(initialAutoLockProfitableListings);
   const [targetProfitEnabled, setTargetProfitEnabled] = useState(initialTargetProfitEnabled);
   const [targetProfit, setTargetProfit] = useState((initialTargetProfitCents / 100).toFixed(2));
+  const [pricingStrategy, setPricingStrategyState] = useState<PricingStrategy>(initialPricingStrategy === "FREE_SHIPPING" || initialPricingStrategy === "BUYER_PAID_SHIPPING" ? initialPricingStrategy : "AI");
   const [message, setMessage] = useState<{ text: string; error: boolean } | null>(null);
   const [pending, startTransition] = useTransition();
 
@@ -101,6 +103,19 @@ export function ProfitProtectionPreferences({ initialDiscountBps, initialAdRateB
     });
   }
 
+  function saveShippingStrategy() {
+    setMessage(null);
+    startTransition(async () => {
+      try {
+        const result = await setPricingStrategy(pricingStrategy);
+        setPricingStrategyState(result.strategy);
+        setMessage({ text: result.strategy === "AI" ? "AI pricing saved. Free shipping stays preferred; buyer-paid shipping is used only when needed, up to $7." : result.strategy === "FREE_SHIPPING" ? "Free-shipping pricing saved." : "Buyer-paid-shipping pricing saved. Shipping is capped at $7 per listing.", error: false });
+      } catch {
+        setMessage({ text: "Could not save the pricing strategy.", error: true });
+      }
+    });
+  }
+
   return (
     <Card className="overflow-hidden">
       <div className="border-b border-slate-200 px-6 py-5">
@@ -108,6 +123,29 @@ export function ProfitProtectionPreferences({ initialDiscountBps, initialAdRateB
         <p className="mt-1 text-sm text-slate-600">Use your actual promotion settings so Sellfinity protects the profit you expect to keep.</p>
       </div>
       <div className="divide-y divide-slate-200">
+      <div className="p-6">
+        <div className="flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between">
+          <div className="max-w-xl">
+            <div className="flex flex-wrap items-center gap-2">
+              <h2 className="text-sm font-semibold text-slate-900">Pricing strategy</h2>
+              <span className="rounded-full bg-indigo-50 px-2 py-0.5 text-[11px] font-semibold text-indigo-700">AI recommended</span>
+            </div>
+            <p className="mt-2 text-sm leading-6 text-slate-600">Choose how new and suggested prices balance a competitive item price with shipping. AI prefers free shipping, then matches the strongest market price and adds only the shipping needed to reach your profit target.</p>
+            <p className="mt-1 text-xs leading-5 text-slate-500">Buyer-paid shipping never exceeds $7. eBay fees on the item and shipping are included in the profit model.</p>
+          </div>
+          <div className="flex w-full items-end gap-2 sm:w-auto">
+            <label className="w-full sm:w-56">
+              <span className="mb-1 block text-xs font-medium text-slate-600">Strategy</span>
+              <select value={pricingStrategy} disabled={pending} onChange={(event) => setPricingStrategyState(event.target.value as PricingStrategy)} className="h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-900 shadow-sm outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100">
+                <option value="AI">AI decides (recommended)</option>
+                <option value="FREE_SHIPPING">Free shipping</option>
+                <option value="BUYER_PAID_SHIPPING">Buyer-paid shipping</option>
+              </select>
+            </label>
+            <Button disabled={pending} onClick={saveShippingStrategy}>{pending ? "Saving…" : "Save"}</Button>
+          </div>
+        </div>
+      </div>
       <div className="p-6">
         <div className="flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between">
           <div className="max-w-xl">

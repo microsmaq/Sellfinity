@@ -19,7 +19,7 @@ import {
   type TrackResult,
 } from "@/lib/mirror/track";
 import { arbitrageSuggestedPriceCents } from "@/lib/arbitrage/pricing";
-import { estimateMargin } from "@/lib/fees";
+import { discountedEbayPriceCents } from "@/lib/fees";
 import {
   assessProductMatch,
   assessProductMatchRules,
@@ -31,7 +31,7 @@ import { parseImageUrls, serializeImageUrls } from "@/lib/types";
 import { publishListingForUser } from "@/lib/listings/publish";
 import { getProtectedPriceListings } from "@/lib/listings/winner";
 import { isSuggestedPriceCandidate } from "@/lib/listings/suggested-price-candidate";
-import { targetNetProfitPriceCents, trueProfitCents } from "@/lib/listings/cleanup";
+import { listingPricePlan } from "@/lib/listings/shipping-strategy";
 import { improveMainListingImage } from "@/lib/mirror/improve-main-image";
 import { improveListingContent } from "@/lib/mirror/improve-listing-content";
 import { generateMirrorDescription } from "@/lib/mirror/seo";
@@ -218,6 +218,8 @@ export type TargetProfitPriceResult = {
   modeledProfitCents?: number;
   amazonPriceCents?: number;
   amazonShippingCents?: number;
+  buyerShippingCents?: number;
+  shippingStrategy?: string;
   error?: string;
 };
 
@@ -260,6 +262,8 @@ export async function applyTargetProfitPrice(
       amazonShippingCents: true,
       amazonUrl: true,
       amazonInStock: true,
+      ebayRecommendedPriceCents: true,
+      averageCompetitorPriceCents: true,
     },
   });
   if (!adminSource || adminSource.amazonPriceCents <= 0) {
@@ -269,25 +273,14 @@ export async function applyTargetProfitPrice(
     return fail("The admin catalog currently marks this Amazon product out of stock.");
   }
 
-  const newPriceCents = targetNetProfitPriceCents(
-    adminSource.amazonPriceCents,
-    adminSource.amazonShippingCents,
-    target,
-    user.ebaySitewideDiscountBps,
-    user.ebayAdRateBps,
-  );
-  const modeledProfitCents = trueProfitCents(
-    newPriceCents,
-    adminSource.amazonPriceCents,
-    adminSource.amazonShippingCents,
-    user.ebaySitewideDiscountBps,
-    user.ebayAdRateBps,
-  );
+  const plan = listingPricePlan({ amazonCostCents: adminSource.amazonPriceCents, amazonShippingCents: adminSource.amazonShippingCents, currentEbayPriceCents: listing.priceCents, ebayRecommendedPriceCents: adminSource.ebayRecommendedPriceCents, averageCompetitorPriceCents: adminSource.averageCompetitorPriceCents, sitewideDiscountBps: user.ebaySitewideDiscountBps, adRateBps: user.ebayAdRateBps, targetProfitCents: target, pricingStrategy: user.pricingStrategy });
+  const newPriceCents = plan.itemPriceCents;
+  const modeledProfitCents = plan.modeledProfitCents;
 
   const client = await getEbayClientForUser(user.id);
   try {
-    if (newPriceCents !== listing.priceCents) {
-      await client.updateListing(ebayListingId, { priceCents: newPriceCents });
+    if (newPriceCents !== listing.priceCents || plan.buyerShippingCents !== listing.buyerShippingCents) {
+      await client.updateListing(ebayListingId, { priceCents: newPriceCents, buyerShippingCents: plan.buyerShippingCents });
     }
   } catch (error) {
     return fail(
@@ -312,7 +305,7 @@ export async function applyTargetProfitPrice(
     }),
     db.listing.update({
       where: { id: listing.id },
-      data: { priceCents: newPriceCents },
+      data: { priceCents: newPriceCents, buyerShippingCents: plan.buyerShippingCents, shippingStrategy: plan.shippingStrategy },
     }),
   ]);
   await recordListingActivity({
@@ -336,6 +329,8 @@ export async function applyTargetProfitPrice(
     modeledProfitCents,
     amazonPriceCents: adminSource.amazonPriceCents,
     amazonShippingCents: adminSource.amazonShippingCents,
+    buyerShippingCents: plan.buyerShippingCents,
+    shippingStrategy: plan.shippingStrategy,
   };
 }
 
@@ -606,6 +601,8 @@ export type CleanupItemResult = {
   sku?: string;
   profitCents?: number;
   marginPct?: number;
+  buyerShippingCents?: number;
+  shippingStrategy?: string;
   error?: string;
 };
 
@@ -686,16 +683,8 @@ export async function cleanupEbayListings(
         });
         continue;
       }
-      const newPriceCents = arbitrageSuggestedPriceCents(
-        adminSource.amazonPriceCents,
-        listing.priceCents,
-        adminSource.ebayRecommendedPriceCents,
-        adminSource.averageCompetitorPriceCents,
-        adminSource.amazonShippingCents,
-        user.ebaySitewideDiscountBps,
-        user.ebayAdRateBps,
-        user.targetProfitEnabled ? user.targetProfitCents : null,
-      );
+      const plan = listingPricePlan({ amazonCostCents: adminSource.amazonPriceCents, amazonShippingCents: adminSource.amazonShippingCents, currentEbayPriceCents: listing.priceCents, ebayRecommendedPriceCents: adminSource.ebayRecommendedPriceCents, averageCompetitorPriceCents: adminSource.averageCompetitorPriceCents, sitewideDiscountBps: user.ebaySitewideDiscountBps, adRateBps: user.ebayAdRateBps, targetProfitCents: user.targetProfitEnabled ? user.targetProfitCents : null, pricingStrategy: user.pricingStrategy });
+      const newPriceCents = plan.itemPriceCents;
       await db.product.update({
         where: { id: listing.product.id },
         data: {
@@ -707,7 +696,7 @@ export async function cleanupEbayListings(
           suggestedPriceCents: newPriceCents,
         },
       });
-      if (!isSuggestedPriceCandidate({
+      if (plan.buyerShippingCents === listing.buyerShippingCents && !isSuggestedPriceCandidate({
         currentPriceCents: listing.priceCents,
         suggestedPriceCents: newPriceCents,
         amazonPriceCents: adminSource.amazonPriceCents,
@@ -726,21 +715,16 @@ export async function cleanupEbayListings(
         });
         continue;
       }
-      if (newPriceCents !== listing.priceCents) {
+      if (newPriceCents !== listing.priceCents || plan.buyerShippingCents !== listing.buyerShippingCents) {
         await client.updateListing(ebayListingId, {
           priceCents: newPriceCents,
+          buyerShippingCents: plan.buyerShippingCents,
         });
         await db.listing.update({
           where: { id: listing.id },
-          data: { priceCents: newPriceCents },
+          data: { priceCents: newPriceCents, buyerShippingCents: plan.buyerShippingCents, shippingStrategy: plan.shippingStrategy },
         });
-        const margin = estimateMargin(
-          newPriceCents,
-          adminSource.amazonPriceCents,
-          adminSource.amazonShippingCents,
-          user.ebaySitewideDiscountBps,
-          user.ebayAdRateBps,
-        );
+        const buyerTotalCents = discountedEbayPriceCents(newPriceCents, user.ebaySitewideDiscountBps) + plan.buyerShippingCents;
         results.push({
           ebayListingId,
           action: "repriced",
@@ -750,8 +734,10 @@ export async function cleanupEbayListings(
           amazonShippingCents: adminSource.amazonShippingCents,
           amazonUrl: adminSource.amazonUrl,
           sku: adminSource.asin,
-          profitCents: margin.estimatedProfitCents,
-          marginPct: Math.round(margin.marginPct),
+          profitCents: plan.modeledProfitCents,
+          marginPct: buyerTotalCents > 0 ? Math.round(plan.modeledProfitCents / buyerTotalCents * 100) : 0,
+          buyerShippingCents: plan.buyerShippingCents,
+          shippingStrategy: plan.shippingStrategy,
         });
       } else {
         results.push({

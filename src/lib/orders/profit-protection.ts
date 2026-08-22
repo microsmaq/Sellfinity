@@ -7,6 +7,8 @@ import { recordListingActivity } from "@/lib/listings/activity-history";
 import { publishListingForUser } from "@/lib/listings/publish";
 import { getProtectedPriceListings } from "@/lib/listings/winner";
 import { isEndedEbayListingError, verifiedProfitProtectionDecision } from "./profit-protection-policy";
+import { discountedEbayPriceCents, grossUpEbayPriceCents } from "@/lib/fees";
+import { MAX_BUYER_SHIPPING_CENTS, normalizePricingStrategy } from "@/lib/listings/shipping-strategy";
 
 export type ProfitProtectionSummary = {
   checked: number;
@@ -35,7 +37,7 @@ export async function protectVerifiedOrderMargins(
     review: 0,
     failed: 0,
   };
-  const user = await db.user.findUnique({ where: { id: userId }, select: { ebaySitewideDiscountBps: true, ebayAdRateBps: true, targetProfitEnabled: true, targetProfitCents: true } });
+  const user = await db.user.findUnique({ where: { id: userId }, select: { ebaySitewideDiscountBps: true, ebayAdRateBps: true, targetProfitEnabled: true, targetProfitCents: true, pricingStrategy: true } });
   if (!user) return summary;
   const maxVerifiedOrders = options.maxOrders ?? 10;
   const explicitRetry = Boolean(options.orderIds?.length);
@@ -115,6 +117,23 @@ export async function protectVerifiedOrderMargins(
       continue;
     }
 
+    const strategy = normalizePricingStrategy(user.pricingStrategy);
+    const requiredBuyerRevenueCents = discountedEbayPriceCents(decision.targetPriceCents, user.ebaySitewideDiscountBps);
+    let protectedPriceCents = decision.targetPriceCents;
+    let protectedBuyerShippingCents = 0;
+    if (strategy === "BUYER_PAID_SHIPPING") {
+      protectedBuyerShippingCents = Math.min(MAX_BUYER_SHIPPING_CENTS, Math.max(0, requiredBuyerRevenueCents - discountedEbayPriceCents(99, user.ebaySitewideDiscountBps)));
+      protectedPriceCents = Math.max(99, grossUpEbayPriceCents(requiredBuyerRevenueCents - protectedBuyerShippingCents, user.ebaySitewideDiscountBps));
+    } else if (strategy === "AI" && currentPriceCents < decision.targetPriceCents) {
+      const neededAtCurrent = requiredBuyerRevenueCents - discountedEbayPriceCents(currentPriceCents, user.ebaySitewideDiscountBps);
+      protectedBuyerShippingCents = Math.min(MAX_BUYER_SHIPPING_CENTS, Math.max(0, neededAtCurrent));
+      if (neededAtCurrent > MAX_BUYER_SHIPPING_CENTS) {
+        protectedPriceCents = Math.max(99, grossUpEbayPriceCents(requiredBuyerRevenueCents - MAX_BUYER_SHIPPING_CENTS, user.ebaySitewideDiscountBps));
+      } else {
+        protectedPriceCents = currentPriceCents;
+      }
+    }
+
     const recordSuccess = async (ebayListingId: string) => {
       try {
         await recordListingActivity({
@@ -127,7 +146,7 @@ export async function protectVerifiedOrderMargins(
             ebayListingId,
             amazonUrl: order.listing.product.supplierUrl,
             sourcePriceCents: verifiedCostCents,
-            listingPriceCents: decision.targetPriceCents,
+            listingPriceCents: protectedPriceCents,
             ok: true,
           }],
         });
@@ -143,7 +162,9 @@ export async function protectVerifiedOrderMargins(
           status: "ENDED",
           endedAt: new Date(),
           endedReason: "MANUAL",
-          priceCents: decision.targetPriceCents,
+          priceCents: protectedPriceCents,
+          buyerShippingCents: protectedBuyerShippingCents,
+          shippingStrategy: protectedBuyerShippingCents > 0 ? "BUYER_PAID_SHIPPING" : "FREE_SHIPPING",
           quantity: Math.max(1, order.listing.quantity),
         },
       });
@@ -155,10 +176,10 @@ export async function protectVerifiedOrderMargins(
         profitProtectionStatus: "RELISTED",
         profitProtectionReviewedAt: new Date(),
         profitProtectionOldPriceCents: currentPriceCents,
-        profitProtectionNewPriceCents: decision.targetPriceCents,
+        profitProtectionNewPriceCents: protectedPriceCents,
         profitProtectionError: null,
       } });
-      latestPriceByListing.set(order.listingId, decision.targetPriceCents);
+      latestPriceByListing.set(order.listingId, protectedPriceCents);
       latestEbayIdByListing.set(order.listingId, published.ebayListingId);
       await recordSuccess(published.ebayListingId);
       summary.adjusted++;
@@ -177,7 +198,7 @@ export async function protectVerifiedOrderMargins(
           profitProtectionStatus: "FAILED",
           profitProtectionReviewedAt: new Date(),
           profitProtectionOldPriceCents: currentPriceCents,
-          profitProtectionNewPriceCents: decision.targetPriceCents,
+          profitProtectionNewPriceCents: protectedPriceCents,
           profitProtectionError: message,
         } });
         summary.failed++;
@@ -191,7 +212,7 @@ export async function protectVerifiedOrderMargins(
         profitProtectionStatus: "REVIEW_REQUIRED",
         profitProtectionReviewedAt: new Date(),
         profitProtectionOldPriceCents: currentPriceCents,
-        profitProtectionNewPriceCents: decision.targetPriceCents,
+        profitProtectionNewPriceCents: protectedPriceCents,
         profitProtectionError: "The listing is not active on eBay.",
       } });
       summary.review++;
@@ -200,18 +221,18 @@ export async function protectVerifiedOrderMargins(
 
     try {
       ebay ??= await getEbayClientForUser(userId);
-      await ebay.updateListing(currentEbayListingId, { priceCents: decision.targetPriceCents });
+      await ebay.updateListing(currentEbayListingId, { priceCents: protectedPriceCents, buyerShippingCents: protectedBuyerShippingCents });
       await db.$transaction([
-        db.listing.update({ where: { id: order.listingId }, data: { priceCents: decision.targetPriceCents } }),
+        db.listing.update({ where: { id: order.listingId }, data: { priceCents: protectedPriceCents, buyerShippingCents: protectedBuyerShippingCents, shippingStrategy: protectedBuyerShippingCents > 0 ? "BUYER_PAID_SHIPPING" : "FREE_SHIPPING" } }),
         db.order.update({ where: { id: order.id }, data: {
           profitProtectionStatus: "ADJUSTED",
           profitProtectionReviewedAt: new Date(),
           profitProtectionOldPriceCents: currentPriceCents,
-          profitProtectionNewPriceCents: decision.targetPriceCents,
+          profitProtectionNewPriceCents: protectedPriceCents,
           profitProtectionError: null,
         } }),
       ]);
-      latestPriceByListing.set(order.listingId, decision.targetPriceCents);
+      latestPriceByListing.set(order.listingId, protectedPriceCents);
       await recordSuccess(currentEbayListingId);
       summary.adjusted++;
     } catch (error) {
@@ -229,7 +250,7 @@ export async function protectVerifiedOrderMargins(
         profitProtectionStatus: "FAILED",
         profitProtectionReviewedAt: new Date(),
         profitProtectionOldPriceCents: currentPriceCents,
-        profitProtectionNewPriceCents: decision.targetPriceCents,
+        profitProtectionNewPriceCents: protectedPriceCents,
         profitProtectionError: message,
       } });
       summary.failed++;

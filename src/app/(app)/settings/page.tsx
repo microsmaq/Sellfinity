@@ -78,6 +78,7 @@ export default async function SettingsPage({
           initialAutoLockProfitableListings={user.autoLockProfitableListings}
           initialTargetProfitEnabled={user.targetProfitEnabled}
           initialTargetProfitCents={user.targetProfitCents}
+          initialPricingStrategy={user.pricingStrategy}
         />
 
         {callback && (

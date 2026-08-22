@@ -18,6 +18,7 @@ import type { CleanupItemResult } from "@/lib/actions/ebay-listings";
 import {
   trueProfitCents,
 } from "@/lib/listings/cleanup";
+import { trueProfitWithBuyerShippingCents } from "@/lib/listings/shipping-strategy";
 import { assessPriceCompetitiveness } from "@/lib/arbitrage/price-competitiveness";
 import { formatCents, parseDollarsToCents } from "@/lib/money";
 import { Badge, Button, Card, cx } from "@/components/ui";
@@ -32,6 +33,8 @@ export type EbayRow = {
   ebayListingId: string;
   title: string;
   priceCents: number;
+  shippingStrategy: string | null;
+  buyerShippingCents: number | null;
   url: string;
   imageUrl: string | null;
   quantity: number | null;
@@ -53,6 +56,7 @@ export type EbayRow = {
     bestSellingPriceCents: number;
   } | null;
   suggestedPriceCents: number | null;
+  suggestedBuyerShippingCents: number | null;
   marketUpdatedAt?: string | null;
   performance?: {
     units7d: number;
@@ -162,14 +166,15 @@ function competitiveHealthSortValue(row: EbayRow, sitewideDiscountBps = 0, adRat
 
 function currentProfit(row: EbayRow, sitewideDiscountBps = 0, adRateBps = 300): { profitCents: number; marginPct: number } | null {
   if (!row.match) return null;
-  const profitCents = trueProfitCents(
+  const profitCents = trueProfitWithBuyerShippingCents(
     row.priceCents,
+    row.buyerShippingCents ?? 0,
     row.match.amazonPriceCents,
     row.match.shippingCostCents,
     sitewideDiscountBps,
     adRateBps,
   );
-  const buyerPriceCents = discountedEbayPriceCents(row.priceCents, sitewideDiscountBps);
+  const buyerPriceCents = discountedEbayPriceCents(row.priceCents, sitewideDiscountBps) + (row.buyerShippingCents ?? 0);
   const marginPct = buyerPriceCents > 0
     ? Math.round((profitCents / buyerPriceCents) * 100)
     : 0;
@@ -178,7 +183,7 @@ function currentProfit(row: EbayRow, sitewideDiscountBps = 0, adRateBps = 300): 
 
 function canApplySuggestedPrice(row: EbayRow, sitewideDiscountBps: number, adRateBps: number): boolean {
   if (!row.match) return false;
-  return isSuggestedPriceCandidate({
+  return (row.suggestedBuyerShippingCents !== null && row.suggestedBuyerShippingCents !== (row.buyerShippingCents ?? 0)) || isSuggestedPriceCandidate({
     currentPriceCents: row.priceCents,
     suggestedPriceCents: row.suggestedPriceCents,
     amazonPriceCents: row.match.amazonPriceCents,
@@ -827,7 +832,10 @@ export function EbayListingsTable({
               return [{
                 ...row,
                 priceCents: r.newPriceCents ?? row.priceCents,
+                buyerShippingCents: r.buyerShippingCents ?? row.buyerShippingCents,
+                shippingStrategy: r.shippingStrategy ?? row.shippingStrategy,
                 suggestedPriceCents: r.suggestedPriceCents ?? row.suggestedPriceCents,
+                suggestedBuyerShippingCents: r.buyerShippingCents ?? row.suggestedBuyerShippingCents,
                 match: {
                   ...row.match,
                   sku: r.sku ?? row.match.sku,
@@ -913,7 +921,7 @@ export function EbayListingsTable({
         }
         if (result.ok && result.newPriceCents !== undefined) {
           succeeded++;
-          const buyerPrice = discountedEbayPriceCents(result.newPriceCents, sitewideDiscountBps);
+          const buyerPrice = discountedEbayPriceCents(result.newPriceCents, sitewideDiscountBps) + (result.buyerShippingCents ?? 0);
           const marginPct = buyerPrice > 0 && result.modeledProfitCents !== undefined
             ? Math.round((result.modeledProfitCents / buyerPrice) * 100)
             : 0;
@@ -924,6 +932,9 @@ export function EbayListingsTable({
             return {
               ...row,
               priceCents: result.newPriceCents!,
+              buyerShippingCents: result.buyerShippingCents ?? row.buyerShippingCents,
+              shippingStrategy: result.shippingStrategy ?? row.shippingStrategy,
+              suggestedBuyerShippingCents: result.buyerShippingCents ?? row.suggestedBuyerShippingCents,
               source: row.source ? {
                 ...row.source,
                 priceCents: amazonPrice,
@@ -1620,6 +1631,7 @@ export function EbayListingsTable({
               <ListingSortHeader label="Amazon landed cost" value="amazonPrice" active={sortKey === "amazonPrice"} descending={sortDescending} onSort={sortBy} />
               <ListingSortHeader label="Equivalent eBay item" value="ebayTitle" active={sortKey === "ebayTitle"} descending={sortDescending} onSort={sortBy} />
               <ListingSortHeader label="eBay price" value="price" active={sortKey === "price"} descending={sortDescending} onSort={sortBy} />
+              <th className="sticky top-0 z-30 bg-slate-50 px-4 py-3 text-left">Shipping strategy</th>
               <ListingSortHeader label="Competitor avg" value="averagePrice" active={sortKey === "averagePrice"} descending={sortDescending} onSort={sortBy} />
               <ListingSortHeader label="eBay recommended" value="recommendedPrice" active={sortKey === "recommendedPrice"} descending={sortDescending} onSort={sortBy} />
               <ListingSortHeader label="Suggested price" value="suggestedPrice" active={sortKey === "suggestedPrice"} descending={sortDescending} onSort={sortBy} />
@@ -1688,6 +1700,7 @@ export function EbayListingsTable({
                           {!r.verifiedWinner && r.priceLocked && <Badge tone="indigo">🔒 Price locked · profitable sale</Badge>}
                           {r.source && <Badge tone={r.source.stock > 0 ? "green" : "red"}>{r.source.stock > 0 ? `${r.source.stock} in stock` : "Unavailable"}</Badge>}
                           {r.sourceAssessment && <Badge tone={r.sourceAssessment.confidence !== null && r.sourceAssessment.confidence >= 95 ? "green" : "amber"}>{r.sourceAssessment.verdict} {r.sourceAssessment.confidence ?? "—"}%</Badge>}
+                          <Badge tone={(r.buyerShippingCents ?? 0) > 0 ? "indigo" : "slate"}>{(r.buyerShippingCents ?? 0) > 0 ? `${formatCents(r.buyerShippingCents ?? 0)} shipping` : r.shippingStrategy ? "Free shipping" : "Shipping unknown"}</Badge>
                         </div>
                       </div>
                     </div>
@@ -1717,6 +1730,9 @@ export function EbayListingsTable({
                       }}
                     />
                   </td>
+                  <td className="whitespace-nowrap px-4 py-4 text-left">
+                    {r.shippingStrategy ? <><Badge tone={(r.buyerShippingCents ?? 0) > 0 ? "indigo" : "slate"}>{(r.buyerShippingCents ?? 0) > 0 ? "Buyer paid" : "Free shipping"}</Badge>{(r.buyerShippingCents ?? 0) > 0 && <p className="mt-1 text-xs font-medium text-slate-600">{formatCents(r.buyerShippingCents ?? 0)}</p>}</> : <span className="text-slate-400">Unknown</span>}
+                  </td>
                   <td className="whitespace-nowrap px-4 py-4 text-right tabular-nums">{r.market ? formatCents(r.market.averageCompetitorPriceCents) : "—"}<p className="mt-0.5 text-[10px] text-slate-400">{formatFreshness(r.marketUpdatedAt)}</p></td>
                   <td className="whitespace-nowrap px-4 py-4 text-right tabular-nums">{r.market ? <span title="Sellfinity recommendation derived from the strongest comparable eBay listing." className="font-medium text-blue-700">{formatCents(r.market.bestSellingPriceCents)}</span> : "—"}</td>
                   <td className="whitespace-nowrap px-4 py-4 text-right tabular-nums">
@@ -1735,6 +1751,7 @@ export function EbayListingsTable({
                         }
                       >
                         {formatCents(r.suggestedPriceCents)}
+                        {r.suggestedBuyerShippingCents !== null && <p className="mt-0.5 whitespace-nowrap text-[10px] font-normal text-slate-500">{r.suggestedBuyerShippingCents > 0 ? `+ ${formatCents(r.suggestedBuyerShippingCents)} buyer shipping` : "Free shipping"}</p>}
                         <p className="mt-0.5 whitespace-nowrap text-[10px] font-normal text-slate-500">
                           {Math.round(
                             (trueProfitCents(
