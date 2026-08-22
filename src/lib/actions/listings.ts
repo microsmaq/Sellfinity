@@ -227,4 +227,3 @@ export async function updateListing(
   revalidate();
   return { done: 1, failed: 0 };
 }
-
