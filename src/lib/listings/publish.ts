@@ -91,6 +91,7 @@ export async function publishListingForUser(
     sku: draft.product.sku,
     category: draft.product.category,
     brand: draft.product.brand,
+    buyerShippingCents: draft.buyerShippingCents,
   };
   const validationError = validateListingInput(input);
   if (validationError) return { ok: false, error: validationError };
@@ -144,3 +145,4 @@ export async function discardFailedMirrorDraft(
     await db.product.delete({ where: { id: listing.productId } });
   }
 }
+
