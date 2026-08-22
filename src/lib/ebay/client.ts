@@ -171,4 +171,3 @@ export function validateListingInput(input: CreateListingInput): string | null {
   if ((input.buyerShippingCents ?? 0) < 0 || (input.buyerShippingCents ?? 0) > 700) return "Buyer-paid shipping must be between $0 and $7";
   return null;
 }
-
