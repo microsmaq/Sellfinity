@@ -9,6 +9,11 @@ export type RetainedEbayListing = {
   quantity: number;
   imageUrlsJson: string;
   publishedAt: Date | null;
+  updatedAt: Date;
+};
+
+export type RetainedEbaySnapshot = RemoteListing & {
+  updatedAt: Date;
 };
 
 /**
@@ -19,20 +24,37 @@ export function retainedEbayListings(
   listings: RetainedEbayListing[],
   suppressedEbayIds: ReadonlySet<string>,
   ebayItemHost: string,
+  snapshots: RetainedEbaySnapshot[] = [],
 ): RemoteListing[] {
-  return listings.flatMap((listing) =>
-    listing.status === "ACTIVE" &&
-    listing.ebayListingId &&
-    !suppressedEbayIds.has(listing.ebayListingId)
-      ? [{
-          ebayListingId: listing.ebayListingId,
-          title: listing.title,
-          priceCents: listing.priceCents,
-          url: `${ebayItemHost}/itm/${listing.ebayListingId}`,
-          imageUrl: parseImageUrls(listing.imageUrlsJson)[0] ?? null,
-          quantity: listing.quantity,
-          listingDate: listing.publishedAt,
-        }]
-      : [],
-  );
+  const localByEbayId = new Map(listings.flatMap((listing) =>
+    listing.ebayListingId ? [[listing.ebayListingId, listing] as const] : [],
+  ));
+  const retained = new Map<string, { listing: RemoteListing; updatedAt: Date }>();
+
+  for (const snapshot of snapshots) {
+    if (suppressedEbayIds.has(snapshot.ebayListingId)) continue;
+    const local = localByEbayId.get(snapshot.ebayListingId);
+    if (local && local.status !== "ACTIVE") continue;
+    retained.set(snapshot.ebayListingId, { listing: snapshot, updatedAt: snapshot.updatedAt });
+  }
+
+  for (const listing of listings) {
+    if (listing.status !== "ACTIVE" || !listing.ebayListingId || suppressedEbayIds.has(listing.ebayListingId)) continue;
+    const existing = retained.get(listing.ebayListingId);
+    if (existing && existing.updatedAt > listing.updatedAt) continue;
+    retained.set(listing.ebayListingId, {
+      updatedAt: listing.updatedAt,
+      listing: {
+        ebayListingId: listing.ebayListingId,
+        title: listing.title,
+        priceCents: listing.priceCents,
+        url: `${ebayItemHost}/itm/${listing.ebayListingId}`,
+        imageUrl: parseImageUrls(listing.imageUrlsJson)[0] ?? null,
+        quantity: listing.quantity,
+        listingDate: listing.publishedAt,
+      },
+    });
+  }
+
+  return [...retained.values()].map((entry) => entry.listing);
 }

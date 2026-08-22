@@ -68,6 +68,7 @@ model User {
   syncRuns                SyncRun[]
   syncIssues              SyncIssue[]
   ebayListingSuppressions EbayListingSuppression[]
+  ebayListingSnapshots    EbayListingSnapshot[]
   ebayMarketMetrics       EbayMarketMetric[]
   hiddenArbitrageItems    HiddenArbitrageItem[]
   mirrorBatches           MirrorBatch[]
@@ -377,6 +378,28 @@ model EbayConnection {
   refreshToken         String?
   connectedAt          DateTime?
   user                 User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// Retained copy of eBay's active-listing response. Normal page loads read
+// this table; only an intentional Smart Sync refresh calls eBay again.
+model EbayListingSnapshot {
+  id             String    @id @default(cuid())
+  userId         String
+  ebayListingId  String
+  title          String
+  priceCents     Int
+  url            String
+  imageUrl       String?
+  quantity       Int?
+  listingDate    DateTime?
+  lastSeenAt     DateTime  @default(now())
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, ebayListingId])
+  @@index([userId, lastSeenAt])
 }
 
 // A product the user imported from the sourcing feed or mirrored from an

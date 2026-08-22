@@ -239,6 +239,11 @@ const SMART_SYNC_OPTION_META: Array<{
   description: string;
 }> = [
   {
+    key: "refreshEbayListings",
+    label: "Refresh eBay listing data",
+    description: "Call eBay once for this run and save the latest active-listing details locally.",
+  },
+  {
     key: "refreshAmazonData",
     label: "Refresh Amazon cost & availability",
     description: "Sync the latest administrator-stored price, shipping, stock, and product details.",
@@ -894,6 +899,7 @@ export function EbayListingsTable({
         const started = await prepareConfigurableSmartSync(smartSyncOptions);
         if (started.error) throw new Error(started.error);
         const candidates = started.candidates;
+        const syncTotal = candidates.length + (started.ebayRefresh ? 1 : 0);
         const totals = {
           completed: 0,
           successful: 0,
@@ -904,7 +910,32 @@ export function EbayListingsTable({
           relisted: 0,
         };
         const allResults: SmartSyncItemResult[] = [];
-        setSyncProgress({ stage: "running", total: candidates.length, ...totals });
+        if (started.ebayRefresh) {
+          const refresh = started.ebayRefresh;
+          const refreshResult: SmartSyncItemResult = {
+            listingId: "ebay-listing-cache",
+            ebayListingId: null,
+            title: "eBay listing data refresh",
+            status: refresh.status === "success" ? "success" : "error",
+            outcome: refresh.status === "success" ? "updated" : "unchanged",
+            actions: refresh.status === "success"
+              ? [`${refresh.cached} active listings cached`, `${refresh.localUpdated} tracked listings reconciled`, `${refresh.untracked} eBay-only listings retained`]
+              : [],
+            originalPriceCents: 0,
+            newPriceCents: 0,
+            error: refresh.error,
+          };
+          allResults.push(refreshResult);
+          totals.completed += 1;
+          if (refresh.status === "success") {
+            totals.successful += 1;
+            totals.updated += 1;
+          } else {
+            totals.errors += 1;
+          }
+          setSyncResults([...allResults]);
+        }
+        setSyncProgress({ stage: "running", total: syncTotal, ...totals });
 
         let cursor = 0;
         async function worker() {
@@ -941,7 +972,7 @@ export function EbayListingsTable({
             else if (result.outcome === "relisted") totals.relisted += 1;
 
             setSyncResults([...allResults]);
-            setSyncProgress({ stage: "running", total: candidates.length, ...totals });
+            setSyncProgress({ stage: "running", total: syncTotal, ...totals });
 
             if (result.ebayListingId && result.outcome === "ended") {
               setRows((current) => current.filter((row) => row.ebayListingId !== result.ebayListingId));
@@ -967,9 +998,9 @@ export function EbayListingsTable({
           }));
         if (changedPrices.length > 0) await recordSuggestedPriceActivity(changedPrices);
 
-        setSyncProgress({ stage: "complete", total: candidates.length, ...totals });
+        setSyncProgress({ stage: "complete", total: syncTotal, ...totals });
         setNotice({
-          text: candidates.length === 0
+          text: syncTotal === 0
             ? "Smart Sync found no eligible listings for the selected operations."
             : `Smart Sync complete: ${totals.successful} successful, ${totals.needsAttention} need attention, and ${totals.errors} errors. ${totals.updated} updated, ${totals.ended} ended, and ${totals.relisted} relisted.`,
           error: totals.errors > 0,
@@ -1391,7 +1422,7 @@ export function EbayListingsTable({
             <p className="text-[11px] leading-5 text-slate-500">Price-protected and verified-winner listings remain locked unless you change them separately with confirmation.</p>
             <div className="flex flex-wrap items-center gap-2">
               <button type="button" disabled={pending} onClick={() => setSmartSyncOptions({ ...DEFAULT_SMART_SYNC_OPTIONS })} className="rounded-lg px-2.5 py-2 text-xs font-semibold text-slate-500 transition hover:bg-slate-100 hover:text-slate-800 disabled:opacity-50">Recommended</button>
-              <button type="button" disabled={pending} onClick={() => setSmartSyncOptions({ refreshAmazonData: true, applySuggestedPrices: true, updateListingImages: true, endUnavailableListings: true, relistRecoveredProducts: true })} className="rounded-lg px-2.5 py-2 text-xs font-semibold text-slate-500 transition hover:bg-slate-100 hover:text-slate-800 disabled:opacity-50">Select all</button>
+              <button type="button" disabled={pending} onClick={() => setSmartSyncOptions({ refreshEbayListings: true, refreshAmazonData: true, applySuggestedPrices: true, updateListingImages: true, endUnavailableListings: true, relistRecoveredProducts: true })} className="rounded-lg px-2.5 py-2 text-xs font-semibold text-slate-500 transition hover:bg-slate-100 hover:text-slate-800 disabled:opacity-50">Select all</button>
               <Button disabled={pending || !hasSelectedSmartSyncOption(smartSyncOptions)} onClick={syncListingHealth} className="min-w-36 border-0 bg-gradient-to-r from-indigo-600 to-violet-600 text-white shadow-md shadow-indigo-200/70 hover:from-indigo-500 hover:to-violet-500">
                 <SmartSyncIcon spinning={pending} />
                 {pending ? "Syncing…" : "Run Smart Sync"}

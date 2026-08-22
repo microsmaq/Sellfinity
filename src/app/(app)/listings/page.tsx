@@ -28,7 +28,7 @@ export default async function ListingsPage() {
   // scan research was copied into their listing records.
   await backfillRetainedArbitrageResearchForUser(user.id);
 
-  const [initialProducts, initialListings, connection, suppressions, cachedMarketMetrics, priceProtection, recentOrders, recentActivity] = await Promise.all([
+  const [initialProducts, initialListings, connection, suppressions, ebaySnapshots, cachedMarketMetrics, priceProtection, recentOrders, recentActivity] = await Promise.all([
     db.product.findMany({
       where: { userId: user.id },
       include: { listings: { where: { status: { in: ["DRAFT", "ACTIVE"] } } } },
@@ -56,6 +56,21 @@ export default async function ListingsPage() {
     db.ebayListingSuppression.findMany({
       where: { userId: user.id },
       select: { ebayListingId: true },
+    }),
+    db.ebayListingSnapshot.findMany({
+      where: { userId: user.id },
+      select: {
+        ebayListingId: true,
+        title: true,
+        priceCents: true,
+        url: true,
+        imageUrl: true,
+        quantity: true,
+        listingDate: true,
+        updatedAt: true,
+      },
+      orderBy: { lastSeenAt: "desc" },
+      take: 2_000,
     }),
     db.ebayMarketMetric.findMany({
       where: { userId: user.id },
@@ -134,7 +149,7 @@ export default async function ListingsPage() {
       ? "https://www.ebay.com"
       : "https://sandbox.ebay.com";
   const suppressedEbayIds = new Set(suppressions.map((item) => item.ebayListingId));
-  const cachedRemote = retainedEbayListings(listings, suppressedEbayIds, ebayItemHost);
+  const cachedRemote = retainedEbayListings(listings, suppressedEbayIds, ebayItemHost, ebaySnapshots);
   const localByEbayId = new Map(
     listings.flatMap((listing) => listing.ebayListingId ? [[listing.ebayListingId, listing] as const] : []),
   );

@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import type { Prisma } from "@prisma/client";
 import { requireUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { getEbayClientForUser } from "@/lib/ebay";
@@ -863,6 +864,16 @@ export type SmartSyncCandidate = {
   title: string;
 };
 
+export type EbaySnapshotRefreshResult = {
+  status: "success" | "error";
+  checked: number;
+  cached: number;
+  localUpdated: number;
+  restored: number;
+  untracked: number;
+  error?: string;
+};
+
 export type SmartSyncItemResult = {
   listingId: string;
   ebayListingId: string | null;
@@ -875,29 +886,124 @@ export type SmartSyncItemResult = {
   error?: string;
 };
 
+async function refreshEbayListingSnapshotsForUser(userId: string): Promise<EbaySnapshotRefreshResult> {
+  const client = await getEbayClientForUser(userId);
+  const response = await client.getSellerListings(userId);
+  const remote = [...new Map(response.map((listing) => [listing.ebayListingId, listing])).values()];
+  const local = await db.listing.findMany({
+    where: { userId, ebayListingId: { in: remote.map((listing) => listing.ebayListingId) } },
+    select: { id: true, ebayListingId: true, status: true, endedReason: true },
+  });
+  const localByEbayId = new Map(local.flatMap((listing) =>
+    listing.ebayListingId ? [[listing.ebayListingId, listing] as const] : [],
+  ));
+  const now = new Date();
+  let localUpdated = 0;
+  let restored = 0;
+
+  // Keep transactions small enough for hosted Postgres connection limits.
+  for (let offset = 0; offset < remote.length; offset += 50) {
+    const batch = remote.slice(offset, offset + 50);
+    await db.$transaction(batch.flatMap((listing) => {
+      const localListing = localByEbayId.get(listing.ebayListingId);
+      const writes: Prisma.PrismaPromise<unknown>[] = [db.ebayListingSnapshot.upsert({
+        where: { userId_ebayListingId: { userId, ebayListingId: listing.ebayListingId } },
+        create: {
+          userId,
+          ebayListingId: listing.ebayListingId,
+          title: listing.title,
+          priceCents: listing.priceCents,
+          url: listing.url,
+          imageUrl: listing.imageUrl,
+          quantity: listing.quantity,
+          listingDate: listing.listingDate,
+          lastSeenAt: now,
+        },
+        update: {
+          title: listing.title,
+          priceCents: listing.priceCents,
+          url: listing.url,
+          imageUrl: listing.imageUrl,
+          quantity: listing.quantity,
+          listingDate: listing.listingDate,
+          lastSeenAt: now,
+        },
+      })];
+      if (localListing) {
+        localUpdated += 1;
+        const shouldRestore = localListing.status === "ENDED" &&
+          (localListing.endedReason === null || localListing.endedReason === "EBAY_ENDED");
+        if (shouldRestore) restored += 1;
+        writes.push(db.listing.update({
+          where: { id: localListing.id },
+          data: {
+            title: listing.title,
+            priceCents: listing.priceCents,
+            ...(listing.quantity !== null && { quantity: listing.quantity }),
+            ...(shouldRestore && { status: "ACTIVE", endedAt: null, endedReason: null }),
+          },
+        }));
+      }
+      return writes;
+    }));
+  }
+
+  return {
+    status: "success",
+    checked: remote.length,
+    cached: remote.length,
+    localUpdated,
+    restored,
+    untracked: Math.max(0, remote.length - localUpdated),
+  };
+}
+
 export async function prepareConfigurableSmartSync(
   options: SmartSyncOptions,
-): Promise<{ candidates: SmartSyncCandidate[]; error?: string }> {
+): Promise<{ candidates: SmartSyncCandidate[]; ebayRefresh?: EbaySnapshotRefreshResult; error?: string }> {
   const user = await requireUser();
   if (!hasSelectedSmartSyncOption(options)) {
     return { candidates: [], error: "Select at least one Smart Sync action." };
   }
-  const candidates = await db.listing.findMany({
-    where: {
-      userId: user.id,
-      OR: [
-        { status: "ACTIVE", ebayListingId: { not: null } },
-        ...(options.relistRecoveredProducts
-          ? [{ status: "ENDED" as const, endedReason: { in: [...SMART_SYNC_RECOVERABLE_END_REASONS] } }]
-          : []),
-      ],
-    },
-    select: { id: true, title: true },
-    orderBy: [{ status: "asc" }, { publishedAt: "asc" }, { id: "asc" }],
-    take: 1_000,
-  });
+  let ebayRefresh: EbaySnapshotRefreshResult | undefined;
+  if (options.refreshEbayListings) {
+    try {
+      ebayRefresh = await refreshEbayListingSnapshotsForUser(user.id);
+    } catch (error) {
+      ebayRefresh = {
+        status: "error",
+        checked: 0,
+        cached: 0,
+        localUpdated: 0,
+        restored: 0,
+        untracked: 0,
+        error: error instanceof Error ? error.message.slice(0, 500) : "eBay listing refresh failed.",
+      };
+    }
+  }
+  const activeListingActionSelected = options.refreshAmazonData ||
+    options.applySuggestedPrices ||
+    options.updateListingImages ||
+    options.endUnavailableListings;
+  const listingScopes = [
+    ...(activeListingActionSelected
+      ? [{ status: "ACTIVE" as const, ebayListingId: { not: null } }]
+      : []),
+    ...(options.relistRecoveredProducts
+      ? [{ status: "ENDED" as const, endedReason: { in: [...SMART_SYNC_RECOVERABLE_END_REASONS] } }]
+      : []),
+  ];
+  const candidates = listingScopes.length > 0
+    ? await db.listing.findMany({
+        where: { userId: user.id, OR: listingScopes },
+        select: { id: true, title: true },
+        orderBy: [{ status: "asc" }, { publishedAt: "asc" }, { id: "asc" }],
+        take: 1_000,
+      })
+    : [];
   return {
     candidates: candidates.map((listing) => ({ listingId: listing.id, title: listing.title })),
+    ebayRefresh,
   };
 }
 

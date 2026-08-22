@@ -1,4 +1,5 @@
 export type SmartSyncOptions = {
+  refreshEbayListings: boolean;
   refreshAmazonData: boolean;
   applySuggestedPrices: boolean;
   updateListingImages: boolean;
@@ -7,6 +8,7 @@ export type SmartSyncOptions = {
 };
 
 export const DEFAULT_SMART_SYNC_OPTIONS: SmartSyncOptions = {
+  refreshEbayListings: true,
   refreshAmazonData: true,
   applySuggestedPrices: false,
   updateListingImages: false,
