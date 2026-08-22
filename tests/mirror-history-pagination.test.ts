@@ -5,8 +5,8 @@ import {
 } from "@/lib/mirror/history-pagination";
 
 describe("publishing history pagination", () => {
-  it("hides price optimization activity", () => {
-    expect(HIDDEN_PUBLISHING_HISTORY_SOURCES).toContain("PRICE_OPTIMIZATION");
+  it("shows price optimization activity in publishing history", () => {
+    expect(HIDDEN_PUBLISHING_HISTORY_SOURCES).not.toContain("PRICE_OPTIMIZATION");
   });
 
   it("paginates every visible historical record", () => {

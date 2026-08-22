@@ -6,6 +6,7 @@ import { db } from "@/lib/db";
 import { getEbayClientForUser } from "@/lib/ebay";
 import { EbayApiError } from "@/lib/ebay/client";
 import { isAlreadyEndedEbayError } from "@/lib/ebay/errors";
+import { isEbayPicturePolicyError, prepareEbayImages } from "@/lib/ebay/image-policy";
 import { researchEbayMarket } from "@/lib/ebay/market";
 import type { ListingMarketMetrics } from "@/lib/listings/market-metrics";
 import {
@@ -592,7 +593,10 @@ export async function endEbayListing(
 
 export type CleanupItemResult = {
   ebayListingId: string;
+  listingId?: string;
+  title?: string;
   action: "ok" | "repriced" | "ended" | "error";
+  originalPriceCents?: number;
   newPriceCents?: number;
   suggestedPriceCents?: number;
   amazonPriceCents?: number;
@@ -645,10 +649,18 @@ export async function cleanupEbayListings(
       results.push({ ebayListingId, action: "error", error: "Not tracked/active" });
       continue;
     }
+    const resultIdentity = {
+      ebayListingId,
+      listingId: listing.id,
+      title: listing.title,
+      originalPriceCents: listing.priceCents,
+    };
+    let attemptedPriceCents = item.suggestedPriceCents ?? undefined;
     if (winnerListings.has(listing.id)) {
       results.push({
-        ebayListingId,
+        ...resultIdentity,
         action: "ok",
+        newPriceCents: listing.priceCents,
         suggestedPriceCents: listing.priceCents,
       });
       continue;
@@ -669,7 +681,7 @@ export async function cleanupEbayListings(
       });
       if (!adminSource || adminSource.amazonPriceCents <= 0) {
         results.push({
-          ebayListingId,
+          ...resultIdentity,
           action: "error",
           error: "No admin-stored Amazon price is available for this ASIN.",
         });
@@ -677,7 +689,7 @@ export async function cleanupEbayListings(
       }
       if (!adminSource.amazonInStock) {
         results.push({
-          ebayListingId,
+          ...resultIdentity,
           action: "error",
           error: "The admin catalog currently marks this Amazon product out of stock.",
         });
@@ -685,6 +697,7 @@ export async function cleanupEbayListings(
       }
       const plan = listingPricePlan({ amazonCostCents: adminSource.amazonPriceCents, amazonShippingCents: adminSource.amazonShippingCents, currentEbayPriceCents: listing.priceCents, ebayRecommendedPriceCents: adminSource.ebayRecommendedPriceCents, averageCompetitorPriceCents: adminSource.averageCompetitorPriceCents, sitewideDiscountBps: user.ebaySitewideDiscountBps, adRateBps: user.ebayAdRateBps, targetProfitCents: user.targetProfitEnabled ? user.targetProfitCents : null, pricingStrategy: user.pricingStrategy });
       const newPriceCents = plan.itemPriceCents;
+      attemptedPriceCents = newPriceCents;
       await db.product.update({
         where: { id: listing.product.id },
         data: {
@@ -705,8 +718,9 @@ export async function cleanupEbayListings(
         adRateBps: user.ebayAdRateBps,
       })) {
         results.push({
-          ebayListingId,
+          ...resultIdentity,
           action: "ok",
+          newPriceCents: listing.priceCents,
           suggestedPriceCents: newPriceCents,
           amazonPriceCents: adminSource.amazonPriceCents,
           amazonShippingCents: adminSource.amazonShippingCents,
@@ -716,17 +730,40 @@ export async function cleanupEbayListings(
         continue;
       }
       if (newPriceCents !== listing.priceCents || plan.buyerShippingCents !== listing.buyerShippingCents) {
-        await client.updateListing(ebayListingId, {
+        const listingUpdate = {
           priceCents: newPriceCents,
-          buyerShippingCents: plan.buyerShippingCents,
-        });
+          ...(plan.buyerShippingCents !== listing.buyerShippingCents && {
+            buyerShippingCents: plan.buyerShippingCents,
+          }),
+        };
+        let repairedImageUrls: string[] | undefined;
+        try {
+          await client.updateListing(ebayListingId, listingUpdate);
+        } catch (updateError) {
+          const updateMessage = updateError instanceof Error ? updateError.message : "eBay price update failed";
+          if (!isEbayPicturePolicyError(updateMessage)) throw updateError;
+          const prepared = await prepareEbayImages(user.id, parseImageUrls(listing.imageUrlsJson));
+          if (prepared.imageUrls.length === 0) {
+            throw new Error("The listing image does not meet eBay's 500-pixel requirement and no compliant replacement could be prepared.");
+          }
+          repairedImageUrls = prepared.imageUrls;
+          await client.updateListing(ebayListingId, {
+            ...listingUpdate,
+            imageUrls: repairedImageUrls,
+          });
+        }
         await db.listing.update({
           where: { id: listing.id },
-          data: { priceCents: newPriceCents, buyerShippingCents: plan.buyerShippingCents, shippingStrategy: plan.shippingStrategy },
+          data: {
+            priceCents: newPriceCents,
+            buyerShippingCents: plan.buyerShippingCents,
+            shippingStrategy: plan.shippingStrategy,
+            ...(repairedImageUrls && { imageUrlsJson: serializeImageUrls(repairedImageUrls) }),
+          },
         });
         const buyerTotalCents = discountedEbayPriceCents(newPriceCents, user.ebaySitewideDiscountBps) + plan.buyerShippingCents;
         results.push({
-          ebayListingId,
+          ...resultIdentity,
           action: "repriced",
           newPriceCents,
           suggestedPriceCents: newPriceCents,
@@ -741,8 +778,9 @@ export async function cleanupEbayListings(
         });
       } else {
         results.push({
-          ebayListingId,
+          ...resultIdentity,
           action: "ok",
+          newPriceCents: listing.priceCents,
           suggestedPriceCents: newPriceCents,
           amazonPriceCents: adminSource.amazonPriceCents,
           amazonShippingCents: adminSource.amazonShippingCents,
@@ -752,19 +790,58 @@ export async function cleanupEbayListings(
       }
     } catch (e) {
       results.push({
-        ebayListingId,
+        ...resultIdentity,
         action: "error",
+        suggestedPriceCents: attemptedPriceCents,
+        newPriceCents: attemptedPriceCents,
         error:
           e instanceof EbayApiError
-            ? e.message.slice(0, 150)
+            ? e.message.slice(0, 500)
             : e instanceof Error
-              ? e.message.slice(0, 150)
+              ? e.message.slice(0, 500)
               : "failed",
       });
     }
   }
   revalidate();
   return results;
+}
+
+export async function recordSuggestedPriceActivity(
+  rawItems: CleanupItemResult[],
+): Promise<{ batchId: string | null }> {
+  const user = await requireUser();
+  const items = rawItems.slice(0, 1_000);
+  const ebayListingIds = [...new Set(items.map((item) => item.ebayListingId))];
+  const listings = await db.listing.findMany({
+    where: { userId: user.id, ebayListingId: { in: ebayListingIds } },
+    include: { product: { select: { supplierUrl: true } } },
+  });
+  const listingByEbayId = new Map(listings.map((listing) => [listing.ebayListingId, listing]));
+  const activityItems = items.flatMap((item) => {
+    const listing = listingByEbayId.get(item.ebayListingId);
+    if (!listing) return [];
+    const updatedPriceCents = item.newPriceCents ?? item.suggestedPriceCents ?? item.originalPriceCents ?? listing.priceCents;
+    return [{
+      title: listing.title,
+      listingId: listing.id,
+      ebayListingId: item.ebayListingId,
+      amazonUrl: listing.product.supplierUrl,
+      sourcePriceCents: item.originalPriceCents ?? listing.priceCents,
+      listingPriceCents: updatedPriceCents,
+      ok: item.action !== "error",
+      error: item.error ?? null,
+    }];
+  });
+  const batchId = await recordListingActivity({
+    userId: user.id,
+    source: "PRICE_OPTIMIZATION",
+    trigger: "MANUAL",
+    items: activityItems,
+  });
+  revalidatePath("/mirror");
+  revalidatePath("/listings");
+  return { batchId };
 }
 
 export type SourceCleanupBatchResult = {

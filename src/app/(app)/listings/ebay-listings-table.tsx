@@ -1,5 +1,6 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useMemo, useState, useTransition } from "react";
 import {
   cleanupEbayListings,
@@ -11,6 +12,7 @@ import {
   matchEbayListing,
   matchEbayListingsBatch,
   repriceEbayListing,
+  recordSuggestedPriceActivity,
   unmatchEbayListing,
   startListingHealthSync,
 } from "@/lib/actions/ebay-listings";
@@ -236,6 +238,8 @@ type ListingOperationProgress = {
   status: PremiumProgressStatus;
 };
 
+type PricingResultFilter = "all" | "success" | "errors";
+
 function SmartSyncIcon({ spinning = false }: { spinning?: boolean }) {
   return (
     <svg
@@ -290,7 +294,21 @@ function SmartSyncStatus({ progress }: { progress: ListingSyncProgress }) {
   );
 }
 
-function ListingOperationStatus({ progress }: { progress: ListingOperationProgress }) {
+function ListingOperationStatus({
+  progress,
+  pricingResults,
+  showPricingResults,
+  pricingResultFilter,
+  onTogglePricingResults,
+  onPricingResultFilterChange,
+}: {
+  progress: ListingOperationProgress;
+  pricingResults: CleanupItemResult[];
+  showPricingResults: boolean;
+  pricingResultFilter: PricingResultFilter;
+  onTogglePricingResults: () => void;
+  onPricingResultFilterChange: (filter: PricingResultFilter) => void;
+}) {
   const percentage = progress.total > 0
     ? Math.round((progress.completed / progress.total) * 100)
     : progress.status === "complete" ? 100 : 4;
@@ -300,18 +318,88 @@ function ListingOperationStatus({ progress }: { progress: ListingOperationProgre
     pricing: ["Applying profitable suggested prices", "Using administrator-stored Amazon costs before updating each eBay listing."],
     targetProfit: ["Applying target-profit prices", "Calculating the minimum eBay price that reaches your requested modeled net profit."],
   }[progress.kind];
+  const filteredPricingResults = pricingResults.filter((result) =>
+    pricingResultFilter === "all"
+      ? true
+      : pricingResultFilter === "errors"
+        ? result.action === "error"
+        : result.action !== "error",
+  );
   return (
-    <PremiumProgress
-      title={progress.status === "complete" ? `${meta[0]} complete` : meta[0]}
-      subtitle={progress.detail ?? meta[1]}
-      percentage={percentage}
-      status={progress.status}
-      stats={[
-        { label: "processed", value: `${progress.completed}/${progress.total}` },
-        { label: "successful", value: progress.succeeded, tone: "success" },
-        ...(progress.failed > 0 ? [{ label: "need attention", value: progress.failed, tone: "danger" as const }] : []),
-      ]}
-    />
+    <div className="space-y-3">
+      <PremiumProgress
+        title={progress.status === "complete" ? `${meta[0]} complete` : meta[0]}
+        subtitle={progress.kind === "pricing" && progress.status === "running" ? meta[1] : progress.detail ?? meta[1]}
+        percentage={percentage}
+        status={progress.status}
+        action={progress.kind === "pricing" && pricingResults.length > 0 ? (
+          <Button size="sm" variant="secondary" onClick={onTogglePricingResults}>
+            {showPricingResults ? "Hide activity" : `Show activity (${pricingResults.length})`}
+          </Button>
+        ) : undefined}
+        stats={progress.kind === "pricing" && progress.status === "running"
+          ? [{ label: "processed", value: `${progress.completed}/${progress.total}` }]
+          : [
+              { label: "processed", value: `${progress.completed}/${progress.total}` },
+              { label: "successful", value: progress.succeeded, tone: "success" },
+              ...(progress.failed > 0 ? [{ label: "need attention", value: progress.failed, tone: "danger" as const }] : []),
+            ]}
+      />
+      {progress.kind === "pricing" && showPricingResults && (
+        <Card className="overflow-hidden border-indigo-100 animate-fade-in">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-4 py-3">
+            <div>
+              <p className="text-sm font-semibold text-slate-900">Price update activity</p>
+              <p className="text-xs text-slate-500">Exact eBay outcomes are retained in Publishing History after completion.</p>
+            </div>
+            <div className="flex rounded-xl bg-slate-100 p-1 text-xs font-semibold">
+              {(["all", "success", "errors"] as const).map((filter) => (
+                <button
+                  key={filter}
+                  type="button"
+                  onClick={() => onPricingResultFilterChange(filter)}
+                  className={cx(
+                    "rounded-lg px-3 py-1.5 capitalize transition",
+                    pricingResultFilter === filter ? "bg-white text-indigo-700 shadow-sm" : "text-slate-500 hover:text-slate-800",
+                  )}
+                >
+                  {filter}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="max-h-80 divide-y divide-slate-100 overflow-y-auto">
+            {filteredPricingResults.map((result, index) => {
+              const succeeded = result.action !== "error";
+              const updatedPrice = result.newPriceCents ?? result.suggestedPriceCents;
+              return (
+                <div key={`${result.ebayListingId}-${index}`} className="flex items-start gap-3 px-4 py-3">
+                  <span className={cx(
+                    "mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-full text-xs font-bold",
+                    succeeded ? "bg-emerald-50 text-emerald-700" : "bg-red-50 text-red-700",
+                  )}>
+                    {succeeded ? "✓" : "!"}
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-semibold text-slate-800" title={result.title}>{result.title ?? `eBay item ${result.ebayListingId}`}</p>
+                    {result.originalPriceCents !== undefined && updatedPrice !== undefined && (
+                      <p className="mt-0.5 text-xs font-medium tabular-nums text-slate-600">
+                        {formatCents(result.originalPriceCents)} <span className="px-1 text-slate-400">→</span> {formatCents(updatedPrice)}
+                      </p>
+                    )}
+                    {!succeeded && result.error && <p className="mt-1 whitespace-normal break-words text-xs leading-5 text-red-700">{result.error}</p>}
+                  </div>
+                  <span className={cx("shrink-0 text-[11px] font-semibold", succeeded ? "text-emerald-700" : "text-red-700")}>
+                    {succeeded ? result.action === "repriced" ? "Updated" : "Already current" : "Needs attention"}
+                  </span>
+                </div>
+              );
+            })}
+            {filteredPricingResults.length === 0 && <p className="px-4 py-8 text-center text-sm text-slate-500">No {pricingResultFilter === "all" ? "activity" : pricingResultFilter} to show yet.</p>}
+          </div>
+        </Card>
+      )}
+    </div>
   );
 }
 
@@ -449,11 +537,15 @@ export function EbayListingsTable({
   sitewideDiscountBps: number;
   adRateBps: number;
 }) {
+  const router = useRouter();
   const [rows, setRows] = useState(initialRows);
   const [pending, startTransition] = useTransition();
   const [busyId, setBusyId] = useState<string | null>(null);
   const [notice, setNotice] = useState<{ text: string; error: boolean } | null>(null);
   const [bulkProgress, setBulkProgress] = useState<ListingOperationProgress | null>(null);
+  const [pricingResults, setPricingResults] = useState<CleanupItemResult[]>([]);
+  const [showPricingResults, setShowPricingResults] = useState(false);
+  const [pricingResultFilter, setPricingResultFilter] = useState<PricingResultFilter>("all");
   const [syncProgress, setSyncProgress] = useState<ListingSyncProgress | null>(null);
   const [sortKey, setSortKey] = useState<ListingSortKey>("margin");
   const [sortDescending, setSortDescending] = useState(true);
@@ -807,9 +899,13 @@ export function EbayListingsTable({
       averageCompetitorPriceCents: row.market?.averageCompetitorPriceCents,
     }));
     setNotice(null);
+    setPricingResults([]);
+    setShowPricingResults(false);
+    setPricingResultFilter("all");
     setBulkProgress({ kind: "pricing", completed: 0, total: items.length, succeeded: 0, failed: 0, status: "running" });
     startTransition(async () => {
       let repriced = 0, unchanged = 0, errors = 0;
+      const completedResults: CleanupItemResult[] = [];
       const errorReasons = new Map<string, number>();
       for (let i = 0; i < items.length; i += PRICE_CLEANUP_BATCH_SIZE) {
         const batch = items.slice(i, i + PRICE_CLEANUP_BATCH_SIZE);
@@ -820,10 +916,16 @@ export function EbayListingsTable({
           const message = error instanceof Error ? error.message : "The pricing request did not finish";
           results = batch.map((item) => ({
             ebayListingId: item.ebayListingId,
+            title: rows.find((row) => row.ebayListingId === item.ebayListingId)?.title,
             action: "error" as const,
+            originalPriceCents: item.currentEbayPriceCents,
+            newPriceCents: item.suggestedPriceCents ?? undefined,
+            suggestedPriceCents: item.suggestedPriceCents ?? undefined,
             error: message,
           }));
         }
+        completedResults.push(...results);
+        setPricingResults([...completedResults]);
         setRows((prev) =>
           prev.flatMap((row) => {
             const r = results.find((x) => x.ebayListingId === row.ebayListingId);
@@ -865,15 +967,23 @@ export function EbayListingsTable({
           kind: "pricing",
           completed,
           total: items.length,
-          succeeded: repriced,
+          succeeded: repriced + unchanged,
           failed: errors,
           detail: pricingErrorSummary(errorReasons),
           status: completed === items.length ? "complete" : "running",
         });
       }
       const reasonSummary = pricingErrorSummary(errorReasons);
+      let historySaved = false;
+      try {
+        const history = await recordSuggestedPriceActivity(completedResults);
+        historySaved = Boolean(history.batchId);
+        router.refresh();
+      } catch {
+        historySaved = false;
+      }
       setNotice({
-        text: `Suggested pricing complete: ${repriced} price${repriced === 1 ? "" : "s"} updated${unchanged ? `, ${unchanged} already current after live verification` : ""}${errors ? `, ${errors} need attention${reasonSummary ? `. ${reasonSummary}` : ""}` : ""}.`,
+        text: `Suggested pricing complete: ${repriced} price${repriced === 1 ? "" : "s"} updated${unchanged ? `, ${unchanged} already current after live verification` : ""}${errors ? `, ${errors} need attention${reasonSummary ? `. ${reasonSummary}` : ""}` : ""}.${historySaved ? " Results were saved to Publishing History." : " Publishing History could not be saved; the on-screen results remain available."}`,
         error: errors > 0,
       });
     });
@@ -1175,7 +1285,16 @@ export function EbayListingsTable({
         </Card>
       )}
 
-      {bulkProgress ? <ListingOperationStatus progress={bulkProgress} /> : syncProgress && <SmartSyncStatus progress={syncProgress} />}
+      {bulkProgress ? (
+        <ListingOperationStatus
+          progress={bulkProgress}
+          pricingResults={pricingResults}
+          showPricingResults={showPricingResults}
+          pricingResultFilter={pricingResultFilter}
+          onTogglePricingResults={() => setShowPricingResults((current) => !current)}
+          onPricingResultFilterChange={setPricingResultFilter}
+        />
+      ) : syncProgress && <SmartSyncStatus progress={syncProgress} />}
 
       {fetchError && (
         <p className="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800">

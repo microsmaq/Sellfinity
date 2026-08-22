@@ -1,4 +1,4 @@
-export const HIDDEN_PUBLISHING_HISTORY_SOURCES = ["PRICE_OPTIMIZATION"] as const;
+export const HIDDEN_PUBLISHING_HISTORY_SOURCES = [] as const;
 
 export function publishingHistoryPagination(
   total: number,
