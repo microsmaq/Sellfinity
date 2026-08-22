@@ -9,10 +9,10 @@ import { PageHeader, Badge } from "@/components/ui";
 import { ListingsView, type ListingRow, type UnlistedRow } from "./listings-view";
 import type { EbayRow } from "./ebay-listings-table";
 import { backfillRetainedArbitrageResearchForUser } from "@/lib/arbitrage/publish-handoff";
-import { arbitrageSuggestedPriceCents } from "@/lib/arbitrage/pricing";
 import { getListingPriceProtection } from "@/lib/listings/winner";
 import { actualAmazonCost } from "@/lib/amazon-email/sync";
 import { summarize, windowStartUtc } from "@/lib/orders/stats";
+import { listingPricePlan } from "@/lib/listings/shipping-strategy";
 
 export const metadata = { title: "Listings — Sellfinity" };
 
@@ -189,6 +189,7 @@ export default async function ListingsPage() {
         user.ebaySitewideDiscountBps,
         user.ebayAdRateBps,
         user.targetProfitEnabled ? user.targetProfitCents : null,
+        user.pricingStrategy,
       ).map((row) => {
         const local = localByEbayId.get(row.ebayListingId);
         const winner = local ? winnerListings.get(local.id) : null;
@@ -235,16 +236,7 @@ export default async function ListingsPage() {
       (l.ebayListingId ? marketMetrics.get(l.ebayListingId) : null) ??
       marketMetrics.get(l.product.sku) ??
       null;
-    const suggestedPriceCents = arbitrageSuggestedPriceCents(
-      l.product.costCents,
-      l.priceCents,
-      metric?.bestSellingPriceCents,
-      metric?.averageCompetitorPriceCents,
-      l.product.shippingCostCents,
-      user.ebaySitewideDiscountBps,
-      user.ebayAdRateBps,
-      user.targetProfitEnabled ? user.targetProfitCents : null,
-    );
+    const suggestedPlan = listingPricePlan({ amazonCostCents: l.product.costCents, amazonShippingCents: l.product.shippingCostCents, currentEbayPriceCents: l.priceCents, ebayRecommendedPriceCents: metric?.bestSellingPriceCents, averageCompetitorPriceCents: metric?.averageCompetitorPriceCents, sitewideDiscountBps: user.ebaySitewideDiscountBps, adRateBps: user.ebayAdRateBps, targetProfitCents: user.targetProfitEnabled ? user.targetProfitCents : null, pricingStrategy: user.pricingStrategy });
 
     return {
       id: l.id,
@@ -252,13 +244,16 @@ export default async function ListingsPage() {
       sku: l.product.sku,
       imageUrl: parseImageUrls(l.imageUrlsJson)[0] ?? null,
       priceCents: l.priceCents,
+      shippingStrategy: l.shippingStrategy,
+      buyerShippingCents: l.buyerShippingCents,
       quantity: l.quantity,
       costCents: l.product.costCents,
       shippingCostCents: l.product.shippingCostCents,
       supplierStock: l.product.supplierStock,
       supplierUrl: l.product.supplierUrl,
       category: l.product.category,
-      suggestedPriceCents,
+      suggestedPriceCents: suggestedPlan.itemPriceCents,
+      suggestedBuyerShippingCents: suggestedPlan.buyerShippingCents,
       status: l.status as "DRAFT" | "ACTIVE" | "ENDED",
       ebayListingId: l.ebayListingId,
       ebayUrl: l.ebayListingId ? `${ebayItemHost}/itm/${l.ebayListingId}` : null,
@@ -308,3 +303,4 @@ export default async function ListingsPage() {
     </>
   );
 }
+
