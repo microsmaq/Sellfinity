@@ -229,4 +229,3 @@ export function ProfitProtectionPreferences({ initialDiscountBps, initialAdRateB
     </Card>
   );
 }
-
