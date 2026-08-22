@@ -4,6 +4,7 @@ import { db } from "@/lib/db";
 import { getEbayClientForUser } from "@/lib/ebay";
 import { EbayApiError, validateListingInput } from "@/lib/ebay/client";
 import { fitEbayDescription } from "@/lib/ebay/description";
+import { prepareEbayImages } from "@/lib/ebay/image-policy";
 import { getSharedAmazonProduct } from "@/lib/mirror/shared-catalog";
 import { parseImageUrls, serializeImageUrls } from "@/lib/types";
 
@@ -82,6 +83,15 @@ export async function publishListingForUser(
     }
   }
 
+  const preparedImages = await prepareEbayImages(userId, imageUrls);
+  imageUrls = preparedImages.imageUrls;
+  if (imageUrls.length === 0) {
+    return {
+      ok: false,
+      error: "No eBay-compliant product image is available. Add an image with at least 500 pixels on its longest side.",
+    };
+  }
+
   const input = {
     title: draft.title,
     description: fitEbayDescription(draft.description),
@@ -105,6 +115,7 @@ export async function publishListingForUser(
         data: {
           status: "ACTIVE",
           ebayListingId,
+          imageUrlsJson: serializeImageUrls(imageUrls),
           publishedAt: new Date(),
           endedAt: null,
           endedReason: null,

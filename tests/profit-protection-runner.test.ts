@@ -4,6 +4,10 @@ const mocks = vi.hoisted(() => ({
   findUser: vi.fn(),
   findOrders: vi.fn(),
   updateOrder: vi.fn(),
+  updateListing: vi.fn(),
+  transaction: vi.fn(),
+  updateEbayListing: vi.fn(),
+  prepareImages: vi.fn(),
 }));
 
 vi.mock("server-only", () => ({}));
@@ -11,9 +15,17 @@ vi.mock("@/lib/db", () => ({
   db: {
     user: { findUnique: mocks.findUser },
     order: { findMany: mocks.findOrders, update: mocks.updateOrder },
+    listing: { update: mocks.updateListing },
+    $transaction: mocks.transaction,
   },
 }));
-vi.mock("@/lib/ebay", () => ({ getEbayClientForUser: vi.fn() }));
+vi.mock("@/lib/ebay", () => ({
+  getEbayClientForUser: vi.fn(async () => ({ updateListing: mocks.updateEbayListing })),
+}));
+vi.mock("@/lib/ebay/image-policy", () => ({
+  isEbayPicturePolicyError: (message: string) => message.includes("500 pixels"),
+  prepareEbayImages: mocks.prepareImages,
+}));
 vi.mock("@/lib/amazon-email/sync", () => ({
   actualAmazonCost: (item: { verifiedCostCents: number | null }) => item.verifiedCostCents,
 }));
@@ -40,6 +52,7 @@ function candidate(id: string, verifiedCostCents: number | null) {
       priceCents: 3_000,
       quantity: 5,
       title: `Listing ${id}`,
+      imageUrlsJson: '["https://i.ebayimg.com/undersized.jpg"]',
       product: { supplierUrl: "https://www.amazon.com/dp/example" },
     },
     amazonPurchaseItem: { verifiedCostCents },
@@ -51,6 +64,13 @@ describe("profit protection candidate scanning", () => {
     vi.clearAllMocks();
     mocks.findUser.mockResolvedValue({ ebaySitewideDiscountBps: 0, ebayAdRateBps: 0 });
     mocks.updateOrder.mockResolvedValue({});
+    mocks.updateListing.mockResolvedValue({});
+    mocks.transaction.mockResolvedValue([]);
+    mocks.prepareImages.mockResolvedValue({
+      imageUrls: ["https://sellfinity.app/api/generated-images/repaired"],
+      repaired: 1,
+      rejected: 0,
+    });
   });
 
   it("skips unverified rows without starving an older verified order", async () => {
@@ -68,5 +88,36 @@ describe("profit protection candidate scanning", () => {
       where: { id: "verified" },
       data: expect.objectContaining({ profitProtectionStatus: "NOT_REQUIRED" }),
     }));
+  });
+
+  it("repairs an undersized legacy photo and retries the protected price update", async () => {
+    mocks.findUser.mockResolvedValue({
+      ebaySitewideDiscountBps: 0,
+      ebayAdRateBps: 0,
+      targetProfitEnabled: false,
+      targetProfitCents: 0,
+      pricingStrategy: "FREE_SHIPPING",
+    });
+    mocks.findOrders.mockResolvedValue([candidate("picture-repair", 5_000)]);
+    mocks.updateEbayListing
+      .mockRejectedValueOnce(new Error("Use a picture that is at least 500 pixels on the longest side"))
+      .mockResolvedValueOnce(undefined);
+
+    const result = await protectVerifiedOrderMargins("user-1", {
+      orderIds: ["picture-repair"],
+    });
+
+    expect(result.adjusted).toBe(1);
+    expect(result.failed).toBe(0);
+    expect(mocks.prepareImages).toHaveBeenCalledWith(
+      "user-1",
+      ["https://i.ebayimg.com/undersized.jpg"],
+    );
+    expect(mocks.updateEbayListing).toHaveBeenLastCalledWith(
+      "ebay-picture-repair",
+      expect.objectContaining({
+        imageUrls: ["https://sellfinity.app/api/generated-images/repaired"],
+      }),
+    );
   });
 });
