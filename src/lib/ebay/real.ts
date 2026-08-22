@@ -514,7 +514,75 @@ export class RealEbayClient implements EbayClient {
     if (currentSkuOffer) return currentSkuOffer;
 
     // Source repair can reassign listing.product to a different Amazon ASIN,
-    …786 tokens truncated…ppingServiceCost currencyID="USD">${(update.buyerShippingCents / 100).toFixed(2)}</ShippingServiceCost><FreeShipping>${update.buyerShippingCents === 0}</FreeShipping></ShippingServiceOptions></ShippingDetails>`
+    // but eBay's Inventory SKU is immutable. GetItem is still allowed to read
+    // an Inventory-managed listing and returns that original SKU; use it to
+    // resolve the correct offer instead of attempting a Trading API revision.
+    const itemXml = await this.tradingRequest(
+      "GetItem",
+      `<ItemID>${ebayListingId}</ItemID><DetailLevel>ReturnAll</DetailLevel>`,
+    );
+    const originalSku = inventorySkuFromTradingItem(itemXml);
+    if (!originalSku || originalSku === listing.product.sku) return null;
+    return findOffer(originalSku);
+  }
+
+  /** Trading API call (XML) — used for the seller's full listing inventory
+   * and for revising/ending listings not created through the Inventory API.
+   * Returns the raw response XML on success (Ack Success/Warning). */
+  private async tradingRequest(callName: string, innerXml: string): Promise<string> {
+    const token = await freshAccessToken(this.config, this.userId);
+    const body = `<?xml version="1.0" encoding="utf-8"?>
+<${callName}Request xmlns="urn:ebay:apis:eBLBaseComponents">
+${innerXml}
+</${callName}Request>`;
+    const res = await fetch(`${this.config.apiHost}/ws/api.dll`, {
+      method: "POST",
+      headers: {
+        "X-EBAY-API-CALL-NAME": callName,
+        "X-EBAY-API-COMPATIBILITY-LEVEL": "1193",
+        "X-EBAY-API-SITEID": "0",
+        "X-EBAY-API-IAF-TOKEN": token,
+        "Content-Type": "text/xml",
+      },
+      body,
+    });
+    const text = await res.text();
+    const ack = text.match(/<Ack>([^<]+)<\/Ack>/)?.[1];
+    if (!res.ok || ack === "Failure") {
+      const message =
+        text.match(/<LongMessage>([^<]+)<\/LongMessage>/)?.[1] ??
+        `HTTP ${res.status}`;
+      throw new EbayApiError(`eBay ${callName} failed: ${message.slice(0, 300)}`);
+    }
+    return text;
+  }
+
+  async updateListing(ebayListingId: string, update: ListingUpdate): Promise<void> {
+    const offer = await this.offerIdFor(ebayListingId);
+    if (!offer) {
+      // Foreign/imported listing: revise via Trading API.
+      const fields = [
+        `<ItemID>${ebayListingId}</ItemID>`,
+        update.priceCents !== undefined
+          ? `<StartPrice>${(update.priceCents / 100).toFixed(2)}</StartPrice>`
+          : "",
+        update.quantity !== undefined
+          ? `<Quantity>${update.quantity}</Quantity>`
+          : "",
+        update.title !== undefined
+          ? `<Title>${escapeTradingXml(update.title)}</Title>`
+          : "",
+        update.description !== undefined
+          ? `<Description>${escapeTradingXml(fitEbayDescription(update.description))}</Description>`
+          : "",
+        update.imageUrls !== undefined
+          ? `<PictureDetails>${update.imageUrls
+              .slice(0, 12)
+              .map((url) => `<PictureURL>${escapeTradingXml(url)}</PictureURL>`)
+              .join("")}</PictureDetails>`
+          : "",
+        update.buyerShippingCents !== undefined
+          ? `<ShippingDetails><ShippingType>Flat</ShippingType><ShippingServiceOptions><ShippingService>USPSPriority</ShippingService><ShippingServicePriority>1</ShippingServicePriority><ShippingServiceCost currencyID="USD">${(update.buyerShippingCents / 100).toFixed(2)}</ShippingServiceCost><FreeShipping>${update.buyerShippingCents === 0}</FreeShipping></ShippingServiceOptions></ShippingDetails>`
           : "",
       ].join("");
       await this.tradingRequest("ReviseFixedPriceItem", `<Item>${fields}</Item>`);
@@ -972,4 +1040,3 @@ export class RealEbayClient implements EbayClient {
     return orders;
   }
 }
-
