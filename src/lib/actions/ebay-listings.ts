@@ -572,7 +572,171 @@ async function endEbayListingForUser(
       title: listing?.title ?? `eBay listing ${ebayListingId}`,
       listingId: listing?.id,
       ebayListingId,
-      amazonUrl:…1641 tokens truncated…ppingCents,
+      amazonUrl: listing?.product.supplierUrl,
+      sourcePriceCents: listing?.product.costCents,
+      listingPriceCents: listing?.priceCents,
+      ok: true,
+    }],
+  });
+  return {};
+}
+
+export async function endEbayListing(
+  ebayListingId: string,
+): Promise<EbayListingResult> {
+  const user = await requireUser();
+  const result = await endEbayListingForUser(user.id, ebayListingId);
+  revalidate();
+  return result;
+}
+
+export type CleanupItemResult = {
+  ebayListingId: string;
+  action: "ok" | "repriced" | "ended" | "error";
+  newPriceCents?: number;
+  suggestedPriceCents?: number;
+  amazonPriceCents?: number;
+  amazonShippingCents?: number;
+  amazonUrl?: string;
+  sku?: string;
+  profitCents?: number;
+  marginPct?: number;
+  buyerShippingCents?: number;
+  shippingStrategy?: string;
+  error?: string;
+};
+
+/** How many listings one clean-up batch call processes. */
+// Keep each live-price verification in its own request. One item can require
+// a parent lookup, a child lookup, identity verification, and an eBay update;
+// grouping four sequential items made a slow provider response hold the whole
+// batch near the production function limit.
+const CLEANUP_BATCH_SIZE = 1;
+
+/**
+ * Apply suggested prices to a batch of tracked listings using only the
+ * administrator-maintained Amazon catalog. Seller requests must never perform
+ * a paid Amazon/Rainforest lookup. The server recalculates the recommendation
+ * from the stored admin cost plus the seller's own fee settings, so stale or
+ * manipulated client data cannot set the live price. This workflow never ends
+ * a listing.
+ */
+export async function cleanupEbayListings(
+  items: Array<{
+    ebayListingId: string;
+    currentEbayPriceCents: number;
+    suggestedPriceCents: number | null;
+    ebayRecommendedPriceCents?: number | null;
+    averageCompetitorPriceCents?: number | null;
+  }>,
+): Promise<CleanupItemResult[]> {
+  const user = await requireUser();
+  const winnerListings = await getProtectedPriceListings(user.id, user.ebayAdRateBps);
+  const client = await getEbayClientForUser(user.id);
+  const results: CleanupItemResult[] = [];
+
+  for (const item of items.slice(0, CLEANUP_BATCH_SIZE)) {
+    const { ebayListingId } = item;
+    const listing = await db.listing.findFirst({
+      where: { userId: user.id, ebayListingId, status: "ACTIVE" },
+      include: { product: true },
+    });
+    if (!listing) {
+      results.push({ ebayListingId, action: "error", error: "Not tracked/active" });
+      continue;
+    }
+    if (winnerListings.has(listing.id)) {
+      results.push({
+        ebayListingId,
+        action: "ok",
+        suggestedPriceCents: listing.priceCents,
+      });
+      continue;
+    }
+    try {
+      const asin = listing.product.supplierProductId.trim().toUpperCase();
+      const adminSource = await db.adminArbitrageProduct.findUnique({
+        where: { asin },
+        select: {
+          asin: true,
+          amazonPriceCents: true,
+          amazonShippingCents: true,
+          amazonUrl: true,
+          amazonInStock: true,
+          ebayRecommendedPriceCents: true,
+          averageCompetitorPriceCents: true,
+        },
+      });
+      if (!adminSource || adminSource.amazonPriceCents <= 0) {
+        results.push({
+          ebayListingId,
+          action: "error",
+          error: "No admin-stored Amazon price is available for this ASIN.",
+        });
+        continue;
+      }
+      if (!adminSource.amazonInStock) {
+        results.push({
+          ebayListingId,
+          action: "error",
+          error: "The admin catalog currently marks this Amazon product out of stock.",
+        });
+        continue;
+      }
+      const plan = listingPricePlan({ amazonCostCents: adminSource.amazonPriceCents, amazonShippingCents: adminSource.amazonShippingCents, currentEbayPriceCents: listing.priceCents, ebayRecommendedPriceCents: adminSource.ebayRecommendedPriceCents, averageCompetitorPriceCents: adminSource.averageCompetitorPriceCents, sitewideDiscountBps: user.ebaySitewideDiscountBps, adRateBps: user.ebayAdRateBps, targetProfitCents: user.targetProfitEnabled ? user.targetProfitCents : null, pricingStrategy: user.pricingStrategy });
+      const newPriceCents = plan.itemPriceCents;
+      await db.product.update({
+        where: { id: listing.product.id },
+        data: {
+          supplierProductId: adminSource.asin,
+          supplierUrl: adminSource.amazonUrl,
+          costCents: adminSource.amazonPriceCents,
+          shippingCostCents: adminSource.amazonShippingCents,
+          supplierStock: 50,
+          suggestedPriceCents: newPriceCents,
+        },
+      });
+      if (plan.buyerShippingCents === listing.buyerShippingCents && !isSuggestedPriceCandidate({
+        currentPriceCents: listing.priceCents,
+        suggestedPriceCents: newPriceCents,
+        amazonPriceCents: adminSource.amazonPriceCents,
+        shippingCostCents: adminSource.amazonShippingCents,
+        sitewideDiscountBps: user.ebaySitewideDiscountBps,
+        adRateBps: user.ebayAdRateBps,
+      })) {
+        results.push({
+          ebayListingId,
+          action: "ok",
+          suggestedPriceCents: newPriceCents,
+          amazonPriceCents: adminSource.amazonPriceCents,
+          amazonShippingCents: adminSource.amazonShippingCents,
+          amazonUrl: adminSource.amazonUrl,
+          sku: adminSource.asin,
+        });
+        continue;
+      }
+      if (newPriceCents !== listing.priceCents || plan.buyerShippingCents !== listing.buyerShippingCents) {
+        await client.updateListing(ebayListingId, {
+          priceCents: newPriceCents,
+          buyerShippingCents: plan.buyerShippingCents,
+        });
+        await db.listing.update({
+          where: { id: listing.id },
+          data: { priceCents: newPriceCents, buyerShippingCents: plan.buyerShippingCents, shippingStrategy: plan.shippingStrategy },
+        });
+        const buyerTotalCents = discountedEbayPriceCents(newPriceCents, user.ebaySitewideDiscountBps) + plan.buyerShippingCents;
+        results.push({
+          ebayListingId,
+          action: "repriced",
+          newPriceCents,
+          suggestedPriceCents: newPriceCents,
+          amazonPriceCents: adminSource.amazonPriceCents,
+          amazonShippingCents: adminSource.amazonShippingCents,
+          amazonUrl: adminSource.amazonUrl,
+          sku: adminSource.asin,
+          profitCents: plan.modeledProfitCents,
+          marginPct: buyerTotalCents > 0 ? Math.round(plan.modeledProfitCents / buyerTotalCents * 100) : 0,
+          buyerShippingCents: plan.buyerShippingCents,
           shippingStrategy: plan.shippingStrategy,
         });
       } else {
@@ -1131,4 +1295,3 @@ export async function cleanupListingSourcesBatch(): Promise<SourceCleanupBatchRe
   revalidate();
   return { processed: listings.length, ...counts, remaining, endedIds, relistedIds };
 }
-
