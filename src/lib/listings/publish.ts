@@ -145,4 +145,3 @@ export async function discardFailedMirrorDraft(
     await db.product.delete({ where: { id: listing.productId } });
   }
 }
-
