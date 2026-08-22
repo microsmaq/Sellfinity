@@ -74,6 +74,7 @@ export function BatchProgress({ initial }: { initial: MirrorBatchView }) {
     : 0;
   const sourceMeta = batchSourceMeta(batch.source);
   const isActivity = sourceMeta.activity;
+  const isPriceOptimization = batch.source === "PRICE_OPTIMIZATION";
 
   return (
     <div className="space-y-5">
@@ -128,8 +129,8 @@ export function BatchProgress({ initial }: { initial: MirrorBatchView }) {
             <tr className="border-b border-slate-200 text-left text-xs uppercase tracking-wide text-slate-500">
               <th className="px-4 py-3">#</th>
               <th className="px-4 py-3">Product</th>
-              <th className="px-4 py-3 text-right">Source cost</th>
-              <th className="px-4 py-3 text-right">Listing price</th>
+              <th className="px-4 py-3 text-right">{isPriceOptimization ? "Original price" : "Source cost"}</th>
+              <th className="px-4 py-3 text-right">{isPriceOptimization ? "Updated / attempted" : "Listing price"}</th>
               <th className="px-4 py-3">Status</th>
               {batch.improveMainImage && <th className="px-4 py-3">Main image</th>}
               <th className="px-4 py-3">Result</th>
@@ -156,7 +157,14 @@ export function BatchProgress({ initial }: { initial: MirrorBatchView }) {
                   {item.sourcePriceCents === null ? "—" : formatCents(item.sourcePriceCents)}
                 </td>
                 <td className="px-4 py-3 text-right font-medium tabular-nums">
-                  {item.listingPriceCents === null ? "—" : formatCents(item.listingPriceCents)}
+                  {item.listingPriceCents === null ? "—" : (
+                    <span>
+                      {formatCents(item.listingPriceCents)}
+                      {isPriceOptimization && item.sourcePriceCents !== null && item.sourcePriceCents !== item.listingPriceCents && (
+                        <span className="ml-1 text-[11px] font-normal text-slate-400">({item.listingPriceCents > item.sourcePriceCents ? "+" : ""}{formatCents(item.listingPriceCents - item.sourcePriceCents)})</span>
+                      )}
+                    </span>
+                  )}
                 </td>
                 <td className="px-4 py-3">
                   <Badge tone={statusTone(item.status)}>{item.status.toLowerCase()}</Badge>
@@ -185,14 +193,17 @@ export function BatchProgress({ initial }: { initial: MirrorBatchView }) {
                   {item.status === "FAILED" && item.error ? (
                     <span className="text-red-700">{item.error}</span>
                   ) : item.ebayListingId ? (
-                    <a
-                      href={`https://www.ebay.com/itm/${item.ebayListingId}`}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="font-medium text-indigo-600 hover:underline"
-                    >
-                      View eBay listing ↗
-                    </a>
+                    <div>
+                      {isPriceOptimization && <p className="font-medium text-emerald-700">Price update recorded</p>}
+                      <a
+                        href={`https://www.ebay.com/itm/${item.ebayListingId}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="font-medium text-indigo-600 hover:underline"
+                      >
+                        View eBay listing ↗
+                      </a>
+                    </div>
                   ) : item.status === "PROCESSING" ? (
                     <span className="text-indigo-700">
                       {isActivity ? "Updating listing…" : "Creating and publishing…"}
