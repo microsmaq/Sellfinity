@@ -48,7 +48,7 @@ describe("admin Amazon source fallback", () => {
     mocks.getSharedAmazonProduct.mockResolvedValue(null);
 
     await expect(getAdminAmazonSourceWithFallback("B000000000")).rejects.toThrow(
-      "Rainforest returned no purchasable product data",
+      "No purchasable Amazon product data is available",
     );
   });
 });

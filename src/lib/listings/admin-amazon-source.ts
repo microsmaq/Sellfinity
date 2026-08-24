@@ -3,6 +3,13 @@ import "server-only";
 import { db } from "@/lib/db";
 import { getSharedAmazonProduct } from "@/lib/mirror/shared-catalog";
 
+export class NoUsableAmazonSourceError extends Error {
+  constructor(asin: string) {
+    super(`No purchasable Amazon product data is available for ASIN ${asin}.`);
+    this.name = "NoUsableAmazonSourceError";
+  }
+}
+
 /**
  * Return the global admin Amazon snapshot, buying at most the first missing
  * provider lookup. Rainforest's durable request lease deduplicates concurrent
@@ -15,7 +22,7 @@ export async function getAdminAmazonSourceWithFallback(rawAsin: string) {
 
   const populated = await getSharedAmazonProduct(asin, { providerOnCatalogMiss: true });
   if (!populated) {
-    throw new Error(`Amazon data could not be retrieved for ASIN ${asin}. Rainforest returned no purchasable product data.`);
+    throw new NoUsableAmazonSourceError(asin);
   }
   source = await db.adminArbitrageProduct.findUnique({ where: { asin } });
   if (!source || source.amazonPriceCents <= 0) {

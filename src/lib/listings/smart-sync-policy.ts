@@ -13,3 +13,15 @@ export function isSmartSyncRecoverableEndReason(
     reason as SmartSyncRecoverableEndReason,
   );
 }
+
+export function shouldEndUnavailableSourceListing(input: {
+  confirmedNoUsableSource: boolean;
+  endUnavailableListings: boolean;
+  listingStatus: string;
+  hasEbayListingId: boolean;
+}): boolean {
+  return input.confirmedNoUsableSource &&
+    input.endUnavailableListings &&
+    input.listingStatus === "ACTIVE" &&
+    input.hasEbayListingId;
+}

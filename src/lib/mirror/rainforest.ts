@@ -400,7 +400,10 @@ export class RainforestScraper implements ProductPageScraper {
       request_info?: { success?: boolean };
       product?: RainforestProduct;
     }>({ type: "product", asin }, { workflow: "mirror_or_inventory" });
-    if (!data.request_info?.success || !data.product) return null;
+    if (data.request_info?.success === false) {
+      throw new Error(`Rainforest product lookup failed for ASIN ${asin}.`);
+    }
+    if (!data.product) return null;
     return mapRainforestProduct(asin, data.product);
   }
 }

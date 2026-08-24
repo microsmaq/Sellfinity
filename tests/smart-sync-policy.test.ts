@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   isSmartSyncRecoverableEndReason,
   SMART_SYNC_RECOVERABLE_END_REASONS,
+  shouldEndUnavailableSourceListing,
 } from "@/lib/listings/smart-sync-policy";
 
 describe("Smart Sync recovery policy", () => {
@@ -17,5 +18,24 @@ describe("Smart Sync recovery policy", () => {
   it("does not recover listings ended outside Sellfinity", () => {
     expect(isSmartSyncRecoverableEndReason("EBAY_ENDED")).toBe(false);
     expect(isSmartSyncRecoverableEndReason(null)).toBe(false);
+  });
+
+  it("delists a confirmed unusable source only when the option is checked", () => {
+    const input = {
+      confirmedNoUsableSource: true,
+      listingStatus: "ACTIVE",
+      hasEbayListingId: true,
+    };
+    expect(shouldEndUnavailableSourceListing({ ...input, endUnavailableListings: true })).toBe(true);
+    expect(shouldEndUnavailableSourceListing({ ...input, endUnavailableListings: false })).toBe(false);
+  });
+
+  it("never delists for a transient lookup failure", () => {
+    expect(shouldEndUnavailableSourceListing({
+      confirmedNoUsableSource: false,
+      endUnavailableListings: true,
+      listingStatus: "ACTIVE",
+      hasEbayListingId: true,
+    })).toBe(false);
   });
 });

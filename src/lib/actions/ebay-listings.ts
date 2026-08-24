@@ -38,9 +38,9 @@ import { improveMainListingImage } from "@/lib/mirror/improve-main-image";
 import { improveListingContent } from "@/lib/mirror/improve-listing-content";
 import { generateMirrorDescription } from "@/lib/mirror/seo";
 import { recordListingActivity } from "@/lib/listings/activity-history";
-import { SMART_SYNC_RECOVERABLE_END_REASONS } from "@/lib/listings/smart-sync-policy";
+import { SMART_SYNC_RECOVERABLE_END_REASONS, shouldEndUnavailableSourceListing } from "@/lib/listings/smart-sync-policy";
 import { hasSelectedSmartSyncOption, type SmartSyncOptions } from "@/lib/listings/smart-sync-options";
-import { getAdminAmazonSourceWithFallback } from "@/lib/listings/admin-amazon-source";
+import { getAdminAmazonSourceWithFallback, NoUsableAmazonSourceError } from "@/lib/listings/admin-amazon-source";
 
 export type EbayListingResult = { error?: string };
 
@@ -1011,7 +1011,34 @@ export async function processConfigurableSmartSyncItem(
 
   try {
     const asin = listing.product.supplierProductId.trim().toUpperCase();
-    const adminSource = await getAdminAmazonSourceWithFallback(asin);
+    let adminSource: Awaited<ReturnType<typeof getAdminAmazonSourceWithFallback>>;
+    try {
+      adminSource = await getAdminAmazonSourceWithFallback(asin);
+    } catch (error) {
+      if (error instanceof NoUsableAmazonSourceError) {
+        if (shouldEndUnavailableSourceListing({
+          confirmedNoUsableSource: true,
+          endUnavailableListings: options.endUnavailableListings,
+          listingStatus: listing.status,
+          hasEbayListingId: Boolean(listing.ebayListingId),
+        }) && listing.ebayListingId) {
+          const ended = await endEbayListingForUser(user.id, listing.ebayListingId, "SOURCE_UNAVAILABLE");
+          if (ended.error) throw new Error(ended.error);
+          actions.push("No usable Amazon source found");
+          actions.push("Listing ended on eBay to prevent unfulfillable sales");
+          return { ...base, status: "success", outcome: "ended", actions, newPriceCents: listing.priceCents };
+        }
+        return {
+          ...base,
+          status: "needs_attention",
+          outcome: "unchanged",
+          actions,
+          newPriceCents: listing.priceCents,
+          error: "No usable Amazon source was found. Select ‘End unavailable-source listings’ to delist it automatically.",
+        };
+      }
+      throw error;
+    }
     if (adminSource.sharedCatalogPopulated) actions.push("Amazon data retrieved once and saved to the admin catalog");
 
     if (options.refreshAmazonData) {
