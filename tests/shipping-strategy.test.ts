@@ -37,6 +37,27 @@ describe("listingPricePlan", () => {
     expect(paid.itemPriceCents).toBeLessThan(free.itemPriceCents);
     expect(paid.modeledProfitCents).toBeGreaterThanOrEqual(700);
   });
+
+  it("includes the promotion discount and advertising rate in the target", () => {
+    for (const pricingStrategy of ["FREE_SHIPPING", "BUYER_PAID_SHIPPING", "AI"] as const) {
+      const plan = listingPricePlan({
+        ...base,
+        ebayRecommendedPriceCents: 2_700,
+        sitewideDiscountBps: 1_000,
+        adRateBps: 900,
+        targetProfitCents: 1_000,
+        pricingStrategy,
+      });
+      expect(trueProfitWithBuyerShippingCents(
+        plan.itemPriceCents,
+        plan.buyerShippingCents,
+        base.amazonCostCents,
+        base.amazonShippingCents,
+        1_000,
+        900,
+      )).toBeGreaterThanOrEqual(1_000);
+    }
+  });
 });
 
 describe("trueProfitWithBuyerShippingCents", () => {

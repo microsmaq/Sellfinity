@@ -104,7 +104,7 @@ export async function publishListings(listingIds: string[]): Promise<BulkResult>
       ebayListingId: result.ok ? result.ebayListingId : listing?.ebayListingId,
       amazonUrl: listing?.product.supplierUrl,
       sourcePriceCents: listing?.product.costCents,
-      listingPriceCents: listing?.priceCents,
+      listingPriceCents: result.ok ? result.priceCents : listing?.priceCents,
       ok: result.ok,
       error: result.ok ? null : result.error,
     });

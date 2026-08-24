@@ -7,9 +7,17 @@ import { fitEbayDescription } from "@/lib/ebay/description";
 import { prepareEbayImages } from "@/lib/ebay/image-policy";
 import { getSharedAmazonProduct } from "@/lib/mirror/shared-catalog";
 import { parseImageUrls, serializeImageUrls } from "@/lib/types";
+import { listingPricePlan } from "./shipping-strategy";
 
 export type PublishOneResult =
-  | { ok: true; ebayListingId: string }
+  | {
+      ok: true;
+      ebayListingId: string;
+      priceCents: number;
+      buyerShippingCents: number;
+      shippingStrategy: string;
+      modeledProfitCents: number;
+    }
   | { ok: false; error: string };
 
 /** Publish one locally-created draft through the user's connected eBay
@@ -92,16 +100,109 @@ export async function publishListingForUser(
     };
   }
 
+  // Publishing is the final pricing gate for every new draft, including
+  // Amazon URL mirroring, Arbitrage batches, and drafts published later from
+  // Listings. Recompute from the latest stored Amazon landed cost and the
+  // seller's current settings so a stale draft can never bypass target profit,
+  // advertising, sitewide discount, or shipping-strategy rules.
+  let finalPriceCents = draft.priceCents;
+  let finalBuyerShippingCents = draft.buyerShippingCents;
+  let finalShippingStrategy = draft.shippingStrategy;
+  let modeledProfitCents = 0;
+  if (!recoveringEnded) {
+    const latestProduct = await db.product.findUnique({ where: { id: draft.product.id } });
+    if (!latestProduct) return { ok: false, error: "The Amazon source product no longer exists." };
+    const [pricingUser, adminSource, batchItem] = await Promise.all([
+      db.user.findUnique({
+        where: { id: userId },
+        select: {
+          ebaySitewideDiscountBps: true,
+          ebayAdRateBps: true,
+          targetProfitEnabled: true,
+          targetProfitCents: true,
+          pricingStrategy: true,
+        },
+      }),
+      db.adminArbitrageProduct.findUnique({
+        where: { asin: latestProduct.supplierProductId.trim().toUpperCase() },
+        select: {
+          ebayRecommendedPriceCents: true,
+          averageCompetitorPriceCents: true,
+          ebayPriceCents: true,
+        },
+      }),
+      db.mirrorBatchItem.findFirst({
+        where: { listingId: draft.id, sourceReferenceId: { not: null } },
+        orderBy: { createdAt: "desc" },
+        select: { sourceReferenceId: true },
+      }),
+    ]);
+    if (!pricingUser) return { ok: false, error: "The listing owner no longer exists." };
+    const opportunity = batchItem?.sourceReferenceId
+      ? await db.arbitrageItem.findUnique({
+          where: { ebayItemId: batchItem.sourceReferenceId },
+          select: {
+            ebayPriceCents: true,
+            avgCompPriceCents: true,
+            bestSellingPriceCents: true,
+          },
+        })
+      : null;
+    const plan = listingPricePlan({
+      amazonCostCents: latestProduct.costCents,
+      amazonShippingCents: latestProduct.shippingCostCents,
+      currentEbayPriceCents: draft.priceCents,
+      ebayRecommendedPriceCents:
+        opportunity?.bestSellingPriceCents
+        ?? adminSource?.ebayRecommendedPriceCents
+        ?? opportunity?.ebayPriceCents
+        ?? adminSource?.ebayPriceCents
+        ?? draft.priceCents,
+      averageCompetitorPriceCents:
+        opportunity?.avgCompPriceCents
+        ?? adminSource?.averageCompetitorPriceCents,
+      sitewideDiscountBps: pricingUser.ebaySitewideDiscountBps,
+      adRateBps: pricingUser.ebayAdRateBps,
+      targetProfitCents: pricingUser.targetProfitEnabled ? pricingUser.targetProfitCents : null,
+      pricingStrategy: pricingUser.pricingStrategy,
+    });
+    finalPriceCents = plan.itemPriceCents;
+    finalBuyerShippingCents = plan.buyerShippingCents;
+    finalShippingStrategy = plan.shippingStrategy;
+    modeledProfitCents = plan.modeledProfitCents;
+    if (
+      finalPriceCents !== draft.priceCents
+      || finalBuyerShippingCents !== draft.buyerShippingCents
+      || finalShippingStrategy !== draft.shippingStrategy
+      || latestProduct.suggestedPriceCents !== finalPriceCents
+    ) {
+      await db.$transaction([
+        db.listing.update({
+          where: { id: draft.id },
+          data: {
+            priceCents: finalPriceCents,
+            buyerShippingCents: finalBuyerShippingCents,
+            shippingStrategy: finalShippingStrategy,
+          },
+        }),
+        db.product.update({
+          where: { id: draft.product.id },
+          data: { suggestedPriceCents: finalPriceCents },
+        }),
+      ]);
+    }
+  }
+
   const input = {
     title: draft.title,
     description: fitEbayDescription(draft.description),
-    priceCents: draft.priceCents,
+    priceCents: finalPriceCents,
     quantity: draft.quantity,
     imageUrls,
     sku: draft.product.sku,
     category: draft.product.category,
     brand: draft.product.brand,
-    buyerShippingCents: draft.buyerShippingCents,
+    buyerShippingCents: finalBuyerShippingCents,
   };
   const validationError = validateListingInput(input);
   if (validationError) return { ok: false, error: validationError };
@@ -125,7 +226,14 @@ export async function publishListingForUser(
       // eBay reuses one, remove its old local tombstone so it can be displayed.
       db.ebayListingSuppression.deleteMany({ where: { userId, ebayListingId } }),
     ]);
-    return { ok: true, ebayListingId };
+    return {
+      ok: true,
+      ebayListingId,
+      priceCents: finalPriceCents,
+      buyerShippingCents: finalBuyerShippingCents,
+      shippingStrategy: finalShippingStrategy,
+      modeledProfitCents,
+    };
   } catch (error) {
     return {
       ok: false,

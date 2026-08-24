@@ -440,6 +440,7 @@ async function completeItem(
   status: "SUCCEEDED" | "FAILED",
   data: {
     ebayListingId?: string;
+    listingPriceCents?: number;
     error?: string;
   },
 ): Promise<void> {
@@ -449,6 +450,7 @@ async function completeItem(
       data: {
         status,
         ebayListingId: data.ebayListingId,
+        listingPriceCents: data.listingPriceCents,
         error: data.error?.slice(0, 500),
         completedAt: new Date(),
       },
@@ -606,6 +608,7 @@ async function processNextMirrorBatchItemForUser(
       }
       await completeItem(batchId, next.id, "SUCCEEDED", {
         ebayListingId: published.ebayListingId,
+        listingPriceCents: published.priceCents,
       });
     } else {
       await discardFailedMirrorDraft(userId, listingId);
