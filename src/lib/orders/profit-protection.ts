@@ -11,6 +11,7 @@ import { discountedEbayPriceCents, grossUpEbayPriceCents } from "@/lib/fees";
 import { MAX_BUYER_SHIPPING_CENTS, normalizePricingStrategy } from "@/lib/listings/shipping-strategy";
 import { isEbayPicturePolicyError, prepareEbayImages } from "@/lib/ebay/image-policy";
 import { parseImageUrls, serializeImageUrls } from "@/lib/types";
+import { orderProfitBreakdown } from "./profit";
 
 export type ProfitProtectionSummary = {
   checked: number;
@@ -85,11 +86,13 @@ export async function protectVerifiedOrderMargins(
     if (summary.checked >= maxVerifiedOrders) break;
     summary.checked++;
     const currentPriceCents = latestPriceByListing.get(order.listingId) ?? order.listing.priceCents;
+    const realized = orderProfitBreakdown({ ...order, actualAmazonCostCents: verifiedCostCents }, user.ebayAdRateBps);
     const decision = verifiedProfitProtectionDecision({
       currentListingPriceCents: currentPriceCents,
       orderQuantity: order.quantity,
-      realizedRevenueCents: order.salePriceCents * order.quantity + order.shippingChargedCents,
-      realizedEbayFeeCents: order.ebayFeeCents,
+      realizedRevenueCents: realized.revenueCents,
+      realizedEbayFeeCents: realized.transactionFeeCents + realized.otherEbayCostCents + realized.shippingLabelCents + realized.refundCents,
+      realizedAdvertisingFeeCents: realized.advertisingFeeCents,
       verifiedAmazonCostCents: verifiedCostCents,
       sitewideDiscountBps: user.ebaySitewideDiscountBps,
       adRateBps: user.ebayAdRateBps,

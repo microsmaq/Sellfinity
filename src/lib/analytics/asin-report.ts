@@ -1,5 +1,6 @@
 import { db } from "@/lib/db";
-import { ebayAdvertisingFeeCents } from "@/lib/fees";
+import { actualAmazonCost } from "@/lib/amazon-email/sync";
+import { orderProfitBreakdown } from "@/lib/orders/profit";
 import { loadListingTraffic, type TrafficSnapshot } from "@/lib/analytics/traffic";
 import { arbitrageSuggestedPriceCents } from "@/lib/arbitrage/pricing";
 import { assessPriceCompetitiveness, type PriceCompetitiveness } from "@/lib/arbitrage/price-competitiveness";
@@ -139,7 +140,7 @@ export async function getAsinReport(
         },
       },
       listings: {
-        include: { orders: { orderBy: { saleDate: "asc" } } },
+        include: { orders: { include: { amazonPurchaseItem: true }, orderBy: { saleDate: "asc" } } },
         orderBy: { createdAt: "asc" },
       },
     },
@@ -191,7 +192,8 @@ export async function getAsinReport(
     listing.orders.map((order) => ({ ...order, listing })),
   );
   const completedOrders = orders.filter(
-    (order) => order.status !== "REFUNDED" && order.sourcingStatus !== "CANCELLED",
+    (order) => order.sourcingStatus !== "CANCELLED"
+      && (order.status !== "REFUNDED" || order.ebayFinancialsSource === "ACTUAL"),
   );
   const userIds = [...new Set(products.map((product) => product.userId))];
   const listingIds = listings.map((listing) => listing.id);
@@ -234,10 +236,11 @@ export async function getAsinReport(
       ),
       netProfitCents: sellerOrders.reduce(
         (sum, order) => {
-          const revenue = order.salePriceCents * order.quantity + order.shippingChargedCents;
-          return sum + revenue - order.ebayFeeCents
-            - ebayAdvertisingFeeCents(revenue, seller.ebayAdRateBps)
-            - order.cogsCents - order.shippingCostCents;
+          const breakdown = orderProfitBreakdown({
+            ...order,
+            actualAmazonCostCents: order.amazonPurchaseItem ? actualAmazonCost(order.amazonPurchaseItem) : null,
+          }, seller.ebayAdRateBps);
+          return sum + breakdown.profitCents;
         },
         0,
       ),

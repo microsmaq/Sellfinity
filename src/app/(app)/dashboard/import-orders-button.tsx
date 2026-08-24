@@ -20,14 +20,16 @@ export function ImportOrdersButton() {
           startTransition(async () => {
             const result = await importOrdersNow();
             if ("error" in result) {
-              setNotice(result.error);
+              setNotice(result.error ?? "Order import failed.");
               return;
             }
-            setNotice(
-              result.imported === 0
-                ? "No new orders"
-                : `Imported ${result.imported} new order${result.imported === 1 ? "" : "s"}`,
-            );
+            const orderMessage = result.imported === 0
+              ? "No new orders"
+              : `Imported ${result.imported} new order${result.imported === 1 ? "" : "s"}`;
+            const financeMessage = result.financialsSynced > 0
+              ? `${result.financialsSynced} finalized eBay earning${result.financialsSynced === 1 ? "" : "s"} refreshed`
+              : result.financialsWarning;
+            setNotice([orderMessage, financeMessage].filter(Boolean).join(" · "));
           });
         }}
       >

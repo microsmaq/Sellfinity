@@ -47,12 +47,14 @@ export function EbayConnectionCard({
   username,
   connectedAt,
   oauth,
+  financialsAccess,
 }: {
   status: "DISCONNECTED" | "SANDBOX" | "CONNECTED";
   username: string | null;
   connectedAt: string | null;
   /** Present when a real eBay keyset (incl. RuName) is configured in env. */
   oauth: { env: "SANDBOX" | "PRODUCTION" } | null;
+  financialsAccess: boolean;
 }) {
   const [state, formAction, pending] = useActionState<SettingsResult | null, FormData>(
     connectEbaySandbox,
@@ -97,6 +99,13 @@ export function EbayConnectionCard({
               </>
             )}
           </p>
+          {status === "CONNECTED" && !financialsAccess && oauth && (
+            <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+              <p className="font-semibold">Reconnect once to enable actual eBay fee accounting</p>
+              <p className="mt-1 text-xs leading-5 text-amber-800">This adds read access to finalized order earnings, transaction fees, advertising fees, refunds, and eBay shipping-label charges.</p>
+              <a href="/api/ebay/connect" className="mt-2 inline-flex rounded-lg bg-amber-900 px-3 py-2 text-xs font-semibold text-white hover:bg-amber-800">Reconnect eBay</a>
+            </div>
+          )}
           <Button
             variant="secondary"
             disabled={disconnecting}

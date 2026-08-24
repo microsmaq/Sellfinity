@@ -40,6 +40,17 @@ export type FulfillmentOrderRow = {
   soldUnitPriceCents: number;
   listingPriceCents: number | null;
   ebayFeeCents: number;
+  transactionFeeCents: number;
+  advertisingFeeCents: number;
+  otherEbayCostCents: number;
+  shippingLabelCents: number;
+  refundCents: number;
+  amazonItemCostCents: number | null;
+  amazonShippingCents: number;
+  amazonTaxCents: number;
+  amazonDiscountCents: number;
+  financialsActual: boolean;
+  ebayFeeDetails: { type: string; amountCents: number }[];
   costCents: number | null;
   costVerified: boolean;
   profitCents: number | null;
@@ -107,6 +118,49 @@ function trackingUrl(carrier: string | null, tracking: string): string {
   if (normalized.includes("fedex")) return `https://www.fedex.com/fedextrack/?trknbr=${encodeURIComponent(tracking)}`;
   if (normalized.includes("usps")) return `https://tools.usps.com/go/TrackConfirmAction?tLabels=${encodeURIComponent(tracking)}`;
   return `https://www.google.com/search?q=${encodeURIComponent(`${carrier ?? "package"} ${tracking}`)}`;
+}
+
+function CostBreakdown({ order, mobile = false }: { order: FulfillmentOrderRow; mobile?: boolean }) {
+  if (order.costCents === null) return <span className="text-slate-400">—</span>;
+  const total = order.costCents + order.ebayFeeCents;
+  const ebayFeeRows: Array<readonly [string, number | null]> = order.ebayFeeDetails.length
+    ? order.ebayFeeDetails.map((fee) => [
+        `eBay ${fee.type.toLowerCase().replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase())}`,
+        fee.amountCents,
+      ] as const)
+    : [["eBay transaction fees", order.transactionFeeCents], ["Advertising", order.advertisingFeeCents]];
+  const rows: Array<readonly [string, number | null]> = [
+    ["Amazon item", order.amazonItemCostCents],
+    ["Amazon shipping", order.amazonShippingCents],
+    ["Amazon tax", order.amazonTaxCents],
+    ["Amazon discount", order.amazonDiscountCents ? -order.amazonDiscountCents : 0],
+    ...ebayFeeRows,
+    ["Other eBay fees", order.otherEbayCostCents],
+    ["eBay shipping label", order.shippingLabelCents],
+    ["Refunds / adjustments", order.refundCents],
+  ];
+  return (
+    <span className="group relative inline-flex justify-end">
+      <button type="button" className={cx("inline-flex items-center gap-1 font-bold tabular-nums text-slate-700 outline-none", !mobile && "font-medium")} aria-label={`Show cost breakdown for order ${order.ebayOrderId}`}>
+        {formatCents(total)} <span className="text-[11px] text-indigo-500" aria-hidden>ⓘ</span>
+      </button>
+      <span role="tooltip" className={cx(
+        "pointer-events-none invisible absolute z-30 w-64 rounded-xl border border-slate-200 bg-slate-950 p-3 text-left text-xs text-white opacity-0 shadow-2xl transition duration-150 group-hover:visible group-hover:opacity-100 group-focus-within:visible group-focus-within:opacity-100",
+        mobile ? "bottom-full left-1/2 mb-2 -translate-x-1/2" : "right-0 top-full mt-2",
+      )}>
+        <span className="mb-2 flex items-center justify-between border-b border-white/10 pb-2">
+          <span className="font-semibold">Cost breakdown</span>
+          <span className={order.financialsActual ? "text-emerald-300" : "text-amber-300"}>{order.financialsActual ? "Actual eBay" : "Estimated eBay"}</span>
+        </span>
+        {rows.map(([label, amount]) => amount !== null && amount !== 0 && (
+          <span key={label} className="flex justify-between gap-4 py-0.5 text-slate-300"><span>{label}</span><span className="tabular-nums text-white">{formatCents(amount)}</span></span>
+        ))}
+        <span className="mt-2 flex justify-between border-t border-white/10 pt-2 font-semibold"><span>Total costs</span><span className="tabular-nums">{formatCents(total)}</span></span>
+        {order.profitCents !== null && <span className="mt-1 flex justify-between font-semibold"><span>Net profit</span><span className={order.profitCents >= 0 ? "text-emerald-300" : "text-red-300"}>{formatCents(order.profitCents)}</span></span>}
+        <span className="mt-2 block text-[10px] leading-4 text-slate-400">Amazon: {order.costVerified ? "verified purchase total" : "estimated source cost"}.</span>
+      </span>
+    </span>
+  );
 }
 
 export function OrdersView({ orders, fetchError, profitProtectionEnabled, autoRestockEnabled, sitewideDiscountBps, targetProfitEnabled, targetProfitCents }: { orders: FulfillmentOrderRow[]; fetchError: string | null; profitProtectionEnabled: boolean; autoRestockEnabled: boolean; sitewideDiscountBps: number; targetProfitEnabled: boolean; targetProfitCents: number }) {
@@ -371,6 +425,8 @@ export function OrdersView({ orders, fetchError, profitProtectionEnabled, autoRe
           `${resolution.resolved} tracking number${resolution.resolved === 1 ? "" : "s"} resolved`,
           `${result.tracking.uploaded} sent to eBay`,
         ];
+        if (result.ebayImport?.financialsSynced) details.push(`${result.ebayImport.financialsSynced} finalized eBay earning${result.ebayImport.financialsSynced === 1 ? "" : "s"} refreshed`);
+        if (result.ebayImport?.financialsWarning) details.push(result.ebayImport.financialsWarning);
         if (result.tracking.savedLocally) details.push(`${result.tracking.savedLocally} tracking ID${result.tracking.savedLocally === 1 ? "" : "s"} saved`);
         if (resolution.pending) details.push(`${resolution.pending} tracking ID${resolution.pending === 1 ? " is" : "s are"} still pending`);
         if (result.tracking.failed) details.push(`${result.tracking.failed} eBay update${result.tracking.failed === 1 ? "" : "s"} failed`);
@@ -608,7 +664,7 @@ export function OrdersView({ orders, fetchError, profitProtectionEnabled, autoRe
                 </div>
                 <div className="mt-3 grid grid-cols-3 rounded-xl bg-slate-50 p-3 text-center">
                   <div><p className="text-[10px] uppercase text-slate-400">Revenue</p><p className="mt-1 text-sm font-bold">{formatCents(order.revenueCents)}</p></div>
-                  <div className="border-x border-slate-200"><p className="text-[10px] uppercase text-slate-400">Cost</p><p className="mt-1 text-sm font-bold">{order.costCents === null ? "—" : formatCents(order.costCents + order.ebayFeeCents)}</p></div>
+                  <div className="border-x border-slate-200"><p className="text-[10px] uppercase text-slate-400">Cost</p><p className="mt-1 text-sm"><CostBreakdown order={order} mobile /></p></div>
                   <div><p className="text-[10px] uppercase text-slate-400">Profit</p><p className={cx("mt-1 text-sm font-bold", order.profitCents === null ? "text-slate-400" : order.profitCents >= 0 ? "text-emerald-700" : "text-red-600")}>{order.profitCents === null ? "—" : formatCents(order.profitCents)}</p></div>
                 </div>
                 {awaitingVerifiedCost && (
@@ -690,7 +746,7 @@ export function OrdersView({ orders, fetchError, profitProtectionEnabled, autoRe
                     <td className="px-4 py-4"><Badge tone={meta.tone}>{meta.label}</Badge>{order.amazonOrderId && <p className="mt-2 text-xs text-slate-500">Amazon #{order.amazonOrderId}</p>}{order.matchConfidence !== null && <p className="mt-0.5 text-[11px] text-slate-400">{order.matchConfidence}% source match</p>}{order.amazonOrderId && duplicateAwaitingOrders(order).length > 0 && <details className="mt-2"><summary className="cursor-pointer text-[11px] font-semibold text-amber-700">Correct match</summary><div className="mt-1.5 grid gap-1">{duplicateAwaitingOrders(order).map((target) => <button key={target.id} type="button" disabled={pending || reassigningOrderId === order.id} onClick={() => moveAmazonMatch(order, target)} className="rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-left text-[11px] font-medium text-amber-900 hover:bg-amber-100 disabled:opacity-50">{reassigningOrderId === order.id ? "Moving…" : `Move to ${target.buyerUsername}`}</button>)}</div></details>}{order.stage === "AWAITING" && !order.amazonOrderId && <details className="mt-2"><summary className="cursor-pointer text-[11px] font-semibold text-slate-600">Already purchased?</summary><div className="mt-1.5 grid gap-1.5"><input value={amazonOrderNumbers[order.id] ?? ""} onChange={(event) => setAmazonOrderNumbers((current) => ({ ...current, [order.id]: event.target.value }))} placeholder="Amazon order number" aria-label={`Amazon order number for ${order.ebayOrderId}`} className="w-44 rounded-md border border-slate-300 bg-white px-2 py-1.5 text-xs text-slate-900 placeholder-slate-400 focus:border-indigo-500 focus:outline-none" /><Button size="sm" variant="secondary" disabled={pending || linkingOrderId === order.id} onClick={() => linkKnownAmazonOrder(order)}>{linkingOrderId === order.id ? "Validating…" : "Link purchase"}</Button></div></details>}</td>
                     <td className="max-w-[240px] px-4 py-4">{order.trackingNumber ? <><a href={trackingUrl(order.carrier, order.trackingNumber)} target="_blank" rel="noreferrer" className="break-all font-medium text-indigo-700 hover:underline">{order.trackingNumber}</a><p className="mt-1 text-xs text-slate-500">{order.carrier ?? "Carrier pending"}{order.trackingSynced ? " · sent to eBay" : order.stage === "DELIVERED" ? " · saved" : " · waiting for eBay"}</p></> : <>{order.amazonTrackingUrl ? <><a href={order.amazonTrackingUrl} target="_blank" rel="noreferrer" className="font-medium text-indigo-700 hover:underline">Open Amazon tracking ↗</a><p className="mt-1 text-xs text-amber-700">Tracking number pending</p></> : <span className="text-slate-400">Not available yet</span>}{order.stage !== "CANCELLED" && order.stage !== "REFUNDED" && <div className="mt-2 space-y-1.5"><input data-order-id={order.id} value={manualTracking[order.id] ?? ""} onChange={(event) => setManualTracking((current) => ({ ...current, [order.id]: event.target.value }))} onKeyDown={(event) => { if (event.key === "Enter") submitTracking(order, event.currentTarget.value); }} placeholder="Enter tracking number" aria-label={`Tracking number for ${order.ebayOrderId}`} className="w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-xs text-slate-900 placeholder-slate-400 focus:border-indigo-500 focus:outline-none" /><Button size="sm" variant="secondary" disabled={pending || savingTrackingOrderId === order.id} onClick={() => submitTracking(order)} className="w-full">{savingTrackingOrderId === order.id ? "Saving…" : order.stage === "DELIVERED" ? "Save tracking" : "Save & mark shipped"}</Button></div>}</>}</td>
                     <td className="whitespace-nowrap px-4 py-4 text-right"><p className="font-semibold tabular-nums text-slate-900">{formatCents(order.revenueCents)}</p><p className="mt-1 text-[11px] text-slate-400">eBay sale</p></td>
-                    <td className="whitespace-nowrap px-4 py-4 text-right"><p className="font-medium tabular-nums text-slate-700">{order.costCents === null ? "—" : formatCents(order.costCents + order.ebayFeeCents)}</p><p className="mt-1 text-[11px] text-slate-400">{order.costVerified ? "Verified" : "Estimated"} · incl. fees</p></td>
+                    <td className="whitespace-nowrap px-4 py-4 text-right"><CostBreakdown order={order} /><p className="mt-1 text-[11px] text-slate-400">{order.costVerified ? "Verified Amazon" : "Estimated Amazon"} · {order.financialsActual ? "actual eBay" : "estimated eBay"}</p></td>
                     <td className="whitespace-nowrap px-4 py-4 text-right">
                       <p className={cx("font-semibold tabular-nums", order.profitCents === null ? "text-slate-400" : order.profitCents >= 0 ? "text-emerald-700" : "text-red-600")}>{order.profitCents === null ? "—" : formatCents(order.profitCents)}</p>
                       {order.profitProtectionStatus === "ADJUSTED" && order.profitProtectionNewPriceCents !== null && <p className="mt-1 text-[11px] font-medium text-emerald-700">Future listing {formatCents(order.profitProtectionNewPriceCents)} · updated</p>}

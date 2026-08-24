@@ -42,12 +42,14 @@ export async function connectEbaySandbox(
       status: "SANDBOX",
       ebayUsername: parsed.data,
       accessToken: "sandbox-placeholder-token",
+      oauthScopesJson: "[]",
       connectedAt: new Date(),
     },
     update: {
       status: "SANDBOX",
       ebayUsername: parsed.data,
       accessToken: "sandbox-placeholder-token",
+      oauthScopesJson: "[]",
       connectedAt: new Date(),
     },
   });

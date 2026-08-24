@@ -41,6 +41,7 @@ export function verifiedProfitProtectionDecision(input: {
   orderQuantity: number;
   realizedRevenueCents: number;
   realizedEbayFeeCents: number;
+  realizedAdvertisingFeeCents?: number;
   verifiedAmazonCostCents: number;
   sitewideDiscountBps?: number;
   adRateBps?: number;
@@ -48,7 +49,8 @@ export function verifiedProfitProtectionDecision(input: {
 }): VerifiedProfitDecision {
   const adRateBps = normalizeAdRateBps(input.adRateBps);
   const totalRealizedFeeCents = input.realizedEbayFeeCents
-    + ebayAdvertisingFeeCents(input.realizedRevenueCents, adRateBps);
+    + (input.realizedAdvertisingFeeCents
+      ?? ebayAdvertisingFeeCents(input.realizedRevenueCents, adRateBps));
   const realizedProfitCents = input.realizedRevenueCents - totalRealizedFeeCents - input.verifiedAmazonCostCents;
   const realizedMarginBps = input.realizedRevenueCents > 0
     ? Math.floor((realizedProfitCents * 10_000) / input.realizedRevenueCents)

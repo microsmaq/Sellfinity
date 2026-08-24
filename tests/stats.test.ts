@@ -38,11 +38,49 @@ describe("summarize", () => {
     expect(highAds.feesCents - lowAds.feesCents).toBe(120);
   });
 
+  it("uses finalized eBay earnings and ignores the estimated ad rate", () => {
+    const finalized = order({
+      ebayFinancialsSource: "ACTUAL",
+      ebayGrossAmountCents: 2000,
+      ebayOrderEarningsCents: 1500,
+      ebayTransactionFeeCents: 300,
+      ebayAdvertisingFeeCents: 200,
+      ebayOtherFeeCents: 0,
+      ebayShippingLabelCents: 0,
+      ebayRefundCents: 0,
+      actualAmazonCostCents: 900,
+    });
+    const lowRate = summarize([finalized], 100);
+    const highRate = summarize([finalized], 1500);
+    expect(lowRate.netCents).toBe(600);
+    expect(highRate.netCents).toBe(600);
+    expect(lowRate.feesCents).toBe(500);
+    expect(lowRate.actualEbayOrders).toBe(1);
+    expect(lowRate.estimatedEbayOrders).toBe(0);
+  });
+
   it("excludes refunded orders from money totals but counts them", () => {
     const t = summarize([order(), order({ status: "REFUNDED" })]);
     expect(t.orders).toBe(1);
     expect(t.refunded).toBe(1);
     expect(t.revenueCents).toBe(2000);
+  });
+
+  it("accounts for a refund once eBay supplies finalized earnings", () => {
+    const totals = summarize([order({
+      status: "REFUNDED",
+      ebayFinancialsSource: "ACTUAL",
+      ebayGrossAmountCents: 2000,
+      ebayOrderEarningsCents: -100,
+      ebayTransactionFeeCents: 0,
+      ebayAdvertisingFeeCents: 0,
+      ebayOtherFeeCents: 0,
+      ebayShippingLabelCents: 0,
+      ebayRefundCents: 2100,
+      actualAmazonCostCents: 1000,
+    })]);
+    expect(totals.refunded).toBe(1);
+    expect(totals.netCents).toBe(-1100);
   });
 
   it("excludes cancelled orders from profit and daily sales", () => {

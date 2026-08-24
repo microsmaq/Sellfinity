@@ -2,7 +2,7 @@ import { requireUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { getEbayClientForUser } from "@/lib/ebay";
 import { ebayEnvConfig } from "@/lib/ebay/oauth";
-import { ebayAdvertisingFeeCents, estimateMargin } from "@/lib/fees";
+import { ebayAdvertisingFeeCents, ebayFeeCents as estimatedEbayTransactionFeeCents } from "@/lib/fees";
 import { parseImageUrls } from "@/lib/types";
 import { Badge, PageHeader } from "@/components/ui";
 import { OrdersView, type FulfillmentOrderRow } from "./orders-view";
@@ -11,10 +11,24 @@ import { verifiedProfitProtectionDecision } from "@/lib/orders/profit-protection
 import { remoteFulfillmentLookupKeys } from "@/lib/amazon-email/tracking-utils";
 import { fulfillmentStage } from "@/lib/orders/fulfillment-stage";
 import { getListingPriceProtection } from "@/lib/listings/winner";
+import { orderProfitBreakdown } from "@/lib/orders/profit";
+import type { EbayFeeBreakdownEntry } from "@/lib/ebay/order-financials";
 
 export const metadata = { title: "Fulfillment — Sellfinity" };
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
+
+function feeDetails(value: string): EbayFeeBreakdownEntry[] {
+  try {
+    const parsed: unknown = JSON.parse(value);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((entry): entry is EbayFeeBreakdownEntry => Boolean(
+      entry && typeof entry === "object"
+      && typeof (entry as EbayFeeBreakdownEntry).type === "string"
+      && Number.isFinite((entry as EbayFeeBreakdownEntry).amountCents),
+    ));
+  } catch { return []; }
+}
 
 export default async function OrdersPage() {
   const user = await requireUser();
@@ -58,11 +72,11 @@ export default async function OrdersPage() {
     const live = liveLineByImportedId.get(order.ebayOrderId);
     const purchaseItem = order.amazonPurchaseItem;
     const purchase = purchaseItem?.purchase;
-    const revenueCents = order.salePriceCents * order.quantity + order.shippingChargedCents;
-    const estimatedCostCents = order.cogsCents + order.shippingCostCents;
     const verifiedCostCents = purchaseItem ? actualAmazonCost(purchaseItem) : null;
-    const costCents = verifiedCostCents ?? estimatedCostCents;
-    const advertisingFeeCents = ebayAdvertisingFeeCents(revenueCents, user.ebayAdRateBps);
+    const breakdown = orderProfitBreakdown({
+      ...order,
+      actualAmazonCostCents: verifiedCostCents,
+    }, user.ebayAdRateBps);
     const stage = fulfillmentStage({
       ebayStatus: order.status,
       sourcingStatus: order.sourcingStatus,
@@ -74,8 +88,14 @@ export default async function OrdersPage() {
     const protectionDecision = verifiedCostCents === null ? null : verifiedProfitProtectionDecision({
       currentListingPriceCents: order.listing.priceCents,
       orderQuantity: order.quantity,
-      realizedRevenueCents: revenueCents,
-      realizedEbayFeeCents: order.ebayFeeCents,
+      realizedRevenueCents: breakdown.revenueCents,
+      realizedEbayFeeCents: breakdown.transactionFeeCents
+        + breakdown.otherEbayCostCents
+        + breakdown.shippingLabelCents
+        + breakdown.refundCents,
+      realizedAdvertisingFeeCents: breakdown.actualEbayFinancials
+        ? breakdown.advertisingFeeCents
+        : undefined,
       verifiedAmazonCostCents: verifiedCostCents,
       sitewideDiscountBps: user.ebaySitewideDiscountBps,
       adRateBps: user.ebayAdRateBps,
@@ -107,13 +127,24 @@ export default async function OrdersPage() {
       trackingSynced: !!order.ebayTrackingSyncedAt,
       trackingError: order.ebayTrackingSyncError,
       ebayFulfilled: order.status === "SHIPPED",
-      revenueCents,
+      revenueCents: breakdown.revenueCents,
       soldUnitPriceCents: order.salePriceCents,
       listingPriceCents: order.listing.priceCents,
-      ebayFeeCents: order.ebayFeeCents + advertisingFeeCents,
-      costCents,
+      ebayFeeCents: breakdown.totalCostCents - breakdown.amazonCostCents,
+      transactionFeeCents: breakdown.transactionFeeCents,
+      advertisingFeeCents: breakdown.advertisingFeeCents,
+      otherEbayCostCents: breakdown.otherEbayCostCents,
+      shippingLabelCents: breakdown.shippingLabelCents,
+      refundCents: breakdown.refundCents,
+      amazonItemCostCents: purchaseItem?.lineTotalCents ?? order.cogsCents,
+      amazonShippingCents: purchaseItem?.allocatedShippingCents ?? order.shippingCostCents,
+      amazonTaxCents: purchaseItem?.allocatedTaxCents ?? 0,
+      amazonDiscountCents: purchaseItem?.allocatedDiscountCents ?? 0,
+      financialsActual: breakdown.actualEbayFinancials,
+      ebayFeeDetails: breakdown.actualEbayFinancials ? feeDetails(order.ebayFeeBreakdownJson) : [],
+      costCents: breakdown.amazonCostCents,
       costVerified: verifiedCostCents !== null,
-      profitCents: revenueCents - order.ebayFeeCents - advertisingFeeCents - costCents,
+      profitCents: breakdown.profitCents,
       matchConfidence: purchaseItem?.matchConfidence ?? null,
       needsSource: !purchaseItem && !order.listing.product.supplierUrl,
       profitProtectionStatus: order.profitProtectionStatus,
@@ -144,14 +175,14 @@ export default async function OrdersPage() {
     for (const { order, line } of missingLiveLines) {
       const listing = byEbayId.get(line.ebayListingId);
       const revenueCents = line.salePriceCents * line.quantity + line.shippingChargedCents;
-      const margin = listing
-        ? estimateMargin(
-            line.salePriceCents + Math.round(line.shippingChargedCents / line.quantity),
-            listing.product.costCents,
-            listing.product.shippingCostCents,
-            user.ebaySitewideDiscountBps,
-            user.ebayAdRateBps,
-          )
+      const estimatedTransactionFee = estimatedEbayTransactionFeeCents({
+        quantity: line.quantity,
+        salePriceCents: line.salePriceCents,
+        shippingChargedCents: line.shippingChargedCents,
+      });
+      const estimatedAdvertisingFee = ebayAdvertisingFeeCents(revenueCents, user.ebayAdRateBps);
+      const estimatedAmazonCost = listing
+        ? (listing.product.costCents + listing.product.shippingCostCents) * line.quantity
         : null;
       rows.push({
         id: `${order.orderId}-${line.lineItemId}`,
@@ -180,10 +211,21 @@ export default async function OrdersPage() {
         revenueCents,
         soldUnitPriceCents: line.salePriceCents,
         listingPriceCents: listing?.priceCents ?? null,
-        ebayFeeCents: margin ? margin.estimatedFeeCents * line.quantity : 0,
-        costCents: listing ? (listing.product.costCents + listing.product.shippingCostCents) * line.quantity : null,
+        ebayFeeCents: estimatedTransactionFee + estimatedAdvertisingFee,
+        transactionFeeCents: estimatedTransactionFee,
+        advertisingFeeCents: estimatedAdvertisingFee,
+        otherEbayCostCents: 0,
+        shippingLabelCents: 0,
+        refundCents: 0,
+        amazonItemCostCents: listing ? listing.product.costCents * line.quantity : null,
+        amazonShippingCents: listing ? listing.product.shippingCostCents * line.quantity : 0,
+        amazonTaxCents: 0,
+        amazonDiscountCents: 0,
+        financialsActual: false,
+        ebayFeeDetails: [],
+        costCents: estimatedAmazonCost,
         costVerified: false,
-        profitCents: margin ? margin.estimatedProfitCents * line.quantity : null,
+        profitCents: estimatedAmazonCost === null ? null : revenueCents - estimatedTransactionFee - estimatedAdvertisingFee - estimatedAmazonCost,
         matchConfidence: null,
         needsSource: !listing,
         profitProtectionStatus: null,

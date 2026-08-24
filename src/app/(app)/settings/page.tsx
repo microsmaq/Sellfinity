@@ -1,6 +1,6 @@
 import { requireUser } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { ebayEnvConfig } from "@/lib/ebay/oauth";
+import { EBAY_SCOPES, ebayEnvConfig } from "@/lib/ebay/oauth";
 import { Card, PageHeader } from "@/components/ui";
 import { EbayConnectionCard } from "./ebay-connection";
 import { getRainforestEfficiencySummary } from "@/lib/mirror/rainforest";
@@ -36,6 +36,14 @@ export default async function SettingsPage({
     db.amazonEmailConnection.findUnique({ where: { userId: user.id } }),
   ]);
   const oauthConfig = ebayEnvConfig();
+  let storedScopes: string[] = [];
+  try {
+    const parsed: unknown = JSON.parse(connection?.oauthScopesJson ?? "[]");
+    if (Array.isArray(parsed)) storedScopes = parsed.filter((scope): scope is string => typeof scope === "string");
+  } catch { /* A malformed legacy value simply requires reconnection. */ }
+  const grantedScopes = new Set(storedScopes);
+  const financialsAccess = connection?.status === "CONNECTED"
+    && grantedScopes.has(EBAY_SCOPES.find((scope) => scope.endsWith("/sell.finances")) ?? "");
   const callback = CALLBACK_MESSAGES[(await searchParams).ebay ?? ""];
 
   return (
@@ -93,6 +101,7 @@ export default async function SettingsPage({
           username={connection?.ebayUsername ?? null}
           connectedAt={connection?.connectedAt?.toISOString() ?? null}
           oauth={oauthConfig ? { env: oauthConfig.env } : null}
+          financialsAccess={financialsAccess}
         />
         <AmazonEmailConnectionCard
           configured={!!googleEmailConfig()}

@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { requireUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { importOrders } from "@/lib/orders/import";
-import { restockLowFulfillmentInventory, type AutoRestockResult } from "@/lib/orders/auto-restock";
+import { restockLowFulfillmentInventory } from "@/lib/orders/auto-restock";
 import { getEbayClientForUser } from "@/lib/ebay";
 import { ebayCarrierCode, normalizeTrackingNumber, remoteFulfillmentLookupKeys } from "@/lib/amazon-email/tracking-utils";
 import { sourcingStatusForAmazonPurchase } from "@/lib/amazon-email/status";
@@ -240,9 +240,7 @@ export async function setAutoRestockFulfilledListings(enabled: boolean) {
   return { enabled, restock, warning };
 }
 
-export async function importOrdersNow(): Promise<
-  { imported: number; restock: AutoRestockResult } | { error: string }
-> {
+export async function importOrdersNow() {
   const user = await requireUser();
   const connection = await db.ebayConnection.findUnique({ where: { userId: user.id } });
   if (!connection || connection.status === "DISCONNECTED") {

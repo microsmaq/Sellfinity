@@ -28,6 +28,7 @@ export type ListingUpdate = {
 /** An order as returned by eBay (Fulfillment API shape, simplified). */
 export type RemoteOrder = {
   ebayOrderId: string;
+  checkoutOrderId?: string;
   ebayListingId: string;
   quantity: number;
   salePriceCents: number; // per unit
@@ -48,6 +49,8 @@ export type RemoteOrder = {
   trackingNumber?: string | null;
   trackingCarrier?: string | null;
 };
+
+export type { RemoteOrderFinancials } from "./order-financials";
 
 export type RemoteFulfillmentLine = {
   lineItemId: string;
@@ -129,6 +132,12 @@ export interface EbayClient {
    * account/tokens to use.
    */
   getOrders(userId: string, since: Date): Promise<RemoteOrder[]>;
+  /** Finalized eBay earnings and exact fee components. Older OAuth grants
+   * may not include sell.finances, so callers must retain estimate fallback. */
+  getOrderFinancials?(
+    userId: string,
+    orderIds: string[],
+  ): Promise<import("./order-financials").RemoteOrderFinancials[]>;
   /** Paid, non-cancelled orders that still contain line items to fulfill. */
   getUnfulfilledOrders(userId: string): Promise<RemoteFulfillmentOrder[]>;
   /** Mark one paid order line as shipped and attach carrier tracking. */

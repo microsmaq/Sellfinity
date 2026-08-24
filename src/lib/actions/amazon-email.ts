@@ -12,7 +12,8 @@ export async function syncAmazonEmailsNow() {
   const user = await requireUser();
   try {
     // Ensure there is a current local eBay sale ledger to match against.
-    try { await importOrders(user.id); } catch { /* Email ingestion can still proceed. */ }
+    let ebayImport: Awaited<ReturnType<typeof importOrders>> | null = null;
+    try { ebayImport = await importOrders(user.id); } catch { /* Email ingestion can still proceed. */ }
     // A user-triggered refresh retries every unresolved Amazon tracking link,
     // including links that previously required sign-in or had no number yet.
     const result = await syncAmazonPurchaseEmails(user.id, { retryTrackingFailures: true });
@@ -28,7 +29,7 @@ export async function syncAmazonEmailsNow() {
     try { restock = await restockLowFulfillmentInventory(user.id); }
     catch (error) { restockError = error instanceof Error ? error.message.slice(0, 300) : "eBay stock refill failed"; }
     revalidatePath("/dashboard"); revalidatePath("/settings"); revalidatePath("/orders"); revalidatePath("/listings");
-    return { ...result, tracking, trackingError, protection, restock, restockError };
+    return { ...result, ebayImport, tracking, trackingError, protection, restock, restockError };
   } catch (error) {
     const message = error instanceof Error ? error.message.slice(0, 300) : "Amazon email sync failed";
     await db.amazonEmailConnection.updateMany({ where: { userId: user.id }, data: { lastSyncError: message } });

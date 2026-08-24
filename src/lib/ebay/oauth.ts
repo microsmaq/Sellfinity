@@ -22,6 +22,7 @@ export const EBAY_SCOPES = [
   "https://api.ebay.com/oauth/api_scope/sell.inventory",
   "https://api.ebay.com/oauth/api_scope/sell.account",
   "https://api.ebay.com/oauth/api_scope/sell.fulfillment",
+  "https://api.ebay.com/oauth/api_scope/sell.finances",
   "https://api.ebay.com/oauth/api_scope/sell.analytics.readonly",
   "https://api.ebay.com/oauth/api_scope/commerce.identity.readonly",
 ];
@@ -140,6 +141,7 @@ export async function completeConnection(
     accessToken: token.access_token,
     accessTokenExpiresAt: new Date(Date.now() + (token.expires_in - 60) * 1000),
     refreshToken: token.refresh_token ?? null,
+    oauthScopesJson: JSON.stringify(EBAY_SCOPES),
     connectedAt: new Date(),
   };
   await db.ebayConnection.upsert({

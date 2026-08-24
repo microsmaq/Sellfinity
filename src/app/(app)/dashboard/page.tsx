@@ -2,9 +2,9 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 import { requireUser } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { ebayAdvertisingFeeCents } from "@/lib/fees";
 import { formatCents } from "@/lib/money";
 import { dailySeries, perItem, summarize, windowStartUtc } from "@/lib/orders/stats";
+import { orderProfitBreakdown } from "@/lib/orders/profit";
 import { Card, cx } from "@/components/ui";
 import { ProfitChart } from "./profit-chart";
 import { ImportOrdersButton } from "./import-orders-button";
@@ -177,7 +177,7 @@ export default async function DashboardPage() {
       <section aria-label="Store performance" className="grid grid-cols-2 gap-3 lg:grid-cols-4 lg:gap-4">
         <MetricCard label="Revenue" value={formatCents(totals30.revenueCents)} detail={<Trend value={revenueChange} fallback={`${totals30.units} units sold`} />} />
         <MetricCard label="Active listings" value={activeListings.toLocaleString()} detail={latestSync ? `Last sync checked ${latestSync.listingsChecked}` : "Run Smart Sync to verify stock"} />
-        <MetricCard label="eBay + ads" value={formatCents(totals30.feesCents)} detail={`${adRate}% ad rate included`} tone="negative" />
+        <MetricCard label="eBay + ads" value={formatCents(totals30.feesCents)} detail={totals30.actualEbayOrders ? `${totals30.actualEbayOrders}/${totals30.orders} orders use actual eBay fees` : `Estimated using ${adRate}% ad rate`} tone="negative" />
         <MetricCard label="Goods + shipping" value={formatCents(totals30.cogsCents)} detail={`${exactOrders30}/${totals30.orders} orders verified`} tone="negative" />
       </section>
 
@@ -196,7 +196,7 @@ export default async function DashboardPage() {
         </div>
       </section>
 
-      {(awaitingFulfillment > 0 || openIssues > 0 || trackingErrors > 0 || exactOrders30 < totals30.orders) && (
+      {(awaitingFulfillment > 0 || openIssues > 0 || trackingErrors > 0 || exactOrders30 < totals30.orders || totals30.estimatedEbayOrders > 0) && (
         <section className="rounded-2xl border border-amber-200 bg-amber-50/70 p-4 sm:p-5">
           <div className="flex items-start gap-3">
             <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-amber-100 font-bold text-amber-700">!</span>
@@ -207,6 +207,7 @@ export default async function DashboardPage() {
                 {openIssues > 0 && <Link href="/inventory" className="rounded-xl bg-white/80 px-3 py-2.5 font-medium text-amber-950 ring-1 ring-amber-200 hover:bg-white">{openIssues} inventory issue{openIssues === 1 ? "" : "s"} to review <span aria-hidden>→</span></Link>}
                 {trackingErrors > 0 && <Link href="/orders" className="rounded-xl bg-white/80 px-3 py-2.5 font-medium text-amber-950 ring-1 ring-amber-200 hover:bg-white">{trackingErrors} tracking update{trackingErrors === 1 ? "" : "s"} failed <span aria-hidden>→</span></Link>}
                 {totals30.orders > exactOrders30 && <Link href="/orders" className="rounded-xl bg-white/80 px-3 py-2.5 font-medium text-amber-950 ring-1 ring-amber-200 hover:bg-white">{totals30.orders - exactOrders30} profit total{totals30.orders - exactOrders30 === 1 ? " is" : "s are"} still estimated <span aria-hidden>→</span></Link>}
+                {totals30.estimatedEbayOrders > 0 && <Link href="/settings" className="rounded-xl bg-white/80 px-3 py-2.5 font-medium text-amber-950 ring-1 ring-amber-200 hover:bg-white">{totals30.estimatedEbayOrders} order{totals30.estimatedEbayOrders === 1 ? " needs" : "s need"} finalized eBay fees · reconnect/import <span aria-hidden>→</span></Link>}
               </div>
             </div>
           </div>
@@ -273,10 +274,10 @@ export default async function DashboardPage() {
               </div>
               <Card className="divide-y divide-slate-100 overflow-hidden">
                 {orders.slice(0, 6).map((order) => {
-                  const revenue = order.salePriceCents * order.quantity + order.shippingChargedCents;
                   const amazonCost = order.amazonPurchaseItem ? actualAmazonCost(order.amazonPurchaseItem) : null;
-                  const ads = ebayAdvertisingFeeCents(revenue, user.ebayAdRateBps);
-                  const net = revenue - order.ebayFeeCents - ads - (amazonCost ?? (order.cogsCents + order.shippingCostCents));
+                  const breakdown = orderProfitBreakdown({ ...order, actualAmazonCostCents: amazonCost }, user.ebayAdRateBps);
+                  const revenue = breakdown.revenueCents;
+                  const net = breakdown.profitCents;
                   return (
                     <Link href="/orders" key={order.id} className="flex items-center gap-3 p-4 transition hover:bg-slate-50">
                       <span className={cx("grid h-10 w-10 shrink-0 place-items-center rounded-xl text-sm font-bold", order.status === "REFUNDED" || order.sourcingStatus === "CANCELLED" ? "bg-red-50 text-red-600" : order.sourcingStatus === "DELIVERED" ? "bg-emerald-50 text-emerald-600" : "bg-indigo-50 text-indigo-600")}>{order.quantity}×</span>

@@ -1,7 +1,8 @@
 import "server-only";
 
 import { db } from "@/lib/db";
-import { ebayAdvertisingFeeCents } from "@/lib/fees";
+import { actualAmazonCost } from "@/lib/amazon-email/sync";
+import { orderProfitBreakdown } from "@/lib/orders/profit";
 import {
   assessProfitableSalePriceLock,
   assessVerifiedWinner,
@@ -46,18 +47,25 @@ export async function getListingPriceProtection(
       ebayFeeCents: true,
       cogsCents: true,
       shippingCostCents: true,
+      ebayFinancialsSource: true,
+      ebayGrossAmountCents: true,
+      ebayOrderEarningsCents: true,
+      ebayTransactionFeeCents: true,
+      ebayAdvertisingFeeCents: true,
+      ebayOtherFeeCents: true,
+      ebayShippingLabelCents: true,
+      ebayRefundCents: true,
+      amazonPurchaseItem: true,
     },
   });
   const byListing = new Map<string, Array<{ saleDate: Date; quantity: number; profitCents: number }>>();
   for (const order of orders) {
-    const revenueCents = order.salePriceCents * order.quantity + order.shippingChargedCents;
-    const profitCents = revenueCents
-      - order.ebayFeeCents
-      - ebayAdvertisingFeeCents(revenueCents, adRateBps)
-      - order.cogsCents
-      - order.shippingCostCents;
+    const breakdown = orderProfitBreakdown({
+      ...order,
+      actualAmazonCostCents: order.amazonPurchaseItem ? actualAmazonCost(order.amazonPurchaseItem) : null,
+    }, adRateBps);
     const rows = byListing.get(order.listingId) ?? [];
-    rows.push({ saleDate: order.saleDate, quantity: order.quantity, profitCents });
+    rows.push({ saleDate: order.saleDate, quantity: order.quantity, profitCents: breakdown.profitCents });
     byListing.set(order.listingId, rows);
   }
 

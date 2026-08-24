@@ -1,8 +1,9 @@
 // P&L aggregation over recorded orders. Refunded orders are excluded from
 // money totals (the buyer got their money back) but surfaced as a count.
-import { ebayAdvertisingFeeCents, DEFAULT_EBAY_AD_RATE_BPS } from "@/lib/fees";
+import { DEFAULT_EBAY_AD_RATE_BPS } from "@/lib/fees";
+import { orderProfitBreakdown, type OrderProfitInput } from "./profit";
 
-export type OrderFacts = {
+export type OrderFacts = OrderProfitInput & {
   quantity: number;
   salePriceCents: number;
   shippingChargedCents: number;
@@ -23,27 +24,32 @@ export type Totals = {
   cogsCents: number; // cost of goods + outbound shipping
   netCents: number;
   refunded: number;
+  actualEbayOrders: number;
+  estimatedEbayOrders: number;
 };
 
 export function summarize(orders: OrderFacts[], adRateBps = DEFAULT_EBAY_AD_RATE_BPS): Totals {
   const t: Totals = {
-    orders: 0, units: 0, revenueCents: 0, feesCents: 0, cogsCents: 0, netCents: 0, refunded: 0,
+    orders: 0, units: 0, revenueCents: 0, feesCents: 0, cogsCents: 0, netCents: 0, refunded: 0, actualEbayOrders: 0, estimatedEbayOrders: 0,
   };
   for (const o of orders) {
     if (o.status === "REFUNDED") {
       t.refunded++;
-      continue;
+      // Finalized eBay earnings include the real refund and any fee credits.
+      // Until those arrive, excluding the original sale is safer than showing
+      // its pre-refund revenue as current profit.
+      if (o.ebayFinancialsSource !== "ACTUAL") continue;
     }
     if (o.sourcingStatus === "CANCELLED") continue;
-    const revenue = o.salePriceCents * o.quantity + o.shippingChargedCents;
-    const advertisingFee = ebayAdvertisingFeeCents(revenue, adRateBps);
-    const costs = o.actualAmazonCostCents ?? (o.cogsCents + o.shippingCostCents);
+    const breakdown = orderProfitBreakdown(o, adRateBps);
     t.orders++;
     t.units += o.quantity;
-    t.revenueCents += revenue;
-    t.feesCents += o.ebayFeeCents + advertisingFee;
-    t.cogsCents += costs;
-    t.netCents += revenue - o.ebayFeeCents - advertisingFee - costs;
+    t.revenueCents += breakdown.revenueCents;
+    t.feesCents += breakdown.totalCostCents - breakdown.amazonCostCents;
+    t.cogsCents += breakdown.amazonCostCents;
+    t.netCents += breakdown.profitCents;
+    if (breakdown.actualEbayFinancials) t.actualEbayOrders++;
+    else t.estimatedEbayOrders++;
   }
   return t;
 }
@@ -69,14 +75,13 @@ export function dailySeries(orders: OrderFacts[], days: number, now = new Date()
     points.set(key, { date: key, revenueCents: 0, netCents: 0 });
   }
   for (const o of orders) {
-    if (o.status === "REFUNDED" || o.sourcingStatus === "CANCELLED") continue;
+    if (o.sourcingStatus === "CANCELLED" || (o.status === "REFUNDED" && o.ebayFinancialsSource !== "ACTUAL")) continue;
     const key = o.saleDate.toISOString().slice(0, 10);
     const point = points.get(key);
     if (!point) continue;
-    const revenue = o.salePriceCents * o.quantity + o.shippingChargedCents;
-    const advertisingFee = ebayAdvertisingFeeCents(revenue, adRateBps);
-    point.revenueCents += revenue;
-    point.netCents += revenue - o.ebayFeeCents - advertisingFee - (o.actualAmazonCostCents ?? (o.cogsCents + o.shippingCostCents));
+    const breakdown = orderProfitBreakdown(o, adRateBps);
+    point.revenueCents += breakdown.revenueCents;
+    point.netCents += breakdown.profitCents;
   }
   return [...points.values()];
 }

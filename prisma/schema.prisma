@@ -376,6 +376,10 @@ model EbayConnection {
   accessToken          String?
   accessTokenExpiresAt DateTime?
   refreshToken         String?
+  // Snapshot of the scopes granted by the latest OAuth consent. Older
+  // connections without sell.finances must reconnect before actual order
+  // earnings can replace fee estimates.
+  oauthScopesJson      String    @default("[]")
   connectedAt          DateTime?
   user                 User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
@@ -491,6 +495,22 @@ model Order {
   salePriceCents             Int
   shippingChargedCents       Int      @default(0)
   ebayFeeCents               Int
+  // Finalized eBay order earnings. Null means the dashboard must use the
+  // legacy fee estimate until the Finances API publishes the transaction.
+  ebayCheckoutOrderId        String?
+  ebayGrossAmountCents       Int?
+  ebayOrderEarningsCents     Int?
+  ebayTransactionFeeCents    Int?
+  ebayAdvertisingFeeCents    Int?
+  ebayOtherFeeCents          Int?
+  ebayShippingLabelCents     Int?
+  ebayRefundCents            Int?
+  ebayFeeBreakdownJson       String    @default("[]")
+  // ESTIMATED | ACTUAL
+  ebayFinancialsSource       String    @default("ESTIMATED")
+  ebayFinancialsCheckedAt    DateTime?
+  ebayFinancialsUpdatedAt    DateTime?
+  ebayFinancialsError        String?
   shippingCostCents          Int
   cogsCents                  Int // total cost of goods for this order
   // PAID | SHIPPED | REFUNDED
@@ -524,6 +544,8 @@ model Order {
 
   @@unique([userId, ebayOrderId])
   @@index([userId, saleDate])
+  @@index([userId, ebayCheckoutOrderId])
+  @@index([userId, ebayFinancialsSource, saleDate])
 }
 
 model SyncRun {

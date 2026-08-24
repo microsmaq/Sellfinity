@@ -1,7 +1,9 @@
 import "server-only";
 import { db } from "@/lib/db";
 import { parseImageUrls } from "@/lib/types";
-import { ebayAdvertisingFeeCents, DEFAULT_EBAY_AD_RATE_BPS } from "@/lib/fees";
+import { DEFAULT_EBAY_AD_RATE_BPS } from "@/lib/fees";
+import { actualAmazonCost } from "@/lib/amazon-email/sync";
+import { orderProfitBreakdown } from "@/lib/orders/profit";
 import { arbitrageSuggestedPriceCents } from "@/lib/arbitrage/pricing";
 import { assessPriceCompetitiveness, type PriceCompetitiveness } from "@/lib/arbitrage/price-competitiveness";
 import { loadListingTraffic } from "@/lib/analytics/traffic";
@@ -90,7 +92,7 @@ export async function getProductAnalyticsOverview(options: {
       where: options.userId ? { userId: options.userId } : undefined,
       include: {
         user: { select: { ebayAdRateBps: true, ebaySitewideDiscountBps: true, targetProfitEnabled: true, targetProfitCents: true, ebayConnection: { select: { status: true } } } },
-        listings: { include: { orders: true } },
+        listings: { include: { orders: { include: { amazonPurchaseItem: true } } } },
       },
       orderBy: { createdAt: "desc" },
     }),
@@ -188,25 +190,25 @@ export async function getProductAnalyticsOverview(options: {
       if (listing.updatedAt.toISOString() > row.lastActivityAt) row.lastActivityAt = listing.updatedAt.toISOString();
       const winnerOrders: { saleDate: Date; quantity: number; profitCents: number }[] = [];
       for (const order of listing.orders) {
-        if (order.status === "REFUNDED" || order.sourcingStatus === "CANCELLED") continue;
-        const revenue = order.salePriceCents * order.quantity + order.shippingChargedCents;
-        const profit = revenue - order.ebayFeeCents - order.cogsCents - order.shippingCostCents;
-        const advertisingFee = ebayAdvertisingFeeCents(
-          revenue,
+        if (order.sourcingStatus === "CANCELLED" || (order.status === "REFUNDED" && order.ebayFinancialsSource !== "ACTUAL")) continue;
+        const breakdown = orderProfitBreakdown({
+          ...order,
+          actualAmazonCostCents: order.amazonPurchaseItem ? actualAmazonCost(order.amazonPurchaseItem) : null,
+        },
           product.user.ebayAdRateBps ?? DEFAULT_EBAY_AD_RATE_BPS,
         );
-        winnerOrders.push({ saleDate: order.saleDate, quantity: order.quantity, profitCents: profit - advertisingFee });
+        if (order.status !== "REFUNDED") winnerOrders.push({ saleDate: order.saleDate, quantity: order.quantity, profitCents: breakdown.profitCents });
         if (order.saleDate < start || order.saleDate > end) continue;
         row.orderCount += 1;
         row.unitsSold += order.quantity;
-        row.revenueCents += revenue;
-        row.netProfitCents += profit - advertisingFee;
+        row.revenueCents += breakdown.revenueCents;
+        row.netProfitCents += breakdown.profitCents;
         if (order.saleDate.toISOString() > row.lastActivityAt) row.lastActivityAt = order.saleDate.toISOString();
         const point = dailyByDate.get(order.saleDate.toISOString().slice(0, 10));
         if (point) {
           point.units += order.quantity;
-          point.revenueCents += revenue;
-          point.netProfitCents += profit - advertisingFee;
+          point.revenueCents += breakdown.revenueCents;
+          point.netProfitCents += breakdown.profitCents;
         }
       }
       if (assessVerifiedWinner(winnerOrders).isWinner) row.verifiedWinner = true;

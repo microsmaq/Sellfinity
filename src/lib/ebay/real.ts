@@ -20,9 +20,11 @@ import {
   type ListingTrafficMetric,
   type ListingTrafficDayMetric,
   type RemoteOrder,
+  type RemoteOrderFinancials,
   type RemoteFulfillmentOrder,
   type ShippingFulfillmentInput,
 } from "./client";
+import { parseOrderFinancials } from "./order-financials";
 import {
   appAccessToken,
   ebayEnvConfig,
@@ -1109,6 +1111,7 @@ ${innerXml}
           const totalCents = Math.round(parseFloat(item.lineItemCost?.value ?? "0") * 100);
           orders.push({
             ebayOrderId: `${order.orderId}-${item.lineItemId}`,
+            checkoutOrderId: order.orderId,
             ebayListingId: item.legacyItemId,
             quantity: item.quantity,
             salePriceCents: Math.round(totalCents / Math.max(1, item.quantity)),
@@ -1137,5 +1140,29 @@ ${innerXml}
       if (!page.orders || page.orders.length < 100) break;
     }
     return orders;
+  }
+
+  async getOrderFinancials(
+    _userId: string,
+    orderIds: string[],
+  ): Promise<RemoteOrderFinancials[]> {
+    const results: RemoteOrderFinancials[] = [];
+    const unique = [...new Set(orderIds)].slice(0, 50);
+    for (let offset = 0; offset < unique.length; offset += 5) {
+      const group = await Promise.all(unique.slice(offset, offset + 5).map(async (orderId) => {
+        try {
+          const response = await this.request<Parameters<typeof parseOrderFinancials>[0]>(
+            "GET",
+            `/sell/finances/v1/order_earnings/${encodeURIComponent(orderId)}`,
+          );
+          return parseOrderFinancials(response, orderId);
+        } catch (error) {
+          if (error instanceof EbayApiError && error.status === 404) return null;
+          throw error;
+        }
+      }));
+      results.push(...group.filter((item): item is RemoteOrderFinancials => item !== null));
+    }
+    return results;
   }
 }
