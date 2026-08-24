@@ -31,6 +31,8 @@ import {
 } from "./oauth";
 import { fitEbayDescription } from "./description";
 import { ebayImportedOrderState } from "@/lib/orders/ebay-state";
+import { isInvalidEbayQuantityError, isMissingEbayInventoryProductError, isTransientEbaySystemError } from "./errors";
+import { parseImageUrls } from "@/lib/types";
 
 const MARKETPLACE = "EBAY_US";
 const LOCATION_KEY = "sellfinity-primary";
@@ -588,8 +590,94 @@ ${innerXml}
       await this.tradingRequest("ReviseFixedPriceItem", `<Item>${fields}</Item>`);
       return;
     }
+    type InventoryItemRecord = {
+      product?: Record<string, unknown>;
+      condition?: string;
+      conditionDescription?: string;
+      availability?: Record<string, unknown> & {
+        shipToLocationAvailability?: Record<string, unknown> & { quantity?: number };
+      };
+      packageWeightAndSize?: Record<string, unknown>;
+    };
+    const getInventoryItem = () => this.request<InventoryItemRecord>(
+      "GET",
+      `/sell/inventory/v1/inventory_item/${encodeURIComponent(offer.sku)}`,
+    );
+    const putInventoryItem = (current: InventoryItemRecord, quantity?: number) => this.request(
+      "PUT",
+      `/sell/inventory/v1/inventory_item/${encodeURIComponent(offer.sku)}`,
+      {
+        product: current.product ?? {},
+        ...(current.condition && { condition: current.condition }),
+        ...(current.conditionDescription && { conditionDescription: current.conditionDescription }),
+        ...(current.availability && { availability: current.availability }),
+        ...(quantity !== undefined && {
+          availability: {
+            ...(current.availability ?? {}),
+            shipToLocationAvailability: {
+              ...(current.availability?.shipToLocationAvailability ?? {}),
+              quantity,
+            },
+          },
+        }),
+        ...(current.packageWeightAndSize && { packageWeightAndSize: current.packageWeightAndSize }),
+      },
+    );
+    const repairInvalidQuantity = async (): Promise<number> => {
+      const current = await getInventoryItem();
+      const existingQuantity = current.availability?.shipToLocationAvailability?.quantity;
+      const repairedQuantity = update.quantity !== undefined && update.quantity > 0
+        ? Math.round(update.quantity)
+        : typeof existingQuantity === "number" && existingQuantity > 0
+          ? Math.round(existingQuantity)
+          : 1;
+      await putInventoryItem(current, repairedQuantity);
+      await db.listing.updateMany({
+        where: { userId: this.userId, ebayListingId, status: "ACTIVE" },
+        data: { quantity: repairedQuantity },
+      });
+      return repairedQuantity;
+    };
+    const rebuildMissingInventoryProduct = async (categoryId?: string): Promise<number> => {
+      const local = await db.listing.findFirst({
+        where: { userId: this.userId, ebayListingId, status: "ACTIVE" },
+        include: { product: true },
+      });
+      if (!local) throw new EbayApiError("The local listing needed to rebuild the eBay inventory product was not found.");
+      const quantity = update.quantity !== undefined && update.quantity > 0
+        ? Math.round(update.quantity)
+        : Math.max(1, local.quantity);
+      const brand = ebayProductBrand(local.product.brand);
+      const aspects = categoryId ? await this.requiredAspects(categoryId, local.product.brand) : {};
+      await this.request("PUT", `/sell/inventory/v1/inventory_item/${encodeURIComponent(offer.sku)}`, {
+        product: {
+          title: update.title ?? local.title,
+          description: fitEbayDescription(update.description ?? local.description),
+          imageUrls: (update.imageUrls ?? parseImageUrls(local.imageUrlsJson)).slice(0, 12),
+          aspects,
+          brand,
+          mpn: ebayProductMpn(),
+          upc: [EBAY_US_IDENTIFIER_UNAVAILABLE],
+        },
+        condition: "NEW",
+        availability: { shipToLocationAvailability: { quantity } },
+      });
+      await db.listing.update({ where: { id: local.id }, data: { quantity } });
+      return quantity;
+    };
+    const runIdempotentUpdate = async (operation: () => Promise<unknown>): Promise<void> => {
+      try {
+        await operation();
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "";
+        if (!isTransientEbaySystemError(message)) throw error;
+        await new Promise((resolve) => setTimeout(resolve, 600));
+        await operation();
+      }
+    };
     if (update.buyerShippingCents !== undefined) {
-      const fulfillmentPolicyId = await this.ensureShippingPolicy(update.buyerShippingCents);
+      const buyerShippingCents = update.buyerShippingCents;
+      const fulfillmentPolicyId = await this.ensureShippingPolicy(buyerShippingCents);
       const current = await this.request<Record<string, unknown> & { listingPolicies?: Record<string, unknown> }>(
         "GET",
         `/sell/inventory/v1/offer/${offer.offerId}`,
@@ -598,35 +686,33 @@ ${innerXml}
       delete writable.offerId;
       delete writable.listing;
       delete writable.status;
-      await this.request("PUT", `/sell/inventory/v1/offer/${offer.offerId}`, {
-        ...writable,
-        listingPolicies: {
-          ...(current.listingPolicies ?? {}),
-          fulfillmentPolicyId,
-          shippingCostOverrides: this.shippingCostOverrides(update.buyerShippingCents),
-        },
-      });
+      const updateOffer = (repairedQuantity?: number) => this.request("PUT", `/sell/inventory/v1/offer/${offer.offerId}`, {
+          ...writable,
+          ...(repairedQuantity !== undefined && { availableQuantity: repairedQuantity }),
+          listingPolicies: {
+            ...(current.listingPolicies ?? {}),
+            fulfillmentPolicyId,
+            shippingCostOverrides: this.shippingCostOverrides(buyerShippingCents),
+          },
+        });
+      try {
+        await runIdempotentUpdate(updateOffer);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "";
+        if (!isInvalidEbayQuantityError(message) && !isMissingEbayInventoryProductError(message)) throw error;
+        const repairedQuantity = isMissingEbayInventoryProductError(message)
+          ? await rebuildMissingInventoryProduct(typeof current.categoryId === "string" ? current.categoryId : undefined)
+          : await repairInvalidQuantity();
+        await runIdempotentUpdate(() => updateOffer(repairedQuantity));
+      }
     }
     if (
       update.title !== undefined ||
       update.description !== undefined ||
       update.imageUrls !== undefined
     ) {
-      type InventoryItemRecord = {
-        product?: Record<string, unknown>;
-        condition?: string;
-        conditionDescription?: string;
-        availability?: Record<string, unknown>;
-        packageWeightAndSize?: Record<string, unknown>;
-      };
-      const current = await this.request<InventoryItemRecord>(
-        "GET",
-        `/sell/inventory/v1/inventory_item/${encodeURIComponent(offer.sku)}`,
-      );
-      await this.request(
-        "PUT",
-        `/sell/inventory/v1/inventory_item/${encodeURIComponent(offer.sku)}`,
-        {
+      const current = await getInventoryItem();
+      await putInventoryItem({
           product: {
             ...(current.product ?? {}),
             ...(update.title !== undefined && { title: update.title }),
@@ -643,21 +729,20 @@ ${innerXml}
           ...(current.packageWeightAndSize && {
             packageWeightAndSize: current.packageWeightAndSize,
           }),
-        },
-      );
+        });
     }
     if (update.priceCents !== undefined || update.quantity !== undefined) {
-      await this.request("POST", "/sell/inventory/v1/bulk_update_price_quantity", {
+      const bulkUpdate = (repairedQuantity?: number) => this.request("POST", "/sell/inventory/v1/bulk_update_price_quantity", {
         requests: [
           {
             sku: offer.sku,
-            ...(update.quantity !== undefined && {
-              shipToLocationAvailability: { quantity: update.quantity },
+            ...((update.quantity !== undefined || repairedQuantity !== undefined) && {
+              shipToLocationAvailability: { quantity: repairedQuantity ?? update.quantity },
             }),
             offers: [
               {
                 offerId: offer.offerId,
-                ...(update.quantity !== undefined && { availableQuantity: update.quantity }),
+                ...((update.quantity !== undefined || repairedQuantity !== undefined) && { availableQuantity: repairedQuantity ?? update.quantity }),
                 ...(update.priceCents !== undefined && {
                   price: { value: (update.priceCents / 100).toFixed(2), currency: "USD" },
                 }),
@@ -666,6 +751,20 @@ ${innerXml}
           },
         ],
       });
+      try {
+        await runIdempotentUpdate(bulkUpdate);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "";
+        if (!isInvalidEbayQuantityError(message) && !isMissingEbayInventoryProductError(message)) throw error;
+        let repairedQuantity: number;
+        if (isMissingEbayInventoryProductError(message)) {
+          const currentOffer = await this.request<Record<string, unknown>>("GET", `/sell/inventory/v1/offer/${offer.offerId}`);
+          repairedQuantity = await rebuildMissingInventoryProduct(typeof currentOffer.categoryId === "string" ? currentOffer.categoryId : undefined);
+        } else {
+          repairedQuantity = await repairInvalidQuantity();
+        }
+        await runIdempotentUpdate(() => bulkUpdate(repairedQuantity));
+      }
     }
   }
 

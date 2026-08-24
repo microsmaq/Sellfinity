@@ -50,6 +50,7 @@ describe("isAlreadyEndedEbayError", () => {
     expect(isAlreadyEndedEbayError("The item has already been ended")).toBe(true);
     expect(isAlreadyEndedEbayError("The listing is not active")).toBe(true);
     expect(isAlreadyEndedEbayError("The auction has already been closed.")).toBe(true);
+    expect(isAlreadyEndedEbayError('You are not allowed to revise an ended item "318593987443".')).toBe(true);
     expect(isAlreadyEndedEbayError("Authentication token is invalid")).toBe(false);
   });
 });

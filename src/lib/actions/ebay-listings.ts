@@ -55,6 +55,20 @@ function revalidate() {
   revalidatePath("/dashboard");
 }
 
+async function reconcileListingAlreadyEndedOnEbay(
+  userId: string,
+  listingId: string,
+  ebayListingId: string,
+): Promise<void> {
+  await db.$transaction([
+    db.listing.update({
+      where: { id: listingId },
+      data: { status: "ENDED", endedAt: new Date(), endedReason: "EBAY_ENDED" },
+    }),
+    db.ebayListingSnapshot.deleteMany({ where: { userId, ebayListingId } }),
+  ]);
+}
+
 /**
  * Find and store the Amazon counterpart of a live eBay listing, so it gets
  * margin tracking and inventory sync like app-created listings. With real
@@ -722,6 +736,7 @@ export async function cleanupEbayListings(
             throw new Error("The listing image does not meet eBay's 500-pixel requirement and no compliant replacement could be prepared.");
           }
           repairedImageUrls = prepared.imageUrls;
+          await client.updateListing(ebayListingId, { imageUrls: repairedImageUrls });
           await client.updateListing(ebayListingId, {
             ...listingUpdate,
             imageUrls: repairedImageUrls,
@@ -764,17 +779,23 @@ export async function cleanupEbayListings(
         });
       }
     } catch (e) {
+      const message = e instanceof Error ? e.message : "failed";
+      if (isAlreadyEndedEbayError(message)) {
+        await reconcileListingAlreadyEndedOnEbay(user.id, listing.id, ebayListingId);
+        results.push({
+          ...resultIdentity,
+          action: "ended",
+          newPriceCents: listing.priceCents,
+          error: "eBay confirmed this listing was already ended. Sellfinity updated its local status.",
+        });
+        continue;
+      }
       results.push({
         ...resultIdentity,
         action: "error",
         suggestedPriceCents: attemptedPriceCents,
         newPriceCents: attemptedPriceCents,
-        error:
-          e instanceof EbayApiError
-            ? e.message.slice(0, 500)
-            : e instanceof Error
-              ? e.message.slice(0, 500)
-              : "failed",
+        error: e instanceof EbayApiError ? e.message.slice(0, 500) : message.slice(0, 500),
       });
     }
   }
@@ -1150,10 +1171,17 @@ export async function processConfigurableSmartSyncItem(
         await client.updateListing(listing.ebayListingId, listingUpdate);
       } catch (updateError) {
         const message = updateError instanceof Error ? updateError.message : "eBay listing update failed";
-        if (!isEbayPicturePolicyError(message) || preparedImageUrls) throw updateError;
-        const repaired = await prepareEbayImages(user.id, parseImageUrls(listing.imageUrlsJson));
+        if (!isEbayPicturePolicyError(message)) throw updateError;
+        const repaired = await prepareEbayImages(
+          user.id,
+          preparedImageUrls ?? parseImageUrls(listing.imageUrlsJson),
+        );
         if (repaired.imageUrls.length === 0) throw updateError;
         preparedImageUrls = repaired.imageUrls;
+        // A combined price/shipping update validates the existing image before
+        // eBay applies the new one. Repair the inventory image first, then
+        // retry the original update against the now-compliant product record.
+        await client.updateListing(listing.ebayListingId, { imageUrls: preparedImageUrls });
         await client.updateListing(listing.ebayListingId, { ...listingUpdate, imageUrls: preparedImageUrls });
       }
       await db.listing.update({
@@ -1177,13 +1205,33 @@ export async function processConfigurableSmartSyncItem(
       ...(imageWarning && { error: imageWarning }),
     };
   } catch (error) {
+    const message = error instanceof Error ? error.message : "Smart Sync failed for this listing.";
+    if (listing.ebayListingId && isAlreadyEndedEbayError(message)) {
+      await reconcileListingAlreadyEndedOnEbay(user.id, listing.id, listing.ebayListingId);
+      actions.push("eBay confirmed the listing was already ended");
+      actions.push("Local listing status reconciled to Ended");
+      await recordListingActivity({
+        userId: user.id,
+        source: "LISTING_SYNC",
+        items: [{
+          title: listing.title,
+          listingId: listing.id,
+          ebayListingId: listing.ebayListingId,
+          amazonUrl: listing.product.supplierUrl,
+          sourcePriceCents: listing.product.costCents,
+          listingPriceCents: listing.priceCents,
+          ok: true,
+        }],
+      });
+      return { ...base, status: "success", outcome: "ended", actions, newPriceCents: listing.priceCents };
+    }
     return {
       ...base,
       status: "error",
       outcome: "unchanged",
       actions,
       newPriceCents: listing.priceCents,
-      error: error instanceof Error ? error.message.slice(0, 500) : "Smart Sync failed for this listing.",
+      error: message.slice(0, 500),
     };
   }
 }
