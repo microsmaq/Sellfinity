@@ -40,6 +40,7 @@ import { generateMirrorDescription } from "@/lib/mirror/seo";
 import { recordListingActivity } from "@/lib/listings/activity-history";
 import { SMART_SYNC_RECOVERABLE_END_REASONS } from "@/lib/listings/smart-sync-policy";
 import { hasSelectedSmartSyncOption, type SmartSyncOptions } from "@/lib/listings/smart-sync-options";
+import { getAdminAmazonSourceWithFallback } from "@/lib/listings/admin-amazon-source";
 
 export type EbayListingResult = { error?: string };
 
@@ -227,8 +228,8 @@ export type TargetProfitPriceResult = {
 };
 
 /** Set one seller listing to the minimum price that reaches a requested net
- * profit. Amazon pricing comes exclusively from the administrator-maintained
- * catalog, so this seller action cannot consume Rainforest credits. */
+ * profit. Existing ASINs reuse the administrator catalog; the first missing
+ * ASIN is fetched once and promoted into that shared catalog. */
 export async function applyTargetProfitPrice(
   ebayListingId: string,
   targetProfitCents: number,
@@ -257,20 +258,11 @@ export async function applyTargetProfitPrice(
   }
 
   const asin = listing.product.supplierProductId.trim().toUpperCase();
-  const adminSource = await db.adminArbitrageProduct.findUnique({
-    where: { asin },
-    select: {
-      asin: true,
-      amazonPriceCents: true,
-      amazonShippingCents: true,
-      amazonUrl: true,
-      amazonInStock: true,
-      ebayRecommendedPriceCents: true,
-      averageCompetitorPriceCents: true,
-    },
-  });
-  if (!adminSource || adminSource.amazonPriceCents <= 0) {
-    return fail("No admin-stored Amazon price is available for this ASIN.");
+  let adminSource: Awaited<ReturnType<typeof getAdminAmazonSourceWithFallback>>;
+  try {
+    adminSource = await getAdminAmazonSourceWithFallback(asin);
+  } catch (error) {
+    return fail(error instanceof Error ? error.message : "Amazon product data could not be retrieved.");
   }
   if (!adminSource.amazonInStock) {
     return fail("The admin catalog currently marks this Amazon product out of stock.");
@@ -620,12 +612,12 @@ export type CleanupItemResult = {
 const CLEANUP_BATCH_SIZE = 1;
 
 /**
- * Apply suggested prices to a batch of tracked listings using only the
- * administrator-maintained Amazon catalog. Seller requests must never perform
- * a paid Amazon/Rainforest lookup. The server recalculates the recommendation
- * from the stored admin cost plus the seller's own fee settings, so stale or
- * manipulated client data cannot set the live price. This workflow never ends
- * a listing.
+ * Apply suggested prices to a batch of tracked listings using the shared
+ * administrator Amazon catalog. A first-seen ASIN performs one provider lookup
+ * and saves it globally; later sellers reuse that snapshot. The server
+ * recalculates the recommendation from the trusted cost plus the seller's own
+ * fee settings, so manipulated client data cannot set the live price. This
+ * workflow never ends a listing.
  */
 export async function cleanupEbayListings(
   items: Array<{
@@ -669,26 +661,7 @@ export async function cleanupEbayListings(
     }
     try {
       const asin = listing.product.supplierProductId.trim().toUpperCase();
-      const adminSource = await db.adminArbitrageProduct.findUnique({
-        where: { asin },
-        select: {
-          asin: true,
-          amazonPriceCents: true,
-          amazonShippingCents: true,
-          amazonUrl: true,
-          amazonInStock: true,
-          ebayRecommendedPriceCents: true,
-          averageCompetitorPriceCents: true,
-        },
-      });
-      if (!adminSource || adminSource.amazonPriceCents <= 0) {
-        results.push({
-          ...resultIdentity,
-          action: "error",
-          error: "No admin-stored Amazon price is available for this ASIN.",
-        });
-        continue;
-      }
+      const adminSource = await getAdminAmazonSourceWithFallback(asin);
       if (!adminSource.amazonInStock) {
         results.push({
           ...resultIdentity,
@@ -1038,33 +1011,8 @@ export async function processConfigurableSmartSyncItem(
 
   try {
     const asin = listing.product.supplierProductId.trim().toUpperCase();
-    const adminSource = await db.adminArbitrageProduct.findUnique({
-      where: { asin },
-      select: {
-        asin: true,
-        amazonTitle: true,
-        amazonPriceCents: true,
-        amazonShippingCents: true,
-        amazonUrl: true,
-        amazonImageUrl: true,
-        amazonImageUrlsJson: true,
-        amazonBrand: true,
-        amazonDescription: true,
-        amazonInStock: true,
-        ebayRecommendedPriceCents: true,
-        averageCompetitorPriceCents: true,
-      },
-    });
-    if (!adminSource || adminSource.amazonPriceCents <= 0) {
-      return {
-        ...base,
-        status: "needs_attention",
-        outcome: "unchanged",
-        actions,
-        newPriceCents: listing.priceCents,
-        error: "Administrator Amazon data is not available for this ASIN. The listing was left unchanged.",
-      };
-    }
+    const adminSource = await getAdminAmazonSourceWithFallback(asin);
+    if (adminSource.sharedCatalogPopulated) actions.push("Amazon data retrieved once and saved to the admin catalog");
 
     if (options.refreshAmazonData) {
       await db.product.update({

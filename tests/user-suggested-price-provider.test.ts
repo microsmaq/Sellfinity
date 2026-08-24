@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 describe("user suggested-price provider boundary", () => {
-  it("uses the admin catalog and never invokes a paid Amazon lookup", () => {
+  it("uses the shared catalog fallback without calling Rainforest directly", () => {
     const source = readFileSync(
       new URL("../src/lib/actions/ebay-listings.ts", import.meta.url),
       "utf8",
@@ -13,13 +13,13 @@ describe("user suggested-price provider boundary", () => {
 
     expect(start).toBeGreaterThan(-1);
     expect(end).toBeGreaterThan(start);
-    expect(action).toContain("db.adminArbitrageProduct.findUnique");
+    expect(action).toContain("getAdminAmazonSourceWithFallback");
     expect(action).not.toContain("resolveExactAmazonVariant(");
     expect(action).not.toContain("rainforestRequest(");
     expect(action).not.toContain("getScraper(");
   });
 
-  it("keeps target-profit repricing on the admin catalog too", () => {
+  it("uses the same one-time shared fallback for target-profit repricing", () => {
     const source = readFileSync(
       new URL("../src/lib/actions/ebay-listings.ts", import.meta.url),
       "utf8",
@@ -30,7 +30,7 @@ describe("user suggested-price provider boundary", () => {
 
     expect(start).toBeGreaterThan(-1);
     expect(end).toBeGreaterThan(start);
-    expect(action).toContain("db.adminArbitrageProduct.findUnique");
+    expect(action).toContain("getAdminAmazonSourceWithFallback");
     expect(action).not.toContain("resolveExactAmazonVariant(");
     expect(action).not.toContain("rainforestRequest(");
     expect(action).not.toContain("getScraper(");

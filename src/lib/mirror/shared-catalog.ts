@@ -73,6 +73,12 @@ export function sharedAmazonSnapshotData(product: ScrapedProduct) {
   };
 }
 
+export type SharedAmazonLookupOptions = {
+  /** Skip legacy seller snapshots when the shared admin row is missing or
+   * unusable, and obtain one provider-backed snapshot for the global cache. */
+  providerOnCatalogMiss?: boolean;
+};
+
 /**
  * Shared-first Amazon lookup used by seller workflows.
  *
@@ -80,7 +86,10 @@ export function sharedAmazonSnapshotData(product: ScrapedProduct) {
  * an unknown ASIN reaches the configured provider, after which the complete
  * response is retained in AdminArbitrageProduct for every future seller.
  */
-export async function getSharedAmazonProduct(url: string): Promise<ScrapedProduct | null> {
+export async function getSharedAmazonProduct(
+  url: string,
+  options: SharedAmazonLookupOptions = {},
+): Promise<ScrapedProduct | null> {
   const normalizedUrl = /^[A-Z0-9]{10}$/i.test(url.trim())
     ? `https://www.amazon.com/dp/${url.trim().toUpperCase()}`
     : url;
@@ -90,12 +99,13 @@ export async function getSharedAmazonProduct(url: string): Promise<ScrapedProduc
   const existing = await db.adminArbitrageProduct.findUnique({ where: { asin } });
   if (existing) {
     const stored = sharedRowToScrapedProduct(existing);
-    if (!stored.inStock || stored.priceCents <= 0) return null;
-    if (stored.imageUrls.length > 0) return stored;
+    const usableSnapshot = stored.priceCents > 0 && stored.imageUrls.length > 0;
+    if (usableSnapshot) return stored.inStock ? stored : null;
+    if (!options.providerOnCatalogMiss && (!stored.inStock || stored.priceCents <= 0)) return null;
 
     // Rows created before complete shared snapshots were introduced can have
-    // valid price/match data but no Amazon image. Enrich that ASIN once on
-    // demand instead of creating an image-less draft that eBay will reject.
+    // incomplete Amazon data. Enrich that ASIN once on demand instead of
+    // leaving pricing/image workflows without a usable shared snapshot.
     const enriched = await getScraper().scrape(existing.amazonUrl || normalizedUrl);
     if (!enriched || enriched.imageUrls.length === 0) return null;
     const saved = await db.adminArbitrageProduct.upsert({
@@ -114,7 +124,7 @@ export async function getSharedAmazonProduct(url: string): Promise<ScrapedProduc
   // Lazily promote legacy per-user imports into the shared catalog without
   // spending a provider credit. Product contains supplier facts only; no
   // seller identity or listing data is copied.
-  const legacy = await db.product.findFirst({
+  const legacy = options.providerOnCatalogMiss ? null : await db.product.findFirst({
     where: {
       supplierName: "Amazon",
       OR: [{ sku: asin }, { supplierProductId: asin }],
@@ -169,5 +179,5 @@ export async function getSharedAmazonProduct(url: string): Promise<ScrapedProduc
 }
 
 export const sharedCatalogScraper: ProductPageScraper = {
-  scrape: getSharedAmazonProduct,
+  scrape: (url) => getSharedAmazonProduct(url, { providerOnCatalogMiss: true }),
 };

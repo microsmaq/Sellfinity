@@ -28,7 +28,9 @@ export async function amazonProductState(
   // Dynamic import avoids an initialization cycle: shared-catalog uses the
   // raw scraper only for a first-seen ASIN.
   const { getSharedAmazonProduct } = await import("./shared-catalog");
-  const scraped = await getSharedAmazonProduct(`https://www.amazon.com/dp/${asin}`);
+  const scraped = await getSharedAmazonProduct(`https://www.amazon.com/dp/${asin}`, {
+    providerOnCatalogMiss: true,
+  });
   if (!scraped) return null;
   return {
     stock: scraped.inStock ? NOMINAL_AMAZON_STOCK : 0,

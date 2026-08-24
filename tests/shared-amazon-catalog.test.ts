@@ -104,6 +104,39 @@ describe("shared Amazon catalog", () => {
     expect(product?.title).toBe("First-seen product");
   });
 
+  it("uses a provider-backed snapshot for a user fallback instead of promoting legacy seller data", async () => {
+    const scraped = {
+      sourceId: "B076543210",
+      sourceUrl: "https://www.amazon.com/dp/B076543210",
+      title: "Provider verified product",
+      brand: "Verified Brand",
+      bulletPoints: ["Current supplier fact"],
+      description: "Current provider description",
+      category: "Tools",
+      imageUrls: ["https://images.example/provider.jpg"],
+      priceCents: 4_299,
+      shippingCostCents: 0,
+      inStock: true,
+    };
+    mocks.findUnique.mockResolvedValue(null);
+    mocks.productFindFirst.mockResolvedValue({
+      sku: scraped.sourceId,
+      supplierProductId: scraped.sourceId,
+      costCents: 999,
+      imageUrlsJson: JSON.stringify(["https://images.example/stale.jpg"]),
+    });
+    mocks.scrape.mockResolvedValue(scraped);
+    mocks.upsert.mockImplementation(async ({ create }) => ({ ...create }));
+
+    const product = await getSharedAmazonProduct(scraped.sourceId, {
+      providerOnCatalogMiss: true,
+    });
+
+    expect(mocks.productFindFirst).not.toHaveBeenCalled();
+    expect(mocks.scrape).toHaveBeenCalledTimes(1);
+    expect(product?.priceCents).toBe(4_299);
+  });
+
   it("enriches an older shared row once when its required image is missing", async () => {
     const incomplete = {
       ...sharedRow,

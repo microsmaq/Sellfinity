@@ -1022,7 +1022,7 @@ export function EbayListingsTable({
     }
     if (
       !confirm(
-        `Sellfinity found ${toReprice.length} unlocked listing${toReprice.length === 1 ? "" : "s"} whose profitable suggested price differs from the current eBay price. It will use only administrator-stored Amazon pricing and update only prices that still differ.${protectedWinnerCandidateCount ? `\n\n${protectedWinnerCandidateCount} profitable listing price${protectedWinnerCandidateCount === 1 ? " is" : "s are"} locked and excluded from this bulk action.` : ""}\n\nNo Rainforest credits will be used and no listings will be ended. Continue?`,
+        `Sellfinity found ${toReprice.length} unlocked listing${toReprice.length === 1 ? "" : "s"} whose profitable suggested price differs from the current eBay price. It will reuse administrator-stored Amazon pricing and update only prices that still differ.${protectedWinnerCandidateCount ? `\n\n${protectedWinnerCandidateCount} profitable listing price${protectedWinnerCandidateCount === 1 ? " is" : "s are"} locked and excluded from this bulk action.` : ""}\n\nIf an ASIN is missing, one Rainforest lookup will save it to the shared admin catalog for future requests. No listings will be ended. Continue?`,
       )
     ) {
       return;
@@ -1140,7 +1140,7 @@ export function EbayListingsTable({
       `${winnerRows.length} selected profitable listing price${winnerRows.length === 1 ? " is" : "s are"} protected. This target-profit action may change ${winnerRows.length === 1 ? "its" : "their"} locked price.\n\nDo you specifically approve changing the selected locked price${winnerRows.length === 1 ? "" : "s"}?`,
     )) return;
     if (!confirm(
-      `Set ${targetProfitRows.length} selected listing${targetProfitRows.length === 1 ? "" : "s"} to earn approximately ${formatCents(targetProfitCents)} net profit per sold item?\n\nThe calculation includes the admin-stored Amazon price and shipping, your ${(adRateBps / 100).toFixed(2)}% ad rate, sitewide discount, estimated eBay final-value fee, and per-order fee.\n\nNo Rainforest credits will be used.`,
+      `Set ${targetProfitRows.length} selected listing${targetProfitRows.length === 1 ? "" : "s"} to earn approximately ${formatCents(targetProfitCents)} net profit per sold item?\n\nThe calculation includes the shared admin Amazon price and shipping, your ${(adRateBps / 100).toFixed(2)}% ad rate, sitewide discount, estimated eBay final-value fee, and per-order fee.\n\nIf an ASIN is missing, one Rainforest lookup will save it for all future requests.`,
     )) return;
 
     setNotice(null);
@@ -1395,7 +1395,7 @@ export function EbayListingsTable({
                   <p className="text-xs text-slate-500">Choose exactly what this run may change.</p>
                 </div>
               </div>
-              <p className="mt-3 max-w-3xl text-xs leading-5 text-slate-600">Amazon pricing and availability come only from the administrator-maintained catalog. Running this user sync does not spend Rainforest API credits.</p>
+              <p className="mt-3 max-w-3xl text-xs leading-5 text-slate-600">Amazon pricing and availability reuse the administrator-maintained catalog. A missing ASIN is retrieved from Rainforest once, saved globally, and reused by future requests.</p>
             </div>
             <Badge tone="indigo">{selectedSmartSyncOptionCount(smartSyncOptions)} selected</Badge>
           </div>
@@ -1443,7 +1443,7 @@ export function EbayListingsTable({
                 <Badge tone="indigo">{targetProfitRows.length} selected</Badge>
               </div>
               <p className="mt-1 text-xs leading-5 text-slate-600">
-                Sets the minimum eBay price needed to reach your chosen profit per sold item. Uses admin-stored Amazon pricing and no Rainforest credits.
+                Sets the minimum eBay price needed to reach your chosen profit per sold item. Shared Amazon data is reused; only a first-seen ASIN needs one Rainforest lookup.
               </p>
             </div>
             <label className="block min-w-0 sm:w-48">
