@@ -23,8 +23,8 @@ import {
   HIDDEN_PUBLISHING_HISTORY_SOURCES,
   publishingHistoryPagination,
 } from "@/lib/mirror/history-pagination";
+import { uniqueBatchIds } from "@/lib/mirror/batch-limits";
 
-const MAX_BATCH_ITEMS = 50;
 const STALE_PROCESSING_MS = 6 * 60 * 1000;
 
 export type MirrorBatchItemView = {
@@ -158,7 +158,7 @@ export async function createUrlMirrorBatch(
   input: string,
 ): Promise<{ batchId?: string; error?: string }> {
   const user = await requireUser();
-  const urls = parseUrlLines(input, MAX_BATCH_ITEMS);
+  const urls = parseUrlLines(input);
   if (urls.length === 0) return { error: "Paste at least one Amazon product URL." };
   return createBatch(
     user.id,
@@ -174,7 +174,7 @@ export async function createArbitrageMirrorBatch(
   ebayItemIds: string[],
 ): Promise<{ batchId?: string; error?: string }> {
   const user = await requireUser();
-  const ids = [...new Set(ebayItemIds)].slice(0, MAX_BATCH_ITEMS);
+  const ids = uniqueBatchIds(ebayItemIds);
   const published = await db.adminArbitrageProduct.findMany({
     where: {
       status: "PUBLISHED",

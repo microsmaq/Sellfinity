@@ -17,6 +17,7 @@ import { targetNetProfitPriceCents } from "@/lib/listings/cleanup";
 import { listingPricePlan } from "@/lib/listings/shipping-strategy";
 import { improveMainListingImage } from "./improve-main-image";
 import { improveListingContent } from "./improve-listing-content";
+import { uniqueInputLines } from "./batch-limits";
 
 /** Typical eBay resale premium over the Amazon buy price for dropshipped
  * items; the suggested price undercuts this market estimate. */
@@ -224,11 +225,6 @@ export async function mirrorUrl(
 }
 
 /** Split pasted bulk input into candidate URLs (one per line, blanks dropped). */
-export function parseUrlLines(input: string, max: number): string[] {
-  return [...new Set(
-    input
-      .split(/\r?\n/)
-      .map((l) => l.trim())
-      .filter(Boolean),
-  )].slice(0, max);
+export function parseUrlLines(input: string, max?: number): string[] {
+  return uniqueInputLines(input, max);
 }

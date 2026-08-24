@@ -463,6 +463,9 @@ export function ArbitrageTable({
                 <option value="25">25 per page</option>
                 <option value="50">50 per page</option>
                 <option value="100">100 per page</option>
+                <option value="250">250 per page</option>
+                <option value="500">500 per page</option>
+                <option value="1000">1,000 per page</option>
               </select>
               <label className="flex cursor-pointer items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-medium text-emerald-900">
                 <input type="checkbox" name="qualified" value="1" defaultChecked={filters.qualifiedOnly} className="h-4 w-4 rounded border-emerald-400 text-emerald-600" />

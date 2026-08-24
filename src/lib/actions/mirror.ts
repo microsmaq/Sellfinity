@@ -5,9 +5,6 @@ import { requireUser } from "@/lib/auth";
 import { mirrorUrl, parseUrlLines, type MirrorOutcome } from "@/lib/mirror/pipeline";
 import { publishListings, type BulkResult } from "./listings";
 
-/** Bulk ceiling per request — keeps a pasted dump from hogging the server. */
-const MAX_URLS_PER_BATCH = 50;
-
 export type MirrorResult = {
   outcomes: MirrorOutcome[];
   /** Result of the immediate publish, when requested. */
@@ -25,7 +22,7 @@ export async function mirrorUrls(
   publishNow: boolean,
 ): Promise<MirrorResult> {
   const user = await requireUser();
-  const urls = parseUrlLines(input, MAX_URLS_PER_BATCH);
+  const urls = parseUrlLines(input);
   if (urls.length === 0) {
     return { outcomes: [], error: "Paste at least one Amazon product URL." };
   }

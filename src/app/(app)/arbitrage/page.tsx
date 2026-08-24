@@ -24,7 +24,7 @@ export default async function ArbitragePage({
   const rawMatch = typeof raw.match === "string" ? raw.match.toUpperCase() : "ALL";
   const params: ArbitragePageParams = {
     page: Math.max(1, Number(raw.page ?? 1) || 1),
-    pageSize: [25, 50, 100].includes(Number(raw.pageSize))
+    pageSize: [25, 50, 100, 250, 500, 1_000].includes(Number(raw.pageSize))
       ? Number(raw.pageSize)
       : 50,
     sortKey: sortKeys.includes(rawSort as ArbitragePageParams["sortKey"])

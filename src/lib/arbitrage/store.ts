@@ -266,7 +266,7 @@ export async function listArbitragePage(
       ],
     }),
   };
-  const pageSize = [25, 50, 100].includes(params.pageSize ?? DEFAULT_PAGE_SIZE)
+  const pageSize = [25, 50, 100, 250, 500, 1_000].includes(params.pageSize ?? DEFAULT_PAGE_SIZE)
     ? (params.pageSize ?? DEFAULT_PAGE_SIZE)
     : DEFAULT_PAGE_SIZE;
 
