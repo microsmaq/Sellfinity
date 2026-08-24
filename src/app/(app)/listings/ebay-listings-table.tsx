@@ -12,6 +12,7 @@ import {
   matchEbayListingsBatch,
   repriceEbayListing,
   recordSuggestedPriceActivity,
+  recordSmartSyncActivity,
   unmatchEbayListing,
   prepareConfigurableSmartSync,
   processConfigurableSmartSyncItem,
@@ -626,6 +627,7 @@ export function EbayListingsTable({
   const [syncResults, setSyncResults] = useState<SmartSyncItemResult[]>([]);
   const [showSyncResults, setShowSyncResults] = useState(false);
   const [syncResultFilter, setSyncResultFilter] = useState<SmartSyncResultFilter>("all");
+  const [retryLastSyncErrorsOnly, setRetryLastSyncErrorsOnly] = useState(false);
   const [sortKey, setSortKey] = useState<ListingSortKey>("margin");
   const [sortDescending, setSortDescending] = useState(true);
   const [pageSize, setPageSize] = useState(25);
@@ -896,7 +898,7 @@ export function EbayListingsTable({
     });
     startTransition(async () => {
       try {
-        const started = await prepareConfigurableSmartSync(smartSyncOptions);
+        const started = await prepareConfigurableSmartSync(smartSyncOptions, retryLastSyncErrorsOnly);
         if (started.error) throw new Error(started.error);
         const candidates = started.candidates;
         const syncTotal = candidates.length + (started.ebayRefresh ? 1 : 0);
@@ -985,6 +987,8 @@ export function EbayListingsTable({
         }
         await Promise.all(Array.from({ length: 3 }, () => worker()));
 
+        await recordSmartSyncActivity(allResults);
+
         const changedPrices: CleanupItemResult[] = allResults
           .filter((result) => Boolean(result.ebayListingId) && result.status !== "error" && result.originalPriceCents !== result.newPriceCents)
           .map((result) => ({
@@ -1002,10 +1006,11 @@ export function EbayListingsTable({
         setNotice({
           text: syncTotal === 0
             ? "Smart Sync found no eligible listings for the selected operations."
-            : `Smart Sync complete: ${totals.successful} successful, ${totals.needsAttention} need attention, and ${totals.errors} errors. ${totals.updated} updated, ${totals.ended} ended, and ${totals.relisted} relisted.`,
+            : `${retryLastSyncErrorsOnly ? "Smart Sync retry" : "Smart Sync"} complete: ${totals.successful} successful, ${totals.needsAttention} need attention, and ${totals.errors} errors. ${totals.updated} updated, ${totals.ended} ended, and ${totals.relisted} relisted.`,
           error: totals.errors > 0,
         });
         setSmartSyncOpen(false);
+        setRetryLastSyncErrorsOnly(false);
         router.refresh();
       } catch (error) {
         setSyncProgress((current) => current && ({ ...current, stage: "complete" }));
@@ -1419,13 +1424,19 @@ export function EbayListingsTable({
             ))}
           </div>
           <div className="flex flex-col gap-3 border-t border-slate-100 bg-white/80 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-5">
-            <p className="text-[11px] leading-5 text-slate-500">Price-protected and verified-winner listings remain locked unless you change them separately with confirmation.</p>
+            <div className="space-y-2">
+              <label className="flex cursor-pointer items-center gap-2 text-xs font-semibold text-slate-700">
+                <input type="checkbox" checked={retryLastSyncErrorsOnly} onChange={(event) => setRetryLastSyncErrorsOnly(event.target.checked)} disabled={pending} className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500" />
+                Retry only errors from the last Smart Sync
+              </label>
+              <p className="text-[11px] leading-5 text-slate-500">Price-protected and verified-winner listings remain locked unless you change them separately with confirmation.</p>
+            </div>
             <div className="flex flex-wrap items-center gap-2">
               <button type="button" disabled={pending} onClick={() => setSmartSyncOptions({ ...DEFAULT_SMART_SYNC_OPTIONS })} className="rounded-lg px-2.5 py-2 text-xs font-semibold text-slate-500 transition hover:bg-slate-100 hover:text-slate-800 disabled:opacity-50">Recommended</button>
               <button type="button" disabled={pending} onClick={() => setSmartSyncOptions({ refreshEbayListings: true, refreshAmazonData: true, applySuggestedPrices: true, updateListingImages: true, endUnavailableListings: true, relistRecoveredProducts: true })} className="rounded-lg px-2.5 py-2 text-xs font-semibold text-slate-500 transition hover:bg-slate-100 hover:text-slate-800 disabled:opacity-50">Select all</button>
               <Button disabled={pending || !hasSelectedSmartSyncOption(smartSyncOptions)} onClick={syncListingHealth} className="min-w-36 border-0 bg-gradient-to-r from-indigo-600 to-violet-600 text-white shadow-md shadow-indigo-200/70 hover:from-indigo-500 hover:to-violet-500">
                 <SmartSyncIcon spinning={pending} />
-                {pending ? "Syncing…" : "Run Smart Sync"}
+                {pending ? "Syncing…" : retryLastSyncErrorsOnly ? "Retry last errors" : "Run Smart Sync"}
               </Button>
             </div>
           </div>

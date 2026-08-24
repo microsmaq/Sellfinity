@@ -38,7 +38,7 @@ import { improveMainListingImage } from "@/lib/mirror/improve-main-image";
 import { improveListingContent } from "@/lib/mirror/improve-listing-content";
 import { generateMirrorDescription } from "@/lib/mirror/seo";
 import { recordListingActivity } from "@/lib/listings/activity-history";
-import { SMART_SYNC_RECOVERABLE_END_REASONS, shouldEndUnavailableSourceListing } from "@/lib/listings/smart-sync-policy";
+import { failedSmartSyncListingIds, SMART_SYNC_RECOVERABLE_END_REASONS, shouldEndUnavailableSourceListing } from "@/lib/listings/smart-sync-policy";
 import { hasSelectedSmartSyncOption, type SmartSyncOptions } from "@/lib/listings/smart-sync-options";
 import { getAdminAmazonSourceWithFallback, NoUsableAmazonSourceError } from "@/lib/listings/admin-amazon-source";
 
@@ -954,6 +954,7 @@ async function refreshEbayListingSnapshotsForUser(userId: string): Promise<EbayS
 
 export async function prepareConfigurableSmartSync(
   options: SmartSyncOptions,
+  retryLastErrorsOnly = false,
 ): Promise<{ candidates: SmartSyncCandidate[]; ebayRefresh?: EbaySnapshotRefreshResult; error?: string }> {
   const user = await requireUser();
   if (!hasSelectedSmartSyncOption(options)) {
@@ -987,9 +988,28 @@ export async function prepareConfigurableSmartSync(
       ? [{ status: "ENDED" as const, endedReason: { in: [...SMART_SYNC_RECOVERABLE_END_REASONS] } }]
       : []),
   ];
+  let retryListingIds: string[] | undefined;
+  if (retryLastErrorsOnly) {
+    const lastRun = await db.mirrorBatch.findFirst({
+      where: { userId: user.id, source: "LISTING_SYNC", trigger: "MANUAL" },
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      select: {
+        items: { select: { status: true, listingId: true } },
+      },
+    });
+    if (!lastRun) return { candidates: [], ebayRefresh, error: "No previous Smart Sync run is available to retry." };
+    retryListingIds = failedSmartSyncListingIds(lastRun.items);
+    if (retryListingIds.length === 0) {
+      return { candidates: [], ebayRefresh, error: "The last Smart Sync run has no item errors to retry." };
+    }
+  }
   const candidates = listingScopes.length > 0
     ? await db.listing.findMany({
-        where: { userId: user.id, OR: listingScopes },
+        where: {
+          userId: user.id,
+          OR: listingScopes,
+          ...(retryListingIds && { id: { in: retryListingIds } }),
+        },
         select: { id: true, title: true },
         orderBy: [{ status: "asc" }, { publishedAt: "asc" }, { id: "asc" }],
         take: 1_000,
@@ -1234,6 +1254,42 @@ export async function processConfigurableSmartSyncItem(
       error: message.slice(0, 500),
     };
   }
+}
+
+export async function recordSmartSyncActivity(
+  rawItems: SmartSyncItemResult[],
+): Promise<{ batchId: string | null }> {
+  const user = await requireUser();
+  const items = rawItems
+    .filter((item) => item.listingId !== "ebay-listing-cache")
+    .slice(0, 1_000);
+  const listingIds = [...new Set(items.map((item) => item.listingId))];
+  const listings = await db.listing.findMany({
+    where: { userId: user.id, id: { in: listingIds } },
+    include: { product: { select: { supplierUrl: true, costCents: true } } },
+  });
+  const listingById = new Map(listings.map((listing) => [listing.id, listing]));
+  const batchId = await recordListingActivity({
+    userId: user.id,
+    source: "LISTING_SYNC",
+    trigger: "MANUAL",
+    items: items.flatMap((item) => {
+      const listing = listingById.get(item.listingId);
+      if (!listing) return [];
+      return [{
+        title: listing.title,
+        listingId: listing.id,
+        ebayListingId: item.ebayListingId ?? listing.ebayListingId,
+        amazonUrl: listing.product.supplierUrl,
+        sourcePriceCents: listing.product.costCents,
+        listingPriceCents: item.newPriceCents,
+        ok: item.status !== "error",
+        error: item.error ?? null,
+      }];
+    }),
+  });
+  revalidate();
+  return { batchId };
 }
 
 export async function startListingHealthSync(): Promise<{

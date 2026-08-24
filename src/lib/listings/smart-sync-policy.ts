@@ -25,3 +25,11 @@ export function shouldEndUnavailableSourceListing(input: {
     input.listingStatus === "ACTIVE" &&
     input.hasEbayListingId;
 }
+
+export function failedSmartSyncListingIds(
+  items: Array<{ status: string; listingId: string | null }>,
+): string[] {
+  return [...new Set(items.flatMap((item) =>
+    item.status === "FAILED" && item.listingId ? [item.listingId] : [],
+  ))];
+}

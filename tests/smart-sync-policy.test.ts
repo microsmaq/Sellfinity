@@ -3,6 +3,7 @@ import {
   isSmartSyncRecoverableEndReason,
   SMART_SYNC_RECOVERABLE_END_REASONS,
   shouldEndUnavailableSourceListing,
+  failedSmartSyncListingIds,
 } from "@/lib/listings/smart-sync-policy";
 
 describe("Smart Sync recovery policy", () => {
@@ -37,5 +38,15 @@ describe("Smart Sync recovery policy", () => {
       listingStatus: "ACTIVE",
       hasEbayListingId: true,
     })).toBe(false);
+  });
+
+  it("retries only unique failed listings from the previous run", () => {
+    expect(failedSmartSyncListingIds([
+      { status: "SUCCEEDED", listingId: "successful" },
+      { status: "FAILED", listingId: "failed-1" },
+      { status: "FAILED", listingId: "failed-1" },
+      { status: "FAILED", listingId: "failed-2" },
+      { status: "FAILED", listingId: null },
+    ])).toEqual(["failed-1", "failed-2"]);
   });
 });
