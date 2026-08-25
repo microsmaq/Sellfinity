@@ -16,6 +16,9 @@ export function isInvalidEbayQuantityError(message: string): boolean {
 }
 
 export function isTransientEbaySystemError(message: string): boolean {
+  // eBay occasionally attaches HTTP 500 to repairable 25604 record errors.
+  // Rebuild those immediately instead of repeating the same invalid request.
+  if (/errorId["']?:?\s*25604|Product not found|Availability not found/i.test(message)) return false;
   return /errorId["']?:?\s*25001|failed \(5\d\d\)|category["']?:["']?System|a system error has occurred/i.test(
     message,
   );
