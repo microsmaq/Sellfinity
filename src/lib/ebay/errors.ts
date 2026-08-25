@@ -26,3 +26,7 @@ export function isMissingEbayInventoryProductError(message: string): boolean {
     message,
   );
 }
+
+export function isInvalidEbayWeightError(message: string): boolean {
+  return /errorId["']?:?\s*25709|invalid value for weight\.value/i.test(message);
+}

@@ -32,8 +32,14 @@ import {
   type EbayEnvConfig,
 } from "./oauth";
 import { fitEbayDescription } from "./description";
+import { sanitizeEbayPackageWeightAndSize } from "./inventory-package";
 import { ebayImportedOrderState } from "@/lib/orders/ebay-state";
-import { isInvalidEbayQuantityError, isMissingEbayInventoryProductError, isTransientEbaySystemError } from "./errors";
+import {
+  isInvalidEbayQuantityError,
+  isInvalidEbayWeightError,
+  isMissingEbayInventoryProductError,
+  isTransientEbaySystemError,
+} from "./errors";
 import { parseImageUrls } from "@/lib/types";
 
 const MARKETPLACE = "EBAY_US";
@@ -605,10 +611,9 @@ ${innerXml}
       "GET",
       `/sell/inventory/v1/inventory_item/${encodeURIComponent(offer.sku)}`,
     );
-    const putInventoryItem = (current: InventoryItemRecord, quantity?: number) => this.request(
-      "PUT",
-      `/sell/inventory/v1/inventory_item/${encodeURIComponent(offer.sku)}`,
-      {
+    const putInventoryItem = async (current: InventoryItemRecord, quantity?: number) => {
+      const packageWeightAndSize = sanitizeEbayPackageWeightAndSize(current.packageWeightAndSize);
+      const payload = {
         product: current.product ?? {},
         ...(current.condition && { condition: current.condition }),
         ...(current.conditionDescription && { conditionDescription: current.conditionDescription }),
@@ -622,9 +627,30 @@ ${innerXml}
             },
           },
         }),
-        ...(current.packageWeightAndSize && { packageWeightAndSize: current.packageWeightAndSize }),
-      },
-    );
+        ...(packageWeightAndSize && { packageWeightAndSize }),
+      };
+      try {
+        await this.request(
+          "PUT",
+          `/sell/inventory/v1/inventory_item/${encodeURIComponent(offer.sku)}`,
+          payload,
+        );
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "";
+        if (!packageWeightAndSize || !isInvalidEbayWeightError(message)) throw error;
+
+        // Some legacy records contain package metadata that eBay accepts on
+        // reads but rejects on replacement. Retry once without that optional
+        // container so an image/title sync can repair the record and proceed.
+        const payloadWithoutPackage = { ...payload };
+        delete payloadWithoutPackage.packageWeightAndSize;
+        await this.request(
+          "PUT",
+          `/sell/inventory/v1/inventory_item/${encodeURIComponent(offer.sku)}`,
+          payloadWithoutPackage,
+        );
+      }
+    };
     const repairInvalidQuantity = async (): Promise<number> => {
       const current = await getInventoryItem();
       const existingQuantity = current.availability?.shipToLocationAvailability?.quantity;
