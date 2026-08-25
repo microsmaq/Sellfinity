@@ -27,7 +27,7 @@ const features = [
 
 export default async function LandingPage() {
   const user = await getCurrentUser();
-  if (user) redirect("/dashboard");
+  if (user) redirect(user.role === "ADMIN" ? "/admin" : "/dashboard");
 
   return (
     <main className="flex-1">

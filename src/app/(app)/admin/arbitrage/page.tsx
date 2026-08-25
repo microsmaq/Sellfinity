@@ -8,7 +8,7 @@ import {
 import { PageHeader } from "@/components/ui";
 import { AdminArbitrageManager } from "./admin-arbitrage-manager";
 
-export const metadata = { title: "Arbitrage administration — Sellfinity" };
+export const metadata = { title: "Product intelligence — Sellfinity" };
 export const maxDuration = 300;
 
 export default async function AdminArbitragePage({
@@ -90,8 +90,8 @@ export default async function AdminArbitragePage({
   return (
     <>
       <PageHeader
-        title="Arbitrage catalog administration"
-        subtitle="Curate Amazon bestsellers, verify equivalent eBay products, and control exactly which researched opportunities sellers receive."
+        title="Product intelligence"
+        subtitle="Discover Amazon opportunities, verify equivalent eBay products, maintain shared market data, and control what sellers receive."
       />
       <AdminArbitrageManager
         data={data}

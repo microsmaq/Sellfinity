@@ -6,7 +6,8 @@ import { AuthForm } from "../auth-form";
 export const metadata = { title: "Log in — Sellfinity" };
 
 export default async function LoginPage() {
-  if (await getCurrentUser()) redirect("/dashboard");
+  const user = await getCurrentUser();
+  if (user) redirect(user.role === "ADMIN" ? "/admin" : "/dashboard");
   return (
     <AuthForm
       title="Log in to your account"
