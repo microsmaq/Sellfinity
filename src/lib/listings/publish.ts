@@ -3,7 +3,7 @@ import "server-only";
 import { db } from "@/lib/db";
 import { getEbayClientForUser } from "@/lib/ebay";
 import { EbayApiError, validateListingInput } from "@/lib/ebay/client";
-import { fitEbayDescription } from "@/lib/ebay/description";
+import { applyShippingStrategyToDescription, applyShippingStrategyToTitle } from "@/lib/ebay/description";
 import { prepareEbayImages } from "@/lib/ebay/image-policy";
 import { getSharedAmazonProduct } from "@/lib/mirror/shared-catalog";
 import { parseImageUrls, serializeImageUrls } from "@/lib/types";
@@ -192,10 +192,18 @@ export async function publishListingForUser(
       ]);
     }
   }
+  const finalTitle = applyShippingStrategyToTitle(draft.title, finalBuyerShippingCents);
+  const finalDescription = applyShippingStrategyToDescription(draft.description, finalBuyerShippingCents);
+  if (finalTitle !== draft.title || finalDescription !== draft.description) {
+    await db.listing.update({
+      where: { id: draft.id },
+      data: { title: finalTitle, description: finalDescription },
+    });
+  }
 
   const input = {
-    title: draft.title,
-    description: fitEbayDescription(draft.description),
+    title: finalTitle,
+    description: finalDescription,
     priceCents: finalPriceCents,
     quantity: draft.quantity,
     imageUrls,

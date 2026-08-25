@@ -67,3 +67,49 @@ export function fitEbayDescription(html: string): string {
 
   return best || `${prefix}Product details available in the listing.${suffix}`;
 }
+
+/** Keep seller-authored shipping claims consistent with the actual eBay
+ * fulfillment policy. This runs at publication and whenever a pricing action
+ * changes the buyer shipping amount, so stale copy cannot contradict checkout. */
+export function applyShippingStrategyToDescription(
+  html: string,
+  buyerShippingCents: number,
+): string {
+  const cents = Math.max(0, Math.round(buyerShippingCents));
+  const withoutPreviousNotice = html.replace(
+    /<div\b[^>]*id=["']sellfinity-shipping-notice["'][^>]*>[\s\S]*?<\/div>/gi,
+    "",
+  );
+  const reconciled = cents > 0
+    ? withoutPreviousNotice
+        .replace(/\bfree\s+shipping\s+on\s+all\s+orders\b/gi, "Shipping charge is shown separately")
+        .replace(/\b(?:fast\s+)?free\s+shipping\b/gi, "buyer-paid shipping")
+        .replace(/\bshipping\s+(?:is\s+)?(?:free|included)\b/gi, "shipping is charged separately")
+        .replace(/\bcomplimentary\s+shipping\b/gi, "buyer-paid shipping")
+    : withoutPreviousNotice
+        .replace(/\bbuyer[- ]paid\s+shipping\s+of\s+\$?\d+(?:\.\d{1,2})?\s+(?:applies\s+and\s+)?is\s+shown\s+separately(?:\s+at\s+checkout)?\b/gi, "free shipping is included")
+        .replace(/\bbuyer[- ]paid\s+shipping\b/gi, "free shipping")
+        .replace(/\bshipping\s+charge\s+(?:is\s+shown\s+separately|applies)\b/gi, "free shipping is included")
+        .replace(/\bflat\s+\$?\d+(?:\.\d{1,2})?\s+shipping\b/gi, "free shipping");
+  const message = cents > 0
+    ? `<strong>Shipping:</strong> Buyer-paid shipping of $${(cents / 100).toFixed(2)} applies and is shown separately at checkout.`
+    : "<strong>Shipping:</strong> FREE shipping is included with this item.";
+  // Existing free-shipping templates already make the correct promise. Leave
+  // them byte-for-byte stable so Smart Sync does not spend an eBay revision
+  // call solely to add a duplicate notice.
+  if (cents === 0 && /\bfree\s+shipping\b/i.test(reconciled)) {
+    return fitEbayDescription(reconciled);
+  }
+  const notice = `<div id="sellfinity-shipping-notice" style="padding:12px 16px;background:#f0f8ff;border-bottom:1px solid #cfe8f7;font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.5;color:#111;">${message}</div>`;
+  return fitEbayDescription(`${notice}${reconciled}`);
+}
+
+/** Buyer-paid offers must not retain a promotional free-shipping title suffix. */
+export function applyShippingStrategyToTitle(title: string, buyerShippingCents: number): string {
+  if (buyerShippingCents <= 0) return title.trim();
+  return title
+    .replace(/\s*(?:[-–—|]\s*)?(?:fast\s+)?free\s+shipping\b/gi, "")
+    .replace(/\s{2,}/g, " ")
+    .replace(/[\s|–—-]+$/g, "")
+    .trim();
+}

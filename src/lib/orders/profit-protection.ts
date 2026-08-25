@@ -12,6 +12,7 @@ import { MAX_BUYER_SHIPPING_CENTS, normalizePricingStrategy } from "@/lib/listin
 import { isEbayPicturePolicyError, prepareEbayImages } from "@/lib/ebay/image-policy";
 import { parseImageUrls, serializeImageUrls } from "@/lib/types";
 import { orderProfitBreakdown } from "./profit";
+import { applyShippingStrategyToDescription, applyShippingStrategyToTitle } from "@/lib/ebay/description";
 
 export type ProfitProtectionSummary = {
   checked: number;
@@ -227,8 +228,10 @@ export async function protectVerifiedOrderMargins(
     try {
       ebay ??= await getEbayClientForUser(userId);
       let repairedImageUrls: string[] | undefined;
+      const strategyDescription = applyShippingStrategyToDescription(order.listing.description, protectedBuyerShippingCents);
+      const strategyTitle = applyShippingStrategyToTitle(order.listing.title, protectedBuyerShippingCents);
       try {
-        await ebay.updateListing(currentEbayListingId, { priceCents: protectedPriceCents, buyerShippingCents: protectedBuyerShippingCents });
+        await ebay.updateListing(currentEbayListingId, { priceCents: protectedPriceCents, buyerShippingCents: protectedBuyerShippingCents, description: strategyDescription, title: strategyTitle });
       } catch (updateError) {
         const updateMessage = updateError instanceof Error ? updateError.message : "eBay price update failed";
         if (!isEbayPicturePolicyError(updateMessage)) throw updateError;
@@ -240,11 +243,13 @@ export async function protectVerifiedOrderMargins(
         await ebay.updateListing(currentEbayListingId, {
           priceCents: protectedPriceCents,
           buyerShippingCents: protectedBuyerShippingCents,
+          description: strategyDescription,
+          title: strategyTitle,
           imageUrls: repairedImageUrls,
         });
       }
       await db.$transaction([
-        db.listing.update({ where: { id: order.listingId }, data: { priceCents: protectedPriceCents, buyerShippingCents: protectedBuyerShippingCents, shippingStrategy: protectedBuyerShippingCents > 0 ? "BUYER_PAID_SHIPPING" : "FREE_SHIPPING", ...(repairedImageUrls && { imageUrlsJson: serializeImageUrls(repairedImageUrls) }) } }),
+        db.listing.update({ where: { id: order.listingId }, data: { priceCents: protectedPriceCents, buyerShippingCents: protectedBuyerShippingCents, shippingStrategy: protectedBuyerShippingCents > 0 ? "BUYER_PAID_SHIPPING" : "FREE_SHIPPING", description: strategyDescription, title: strategyTitle, ...(repairedImageUrls && { imageUrlsJson: serializeImageUrls(repairedImageUrls) }) } }),
         db.order.update({ where: { id: order.id }, data: {
           profitProtectionStatus: "ADJUSTED",
           profitProtectionReviewedAt: new Date(),

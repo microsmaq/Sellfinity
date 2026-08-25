@@ -691,6 +691,7 @@ ${innerXml}
       const updateOffer = (repairedQuantity?: number) => this.request("PUT", `/sell/inventory/v1/offer/${offer.offerId}`, {
           ...writable,
           ...(repairedQuantity !== undefined && { availableQuantity: repairedQuantity }),
+          ...(update.description !== undefined && { listingDescription: fitEbayDescription(update.description) }),
           listingPolicies: {
             ...(current.listingPolicies ?? {}),
             fulfillmentPolicyId,
@@ -706,6 +707,38 @@ ${innerXml}
           ? await rebuildMissingInventoryProduct(typeof current.categoryId === "string" ? current.categoryId : undefined)
           : await repairInvalidQuantity();
         await runIdempotentUpdate(() => updateOffer(repairedQuantity));
+      }
+    }
+    // Inventory API listings keep the public listing description on the
+    // offer as listingDescription. Updating only product.description changes
+    // the inventory record but can leave the live eBay page unchanged.
+    if (update.description !== undefined && update.buyerShippingCents === undefined) {
+      const currentOffer = await this.request<Record<string, unknown>>(
+        "GET",
+        `/sell/inventory/v1/offer/${offer.offerId}`,
+      );
+      const writableOffer = { ...currentOffer };
+      delete writableOffer.offerId;
+      delete writableOffer.listing;
+      delete writableOffer.status;
+      const updateDescription = (repairedQuantity?: number) => this.request(
+        "PUT",
+        `/sell/inventory/v1/offer/${offer.offerId}`,
+        {
+          ...writableOffer,
+          ...(repairedQuantity !== undefined && { availableQuantity: repairedQuantity }),
+          listingDescription: fitEbayDescription(update.description!),
+        },
+      );
+      try {
+        await runIdempotentUpdate(updateDescription);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "";
+        if (!isInvalidEbayQuantityError(message) && !isMissingEbayInventoryProductError(message)) throw error;
+        const repairedQuantity = isMissingEbayInventoryProductError(message)
+          ? await rebuildMissingInventoryProduct(typeof currentOffer.categoryId === "string" ? currentOffer.categoryId : undefined)
+          : await repairInvalidQuantity();
+        await runIdempotentUpdate(() => updateDescription(repairedQuantity));
       }
     }
     if (

@@ -78,6 +78,7 @@ export function generateMirrorDescription(
     ScrapedProduct,
     "title" | "brand" | "bulletPoints" | "description" | "category" | "imageUrls"
   >,
+  buyerShippingCents = 0,
 ): string {
   const title = escapeHtml(scraped.title);
   const brand = escapeHtml(scraped.brand || "Unbranded");
@@ -101,6 +102,9 @@ export function generateMirrorDescription(
         )
         .join("")}</div>`
     : "";
+  const shippingLine = buyerShippingCents > 0
+    ? `Buyer-paid shipping of $${(buyerShippingCents / 100).toFixed(2)} is shown separately at checkout`
+    : "FREE shipping on all orders";
 
   return fitEbayDescription(`<div style="font-family:Arial,Helvetica,sans-serif;max-width:950px;margin:0 auto;background:#fff;color:#111;border:3px solid #ccc;border-radius:15px;overflow:hidden;">
 <div style="color:#058CD3;font-size:28px;font-weight:700;text-align:center;padding:18px 12px;border-bottom:1px solid #eee;">${title}</div>
@@ -116,7 +120,7 @@ ${imageHtml}
 </div>
 <div style="padding:14px 22px;font-size:14px;line-height:1.5;border-top:1px solid #ddd;background:#fafafa;">
 <div style="font-weight:700;color:#058CD3;font-size:18px;margin:0 0 8px;">Shipping</div>
-<ul style="margin:0 0 14px;padding-left:20px;"><li>FREE shipping on all orders</li><li>Ships within three business days</li><li>We ship to the lower 48 states only</li><li>Tracking is provided when available</li></ul>
+<ul style="margin:0 0 14px;padding-left:20px;"><li>${shippingLine}</li><li>Ships within three business days</li><li>We ship to the lower 48 states only</li><li>Tracking is provided when available</li></ul>
 <div style="font-weight:700;color:#058CD3;font-size:18px;margin:0 0 8px;">Returns</div>
 <ul style="margin:0;padding-left:20px;"><li>30-day returns — item must be unused and in original packaging</li></ul>
 </div>

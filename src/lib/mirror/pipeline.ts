@@ -160,7 +160,7 @@ export async function mirrorUrl(
   const title = contentImprovement?.ok
     ? contentImprovement.content.title
     : generateSourceTitle(scraped);
-  const description = generateMirrorDescription(listingCopy);
+  const description = generateMirrorDescription(listingCopy, pricingPlan.buyerShippingCents);
   const imageImprovement = opts.improveMainImage
     ? await improveMainListingImage({
         userId,
