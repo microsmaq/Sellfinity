@@ -162,6 +162,8 @@ export default async function ListingsPage() {
     user.ebayAdRateBps,
     user.targetProfitEnabled ? user.targetProfitCents : null,
     user.pricingStrategy,
+    user.targetProfitMode,
+    user.targetProfitMinCents,
   ).map((row) => {
     const local = localByEbayId.get(row.ebayListingId);
     const winner = local ? winnerListings.get(local.id) : null;
@@ -200,7 +202,7 @@ export default async function ListingsPage() {
       (l.ebayListingId ? marketMetrics.get(l.ebayListingId) : null) ??
       marketMetrics.get(l.product.sku) ??
       null;
-    const suggestedPlan = listingPricePlan({ amazonCostCents: l.product.costCents, amazonShippingCents: l.product.shippingCostCents, currentEbayPriceCents: l.priceCents, ebayRecommendedPriceCents: metric?.bestSellingPriceCents, averageCompetitorPriceCents: metric?.averageCompetitorPriceCents, sitewideDiscountBps: user.ebaySitewideDiscountBps, adRateBps: user.ebayAdRateBps, targetProfitCents: user.targetProfitEnabled ? user.targetProfitCents : null, pricingStrategy: user.pricingStrategy });
+    const suggestedPlan = listingPricePlan({ amazonCostCents: l.product.costCents, amazonShippingCents: l.product.shippingCostCents, currentEbayPriceCents: l.priceCents, ebayRecommendedPriceCents: metric?.bestSellingPriceCents, averageCompetitorPriceCents: metric?.averageCompetitorPriceCents, sitewideDiscountBps: user.ebaySitewideDiscountBps, adRateBps: user.ebayAdRateBps, targetProfitCents: user.targetProfitEnabled ? user.targetProfitCents : null, targetProfitMode: user.targetProfitMode, targetProfitMinCents: user.targetProfitMinCents, pricingStrategy: user.pricingStrategy });
 
     return {
       id: l.id,

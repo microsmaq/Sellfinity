@@ -6,6 +6,7 @@ import { protectVerifiedOrderMargins } from "@/lib/orders/profit-protection";
 import { getProtectedPriceListings } from "@/lib/listings/winner";
 import { revalidatePath } from "next/cache";
 import { normalizePricingStrategy, type PricingStrategy } from "@/lib/listings/shipping-strategy";
+import { normalizeTargetProfitMode, type TargetProfitMode } from "@/lib/listings/target-profit";
 
 export async function setAutoProfitProtection(enabled: boolean) {
   const user = await requireUser();
@@ -33,16 +34,21 @@ export async function setEbaySitewideDiscount(percent: number) {
   return { discountBps };
 }
 
-export async function setDefaultTargetProfit(enabled: boolean, dollars: number) {
+export async function setDefaultTargetProfit(enabled: boolean, mode: TargetProfitMode, minimumDollars: number, maximumDollars: number) {
   const user = await requireUser();
-  if (!Number.isFinite(dollars) || dollars < 0 || dollars > 10_000) {
-    return { error: "Enter a target profit from $0 to $10,000 per item." };
+  if (![minimumDollars, maximumDollars].every(Number.isFinite) || minimumDollars < 0 || maximumDollars < 0 || maximumDollars > 10_000) {
+    return { error: "Enter profit targets from $0 to $10,000 per item." };
   }
-  const targetProfitCents = Math.round(dollars * 100);
+  const targetProfitMode = normalizeTargetProfitMode(mode);
+  const targetProfitMinCents = Math.round(minimumDollars * 100);
+  const targetProfitCents = Math.round(maximumDollars * 100);
+  if (targetProfitMinCents > targetProfitCents) {
+    return { error: "Minimum profit cannot be higher than maximum profit." };
+  }
   await db.$transaction([
     db.user.update({
       where: { id: user.id },
-      data: { targetProfitEnabled: enabled, targetProfitCents },
+      data: { targetProfitEnabled: enabled, targetProfitMode, targetProfitMinCents, targetProfitCents },
     }),
     db.order.updateMany({
       where: { userId: user.id, profitProtectionStatus: { not: null } },
@@ -57,7 +63,7 @@ export async function setDefaultTargetProfit(enabled: boolean, dollars: number) 
   revalidatePath("/listings");
   revalidatePath("/orders");
   revalidatePath("/analytics");
-  return { enabled, targetProfitCents };
+  return { enabled, targetProfitMode, targetProfitMinCents, targetProfitCents };
 }
 
 export async function setPricingStrategy(strategy: PricingStrategy) {

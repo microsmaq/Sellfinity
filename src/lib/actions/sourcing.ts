@@ -6,6 +6,7 @@ import { db } from "@/lib/db";
 import { getSupplierProvider } from "@/lib/sourcing";
 import { scoreCandidate, suggestPriceCents } from "@/lib/sourcing/scoring";
 import { serializeImageUrls } from "@/lib/types";
+import { resolveTargetProfitCents } from "@/lib/listings/target-profit";
 
 export type ImportResult = {
   imported: number;
@@ -54,7 +55,11 @@ export async function importProducts(
         costCents: candidate.costCents,
         supplierStock: candidate.stock,
         shippingCostCents: candidate.shippingCostCents,
-        suggestedPriceCents: suggestPriceCents(candidate, user.ebaySitewideDiscountBps, user.ebayAdRateBps, user.targetProfitEnabled ? user.targetProfitCents : null),
+        suggestedPriceCents: suggestPriceCents(candidate, user.ebaySitewideDiscountBps, user.ebayAdRateBps, resolveTargetProfitCents(user, {
+          amazonCostCents: candidate.costCents,
+          amazonShippingCents: candidate.shippingCostCents,
+          ebayRecommendedPriceCents: candidate.marketPriceCents,
+        })),
         sourceScore: scored.score,
       },
     });

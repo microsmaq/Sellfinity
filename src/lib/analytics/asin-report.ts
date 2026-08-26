@@ -5,6 +5,7 @@ import { loadListingTraffic, type TrafficSnapshot } from "@/lib/analytics/traffi
 import { arbitrageSuggestedPriceCents } from "@/lib/arbitrage/pricing";
 import { assessPriceCompetitiveness, type PriceCompetitiveness } from "@/lib/arbitrage/price-competitiveness";
 import { assessProductGrowth, type ProductGrowthAssessment } from "@/lib/analytics/growth-assessment";
+import { resolveTargetProfitCents } from "@/lib/listings/target-profit";
 
 const DAY_MS = 86_400_000;
 
@@ -136,6 +137,8 @@ export async function getAsinReport(
           ebayAdRateBps: true,
           ebaySitewideDiscountBps: true,
           targetProfitEnabled: true,
+          targetProfitMode: true,
+          targetProfitMinCents: true,
           targetProfitCents: true,
         },
       },
@@ -275,7 +278,13 @@ export async function getAsinReport(
       listing.product.shippingCostCents,
       listing.seller.ebaySitewideDiscountBps,
       listing.seller.ebayAdRateBps,
-      listing.seller.targetProfitEnabled ? listing.seller.targetProfitCents : null,
+      resolveTargetProfitCents(listing.seller, {
+        amazonCostCents: listing.product.costCents,
+        amazonShippingCents: listing.product.shippingCostCents,
+        currentEbayPriceCents: listing.priceCents,
+        ebayRecommendedPriceCents: market.bestSellingPriceCents,
+        averageCompetitorPriceCents: market.averageCompetitorPriceCents,
+      }),
     ) : listing.product.suggestedPriceCents || catalog?.suggestedPriceCents || null;
     const averageCompetitorPriceCents = market?.averageCompetitorPriceCents ?? catalog?.averageCompetitorPriceCents ?? null;
     return {

@@ -5,6 +5,7 @@ import { getSupplierProvider } from "@/lib/sourcing";
 import type { SupplierProvider } from "@/lib/sourcing/provider";
 import { getProtectedPriceListings } from "@/lib/listings/winner";
 import { detectIssues, type DetectedIssue } from "./detect";
+import { resolveTargetProfitCents } from "@/lib/listings/target-profit";
 
 export type SyncDeps = {
   provider: SupplierProvider;
@@ -69,11 +70,10 @@ export async function runSync(
       where: { userId, status: "ACTIVE" },
       include: { product: true },
     }),
-    db.user.findUnique({ where: { id: userId }, select: { ebaySitewideDiscountBps: true, ebayAdRateBps: true, targetProfitEnabled: true, targetProfitCents: true } }),
+    db.user.findUnique({ where: { id: userId }, select: { ebaySitewideDiscountBps: true, ebayAdRateBps: true, targetProfitEnabled: true, targetProfitMode: true, targetProfitMinCents: true, targetProfitCents: true } }),
   ]);
   const sitewideDiscountBps = user?.ebaySitewideDiscountBps ?? 0;
   const adRateBps = user?.ebayAdRateBps ?? 300;
-  const targetProfitCents = user?.targetProfitEnabled ? user.targetProfitCents : null;
   const winnerListings = await getProtectedPriceListings(userId, adRateBps);
 
   const run = await db.syncRun.create({ data: { userId } });
@@ -103,7 +103,11 @@ export async function runSync(
       state,
       sitewideDiscountBps,
       adRateBps,
-      targetProfitCents,
+      user ? resolveTargetProfitCents(user, {
+        amazonCostCents: state?.costCents ?? listing.product.costCents,
+        amazonShippingCents: state?.shippingCostCents ?? listing.product.shippingCostCents,
+        currentEbayPriceCents: listing.priceCents,
+      }) : null,
     );
 
     const types = new Set(detected.map((d) => d.type));
@@ -200,7 +204,7 @@ export async function fixIssue(
   const state = await deps.provider.getProductState(issue.listing.product.supplierProductId);
   const user = await db.user.findUnique({
     where: { id: userId },
-    select: { ebaySitewideDiscountBps: true, ebayAdRateBps: true, targetProfitEnabled: true, targetProfitCents: true },
+    select: { ebaySitewideDiscountBps: true, ebayAdRateBps: true, targetProfitEnabled: true, targetProfitMode: true, targetProfitMinCents: true, targetProfitCents: true },
   });
   const detected = detectIssues(
     { priceCents: issue.listing.priceCents, quantity: issue.listing.quantity },
@@ -208,7 +212,11 @@ export async function fixIssue(
     state,
     user?.ebaySitewideDiscountBps ?? 0,
     user?.ebayAdRateBps ?? 300,
-    user?.targetProfitEnabled ? user.targetProfitCents : null,
+    user ? resolveTargetProfitCents(user, {
+      amazonCostCents: state?.costCents ?? issue.listing.product.costCents,
+      amazonShippingCents: state?.shippingCostCents ?? issue.listing.product.shippingCostCents,
+      currentEbayPriceCents: issue.listing.priceCents,
+    }) : null,
   );
   const current = detected.find((d) => d.type === issue.type);
 

@@ -13,6 +13,7 @@ import { fulfillmentStage } from "@/lib/orders/fulfillment-stage";
 import { getListingPriceProtection } from "@/lib/listings/winner";
 import { orderProfitBreakdown } from "@/lib/orders/profit";
 import type { EbayFeeBreakdownEntry } from "@/lib/ebay/order-financials";
+import { resolveTargetProfitCents, targetProfitLabel } from "@/lib/listings/target-profit";
 
 export const metadata = { title: "Fulfillment — Sellfinity" };
 export const dynamic = "force-dynamic";
@@ -99,7 +100,10 @@ export default async function OrdersPage() {
       verifiedAmazonCostCents: verifiedCostCents,
       sitewideDiscountBps: user.ebaySitewideDiscountBps,
       adRateBps: user.ebayAdRateBps,
-      targetProfitCents: user.targetProfitEnabled ? user.targetProfitCents : null,
+      targetProfitCents: resolveTargetProfitCents(user, {
+        amazonCostCents: Math.ceil(verifiedCostCents / Math.max(1, order.quantity)),
+        currentEbayPriceCents: order.listing.priceCents,
+      }),
     });
     return {
       id: order.id,
@@ -256,7 +260,7 @@ export default async function OrdersPage() {
           autoRestockEnabled={user.autoRestockFulfilledListings}
           sitewideDiscountBps={user.ebaySitewideDiscountBps}
           targetProfitEnabled={user.targetProfitEnabled}
-          targetProfitCents={user.targetProfitCents}
+          targetProfitDescription={targetProfitLabel(user)}
         />
       </div>
     </>

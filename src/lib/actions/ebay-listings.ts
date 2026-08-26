@@ -42,6 +42,7 @@ import { failedSmartSyncListingIds, SMART_SYNC_RECOVERABLE_END_REASONS, shouldEn
 import { hasSelectedSmartSyncOption, type SmartSyncOptions } from "@/lib/listings/smart-sync-options";
 import { getAdminAmazonSourceWithFallback, NoUsableAmazonSourceError } from "@/lib/listings/admin-amazon-source";
 import { applyShippingStrategyToDescription, applyShippingStrategyToTitle } from "@/lib/ebay/description";
+import { resolveTargetProfitCents } from "@/lib/listings/target-profit";
 
 export type EbayListingResult = { error?: string };
 
@@ -687,7 +688,7 @@ export async function cleanupEbayListings(
         });
         continue;
       }
-      const plan = listingPricePlan({ amazonCostCents: adminSource.amazonPriceCents, amazonShippingCents: adminSource.amazonShippingCents, currentEbayPriceCents: listing.priceCents, ebayRecommendedPriceCents: adminSource.ebayRecommendedPriceCents, averageCompetitorPriceCents: adminSource.averageCompetitorPriceCents, sitewideDiscountBps: user.ebaySitewideDiscountBps, adRateBps: user.ebayAdRateBps, targetProfitCents: user.targetProfitEnabled ? user.targetProfitCents : null, pricingStrategy: user.pricingStrategy });
+      const plan = listingPricePlan({ amazonCostCents: adminSource.amazonPriceCents, amazonShippingCents: adminSource.amazonShippingCents, currentEbayPriceCents: listing.priceCents, ebayRecommendedPriceCents: adminSource.ebayRecommendedPriceCents, averageCompetitorPriceCents: adminSource.averageCompetitorPriceCents, sitewideDiscountBps: user.ebaySitewideDiscountBps, adRateBps: user.ebayAdRateBps, targetProfitCents: user.targetProfitEnabled ? user.targetProfitCents : null, targetProfitMode: user.targetProfitMode, targetProfitMinCents: user.targetProfitMinCents, pricingStrategy: user.pricingStrategy });
       const newPriceCents = plan.itemPriceCents;
       attemptedPriceCents = newPriceCents;
       await db.product.update({
@@ -1139,6 +1140,8 @@ export async function processConfigurableSmartSyncItem(
       sitewideDiscountBps: user.ebaySitewideDiscountBps,
       adRateBps: user.ebayAdRateBps,
       targetProfitCents: user.targetProfitEnabled ? user.targetProfitCents : null,
+      targetProfitMode: user.targetProfitMode,
+      targetProfitMinCents: user.targetProfitMinCents,
       pricingStrategy: user.pricingStrategy,
     });
     const nextPriceCents = options.applySuggestedPrices && !priceLocked
@@ -1492,7 +1495,13 @@ export async function cleanupListingSourcesBatch(): Promise<SourceCleanupBatchRe
           recoverable.product.shippingCostCents,
           user.ebaySitewideDiscountBps,
           user.ebayAdRateBps,
-          user.targetProfitEnabled ? user.targetProfitCents : null,
+          resolveTargetProfitCents(user, {
+            amazonCostCents: recoverable.product.costCents,
+            amazonShippingCents: recoverable.product.shippingCostCents,
+            currentEbayPriceCents: recoverable.priceCents,
+            ebayRecommendedPriceCents: market?.bestSellingPriceCents,
+            averageCompetitorPriceCents: market?.averageCompetitorPriceCents,
+          }),
         );
     await db.listing.update({
       where: { id: recoverable.id },

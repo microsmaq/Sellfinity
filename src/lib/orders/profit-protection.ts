@@ -13,6 +13,7 @@ import { isEbayPicturePolicyError, prepareEbayImages } from "@/lib/ebay/image-po
 import { parseImageUrls, serializeImageUrls } from "@/lib/types";
 import { orderProfitBreakdown } from "./profit";
 import { applyShippingStrategyToDescription, applyShippingStrategyToTitle } from "@/lib/ebay/description";
+import { resolveTargetProfitCents } from "@/lib/listings/target-profit";
 
 export type ProfitProtectionSummary = {
   checked: number;
@@ -41,7 +42,7 @@ export async function protectVerifiedOrderMargins(
     review: 0,
     failed: 0,
   };
-  const user = await db.user.findUnique({ where: { id: userId }, select: { ebaySitewideDiscountBps: true, ebayAdRateBps: true, targetProfitEnabled: true, targetProfitCents: true, pricingStrategy: true } });
+  const user = await db.user.findUnique({ where: { id: userId }, select: { ebaySitewideDiscountBps: true, ebayAdRateBps: true, targetProfitEnabled: true, targetProfitMode: true, targetProfitMinCents: true, targetProfitCents: true, pricingStrategy: true } });
   if (!user) return summary;
   const maxVerifiedOrders = options.maxOrders ?? 10;
   const explicitRetry = Boolean(options.orderIds?.length);
@@ -114,7 +115,10 @@ export async function protectVerifiedOrderMargins(
       verifiedAmazonCostCents: verifiedCostCents,
       sitewideDiscountBps: user.ebaySitewideDiscountBps,
       adRateBps: user.ebayAdRateBps,
-      targetProfitCents: user.targetProfitEnabled ? user.targetProfitCents : null,
+      targetProfitCents: resolveTargetProfitCents(user, {
+        amazonCostCents: Math.ceil(verifiedCostCents / Math.max(1, order.quantity)),
+        currentEbayPriceCents: currentPriceCents,
+      }),
     });
     if (decision.action === "not_required") {
       await db.order.update({ where: { id: order.id }, data: {

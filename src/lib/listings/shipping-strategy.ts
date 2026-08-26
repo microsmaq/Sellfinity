@@ -7,6 +7,7 @@ import {
   normalizeAdRateBps,
 } from "@/lib/fees";
 import { aiSuggestedListingPriceCents, trueProfitCents } from "./cleanup";
+import { resolveTargetProfitCents } from "./target-profit";
 
 export const MAX_BUYER_SHIPPING_CENTS = 700;
 
@@ -80,11 +81,23 @@ export function listingPricePlan(input: {
   sitewideDiscountBps?: number;
   adRateBps?: number;
   targetProfitCents?: number | null;
+  targetProfitMode?: string | null;
+  targetProfitMinCents?: number | null;
   pricingStrategy?: string | null;
 }): ListingPricePlan {
   const sitewideDiscountBps = input.sitewideDiscountBps ?? 0;
   const adRateBps = input.adRateBps ?? DEFAULT_EBAY_AD_RATE_BPS;
   const strategy = normalizePricingStrategy(input.pricingStrategy);
+  const resolvedTargetProfitCents = input.targetProfitCents === null || input.targetProfitCents === undefined
+    ? null
+    : resolveTargetProfitCents({
+        targetProfitEnabled: true,
+        targetProfitMode: input.targetProfitMode,
+        targetProfitMinCents: input.targetProfitMinCents,
+        targetProfitCents: input.targetProfitCents,
+        ebaySitewideDiscountBps: sitewideDiscountBps,
+        ebayAdRateBps: adRateBps,
+      }, input);
   const freePrice = aiSuggestedListingPriceCents(
     input.amazonCostCents,
     input.amazonShippingCents,
@@ -92,11 +105,11 @@ export function listingPricePlan(input: {
     input.averageCompetitorPriceCents,
     sitewideDiscountBps,
     adRateBps,
-    input.targetProfitCents ?? null,
+    resolvedTargetProfitCents,
   );
-  const profitGoal = input.targetProfitCents === null || input.targetProfitCents === undefined
+  const profitGoal = resolvedTargetProfitCents === null
     ? trueProfitCents(freePrice, input.amazonCostCents, input.amazonShippingCents, sitewideDiscountBps, adRateBps)
-    : Math.max(0, Math.round(input.targetProfitCents));
+    : resolvedTargetProfitCents;
   const observedMarketValues = [
     positive(input.ebayRecommendedPriceCents),
     positive(input.averageCompetitorPriceCents),

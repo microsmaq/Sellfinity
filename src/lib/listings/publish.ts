@@ -119,6 +119,8 @@ export async function publishListingForUser(
           ebaySitewideDiscountBps: true,
           ebayAdRateBps: true,
           targetProfitEnabled: true,
+          targetProfitMode: true,
+          targetProfitMinCents: true,
           targetProfitCents: true,
           pricingStrategy: true,
         },
@@ -164,6 +166,8 @@ export async function publishListingForUser(
       sitewideDiscountBps: pricingUser.ebaySitewideDiscountBps,
       adRateBps: pricingUser.ebayAdRateBps,
       targetProfitCents: pricingUser.targetProfitEnabled ? pricingUser.targetProfitCents : null,
+      targetProfitMode: pricingUser.targetProfitMode,
+      targetProfitMinCents: pricingUser.targetProfitMinCents,
       pricingStrategy: pricingUser.pricingStrategy,
     });
     finalPriceCents = plan.itemPriceCents;

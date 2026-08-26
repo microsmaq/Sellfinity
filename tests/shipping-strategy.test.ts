@@ -58,6 +58,22 @@ describe("listingPricePlan", () => {
       )).toBeGreaterThanOrEqual(1_000);
     }
   });
+
+  it("uses a smaller competitive target for inexpensive items in AI-range mode", () => {
+    const plan = listingPricePlan({
+      amazonCostCents: 700,
+      amazonShippingCents: 0,
+      ebayRecommendedPriceCents: 1_050,
+      sitewideDiscountBps: 0,
+      adRateBps: 900,
+      targetProfitCents: 700,
+      targetProfitMode: "AI_RANGE",
+      targetProfitMinCents: 100,
+      pricingStrategy: "FREE_SHIPPING",
+    });
+    expect(plan.modeledProfitCents).toBeGreaterThanOrEqual(100);
+    expect(plan.modeledProfitCents).toBeLessThan(700);
+  });
 });
 
 describe("trueProfitWithBuyerShippingCents", () => {

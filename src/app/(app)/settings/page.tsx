@@ -85,6 +85,8 @@ export default async function SettingsPage({
           initialAdRateBps={user.ebayAdRateBps}
           initialAutoLockProfitableListings={user.autoLockProfitableListings}
           initialTargetProfitEnabled={user.targetProfitEnabled}
+          initialTargetProfitMode={user.targetProfitMode}
+          initialTargetProfitMinCents={user.targetProfitMinCents}
           initialTargetProfitCents={user.targetProfitCents}
           initialPricingStrategy={user.pricingStrategy}
         />

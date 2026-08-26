@@ -45,7 +45,7 @@ export async function createDrafts(productIds: string[]): Promise<BulkResult> {
       suggestedPriceCents: product.suggestedPriceCents,
       supplierStock: product.supplierStock,
     });
-    const plan = listingPricePlan({ amazonCostCents: product.costCents, amazonShippingCents: product.shippingCostCents, ebayRecommendedPriceCents: product.suggestedPriceCents, sitewideDiscountBps: user.ebaySitewideDiscountBps, adRateBps: user.ebayAdRateBps, targetProfitCents: user.targetProfitEnabled ? user.targetProfitCents : null, pricingStrategy: user.pricingStrategy });
+    const plan = listingPricePlan({ amazonCostCents: product.costCents, amazonShippingCents: product.shippingCostCents, ebayRecommendedPriceCents: product.suggestedPriceCents, sitewideDiscountBps: user.ebaySitewideDiscountBps, adRateBps: user.ebayAdRateBps, targetProfitCents: user.targetProfitEnabled ? user.targetProfitCents : null, targetProfitMode: user.targetProfitMode, targetProfitMinCents: user.targetProfitMinCents, pricingStrategy: user.pricingStrategy });
     await db.listing.create({
       data: {
         userId: user.id,

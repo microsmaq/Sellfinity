@@ -15,6 +15,7 @@ import { serializeImageUrls } from "@/lib/types";
 import { grossUpEbayPriceCents } from "@/lib/fees";
 import { targetNetProfitPriceCents } from "@/lib/listings/cleanup";
 import { listingPricePlan } from "@/lib/listings/shipping-strategy";
+import { resolveTargetProfitCents } from "@/lib/listings/target-profit";
 import { improveMainListingImage } from "./improve-main-image";
 import { improveListingContent } from "./improve-listing-content";
 import { uniqueInputLines } from "./batch-limits";
@@ -110,11 +111,16 @@ export async function mirrorUrl(
 
   const user = await db.user.findUnique({
     where: { id: userId },
-    select: { ebaySitewideDiscountBps: true, ebayAdRateBps: true, targetProfitEnabled: true, targetProfitCents: true, pricingStrategy: true },
+    select: { ebaySitewideDiscountBps: true, ebayAdRateBps: true, targetProfitEnabled: true, targetProfitMode: true, targetProfitMinCents: true, targetProfitCents: true, pricingStrategy: true },
   });
   const sitewideDiscountBps = user?.ebaySitewideDiscountBps ?? 0;
   const adRateBps = user?.ebayAdRateBps ?? 300;
-  const targetProfitCents = user?.targetProfitEnabled ? user.targetProfitCents : null;
+  const targetProfitCents = user ? resolveTargetProfitCents(user, {
+    amazonCostCents: scraped.priceCents,
+    amazonShippingCents: scraped.shippingCostCents,
+    ebayRecommendedPriceCents: opts.marketPriceCents,
+    averageCompetitorPriceCents: opts.marketPriceCents,
+  }) : null;
   const legacyPriceCents =
     targetProfitCents !== null
       ? targetNetProfitPriceCents(

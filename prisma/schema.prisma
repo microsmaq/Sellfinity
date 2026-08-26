@@ -41,6 +41,10 @@ model User {
   // When enabled, seller-facing pricing uses this modeled net-profit target
   // per unit after Amazon landed cost and eBay fees.
   targetProfitEnabled          Boolean   @default(true)
+  // FIXED | AI_RANGE. AI_RANGE chooses a competitive target between the
+  // seller's minimum and targetProfitCents (used as the maximum).
+  targetProfitMode             String    @default("FIXED")
+  targetProfitMinCents         Int       @default(100)
   targetProfitCents            Int       @default(700)
   // AI | FREE_SHIPPING | BUYER_PAID_SHIPPING. AI prefers free shipping and
   // uses up to $7 buyer-paid shipping only when a competitive item price

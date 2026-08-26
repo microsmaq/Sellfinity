@@ -61,6 +61,8 @@ export function buildEbayRows(
   adRateBps = 300,
   targetProfitCents: number | null = null,
   pricingStrategy = "AI",
+  targetProfitMode = "FIXED",
+  targetProfitMinCents = 100,
 ): EbayRow[] {
   const byEbayId = new Map(
     local.filter((l) => l.ebayListingId).map((l) => [l.ebayListingId!, l]),
@@ -139,7 +141,7 @@ export function buildEbayRows(
       marketMetrics.get(r.ebayListingId) ??
       marketMetrics.get(localListing.product.sku) ??
       null;
-    const suggestedPlan = listingPricePlan({ amazonCostCents: localListing.product.costCents, amazonShippingCents: localListing.product.shippingCostCents, currentEbayPriceCents: r.priceCents, ebayRecommendedPriceCents: market?.bestSellingPriceCents, averageCompetitorPriceCents: market?.averageCompetitorPriceCents, sitewideDiscountBps, adRateBps, targetProfitCents, pricingStrategy });
+    const suggestedPlan = listingPricePlan({ amazonCostCents: localListing.product.costCents, amazonShippingCents: localListing.product.shippingCostCents, currentEbayPriceCents: r.priceCents, ebayRecommendedPriceCents: market?.bestSellingPriceCents, averageCompetitorPriceCents: market?.averageCompetitorPriceCents, sitewideDiscountBps, adRateBps, targetProfitCents, targetProfitMode, targetProfitMinCents, pricingStrategy });
     rows.push({
       ebayListingId: r.ebayListingId,
       title: r.title,

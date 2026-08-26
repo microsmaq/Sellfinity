@@ -4,13 +4,16 @@ import { useState, useTransition } from "react";
 import { Button, Card, Input } from "@/components/ui";
 import { setAutoLockProfitableListings, setDefaultTargetProfit, setEbayAdRate, setEbaySitewideDiscount, setPricingStrategy } from "@/lib/actions/profit-protection";
 import type { PricingStrategy } from "@/lib/listings/shipping-strategy";
+import type { TargetProfitMode } from "@/lib/listings/target-profit";
 
-export function ProfitProtectionPreferences({ initialDiscountBps, initialAdRateBps, initialAutoLockProfitableListings, initialTargetProfitEnabled, initialTargetProfitCents, initialPricingStrategy }: { initialDiscountBps: number; initialAdRateBps: number; initialAutoLockProfitableListings: boolean; initialTargetProfitEnabled: boolean; initialTargetProfitCents: number; initialPricingStrategy: string }) {
+export function ProfitProtectionPreferences({ initialDiscountBps, initialAdRateBps, initialAutoLockProfitableListings, initialTargetProfitEnabled, initialTargetProfitMode, initialTargetProfitMinCents, initialTargetProfitCents, initialPricingStrategy }: { initialDiscountBps: number; initialAdRateBps: number; initialAutoLockProfitableListings: boolean; initialTargetProfitEnabled: boolean; initialTargetProfitMode: string; initialTargetProfitMinCents: number; initialTargetProfitCents: number; initialPricingStrategy: string }) {
   const [discount, setDiscount] = useState(String(initialDiscountBps / 100));
   const [adRate, setAdRate] = useState(String(initialAdRateBps / 100));
   const [autoLockProfitable, setAutoLockProfitable] = useState(initialAutoLockProfitableListings);
   const [targetProfitEnabled, setTargetProfitEnabled] = useState(initialTargetProfitEnabled);
-  const [targetProfit, setTargetProfit] = useState((initialTargetProfitCents / 100).toFixed(2));
+  const [targetProfitMode, setTargetProfitMode] = useState<TargetProfitMode>(initialTargetProfitMode === "AI_RANGE" ? "AI_RANGE" : "FIXED");
+  const [targetProfitMin, setTargetProfitMin] = useState((initialTargetProfitMinCents / 100).toFixed(2));
+  const [targetProfitMax, setTargetProfitMax] = useState((initialTargetProfitCents / 100).toFixed(2));
   const [pricingStrategy, setPricingStrategyState] = useState<PricingStrategy>(initialPricingStrategy === "FREE_SHIPPING" || initialPricingStrategy === "BUYER_PAID_SHIPPING" ? initialPricingStrategy : "AI");
   const [message, setMessage] = useState<{ text: string; error: boolean } | null>(null);
   const [pending, startTransition] = useTransition();
@@ -80,20 +83,25 @@ export function ProfitProtectionPreferences({ initialDiscountBps, initialAdRateB
   }
 
   function saveTargetProfit() {
-    const dollars = Number(targetProfit);
+    const minimumDollars = targetProfitMode === "AI_RANGE" ? Number(targetProfitMin) : Number(targetProfitMax);
+    const maximumDollars = Number(targetProfitMax);
     setMessage(null);
     startTransition(async () => {
       try {
-        const result = await setDefaultTargetProfit(targetProfitEnabled, dollars);
+        const result = await setDefaultTargetProfit(targetProfitEnabled, targetProfitMode, minimumDollars, maximumDollars);
         if ("error" in result) {
           setMessage({ text: result.error ?? "Could not save the target profit.", error: true });
           return;
         }
         setTargetProfitEnabled(result.enabled);
-        setTargetProfit((result.targetProfitCents / 100).toFixed(2));
+        setTargetProfitMode(result.targetProfitMode);
+        setTargetProfitMin((result.targetProfitMinCents / 100).toFixed(2));
+        setTargetProfitMax((result.targetProfitCents / 100).toFixed(2));
         setMessage({
           text: result.enabled
-            ? `Default target saved at $${(result.targetProfitCents / 100).toFixed(2)} net profit per item.`
+            ? result.targetProfitMode === "AI_RANGE"
+              ? `AI target saved from $${(result.targetProfitMinCents / 100).toFixed(2)} to $${(result.targetProfitCents / 100).toFixed(2)} net profit per item.`
+              : `Fixed target saved at $${(result.targetProfitCents / 100).toFixed(2)} net profit per item.`
             : "Default target profit disabled. Standard market-aware profit safeguards will be used.",
           error: false,
         });
@@ -153,17 +161,28 @@ export function ProfitProtectionPreferences({ initialDiscountBps, initialAdRateB
               <h2 className="text-sm font-semibold text-slate-900">Default target profit per item</h2>
               <span className="rounded-full bg-indigo-50 px-2 py-0.5 text-[11px] font-semibold text-indigo-700">Default on</span>
             </div>
-            <p className="mt-2 text-sm leading-6 text-slate-600">Use this modeled net-profit target for new mirrored listings, suggested prices, and future-price protection during fulfillment refresh.</p>
+            <p className="mt-2 text-sm leading-6 text-slate-600">Choose one fixed target or let AI select a competitive profit between your minimum and maximum for each product.</p>
             <p className="mt-1 text-xs leading-5 text-slate-500">The calculation includes Amazon item cost and shipping, eBay final-value and per-order fees, your advertising rate, and your sitewide discount. Actual profit can vary if marketplace costs change.</p>
           </div>
-          <div className="flex w-full items-end gap-2 sm:w-auto">
+          <div className="flex w-full flex-wrap items-end gap-2 sm:w-auto sm:justify-end">
             <label className="flex min-h-10 items-center gap-2 rounded-lg border border-slate-200 px-3">
               <input type="checkbox" checked={targetProfitEnabled} disabled={pending} onChange={(event) => setTargetProfitEnabled(event.target.checked)} className="h-4 w-4 accent-indigo-600" />
               <span className="text-xs font-medium text-slate-700">Use target</span>
             </label>
-            <label className="w-full sm:w-28">
-              <span className="mb-1 block text-xs font-medium text-slate-600">Profit $</span>
-              <Input type="number" min="0" max="10000" step="0.01" value={targetProfit} disabled={!targetProfitEnabled || pending} onChange={(event) => setTargetProfit(event.target.value)} aria-label="Default net profit per item" />
+            <label className="w-full sm:w-36">
+              <span className="mb-1 block text-xs font-medium text-slate-600">Target type</span>
+              <select value={targetProfitMode} disabled={!targetProfitEnabled || pending} onChange={(event) => setTargetProfitMode(event.target.value as TargetProfitMode)} className="h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-900 shadow-sm outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100">
+                <option value="FIXED">Fixed profit</option>
+                <option value="AI_RANGE">AI decides</option>
+              </select>
+            </label>
+            {targetProfitMode === "AI_RANGE" && <label className="w-[calc(50%-0.25rem)] sm:w-24">
+              <span className="mb-1 block text-xs font-medium text-slate-600">Minimum $</span>
+              <Input type="number" min="0" max="10000" step="0.01" value={targetProfitMin} disabled={!targetProfitEnabled || pending} onChange={(event) => setTargetProfitMin(event.target.value)} aria-label="Minimum net profit per item" />
+            </label>}
+            <label className="w-[calc(50%-0.25rem)] sm:w-24">
+              <span className="mb-1 block text-xs font-medium text-slate-600">{targetProfitMode === "AI_RANGE" ? "Maximum $" : "Profit $"}</span>
+              <Input type="number" min="0" max="10000" step="0.01" value={targetProfitMax} disabled={!targetProfitEnabled || pending} onChange={(event) => setTargetProfitMax(event.target.value)} aria-label={targetProfitMode === "AI_RANGE" ? "Maximum net profit per item" : "Fixed net profit per item"} />
             </label>
             <Button disabled={pending} onClick={saveTargetProfit}>{pending ? "Saving…" : "Save"}</Button>
           </div>
@@ -196,7 +215,7 @@ export function ProfitProtectionPreferences({ initialDiscountBps, initialAdRateB
       <div className="flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between">
         <div className="max-w-xl">
           <h2 className="text-sm font-semibold text-slate-900">eBay sitewide discount</h2>
-          <p className="mt-2 text-sm leading-6 text-slate-600">Enter the percentage from your active eBay store promotion. Suggested and protected list prices are grossed up so the discounted checkout amount still reaches {targetProfitEnabled ? `your $${Number(targetProfit || 0).toFixed(2)} target profit` : "the standard profit safeguard"}.</p>
+          <p className="mt-2 text-sm leading-6 text-slate-600">Enter the percentage from your active eBay store promotion. Suggested and protected list prices are grossed up so the discounted checkout amount still reaches {targetProfitEnabled ? targetProfitMode === "AI_RANGE" ? `the AI-selected $${Number(targetProfitMin || 0).toFixed(2)}–$${Number(targetProfitMax || 0).toFixed(2)} profit target` : `your $${Number(targetProfitMax || 0).toFixed(2)} target profit` : "the standard profit safeguard"}.</p>
           <p className="mt-1 text-xs text-slate-500">Change this whenever you start, stop, or replace the promotion.</p>
         </div>
         <div className="flex w-full items-end gap-2 sm:w-auto">

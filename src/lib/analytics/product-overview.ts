@@ -8,6 +8,7 @@ import { arbitrageSuggestedPriceCents } from "@/lib/arbitrage/pricing";
 import { assessPriceCompetitiveness, type PriceCompetitiveness } from "@/lib/arbitrage/price-competitiveness";
 import { loadListingTraffic } from "@/lib/analytics/traffic";
 import { assessVerifiedWinner } from "@/lib/listings/winner-policy";
+import { resolveTargetProfitCents } from "@/lib/listings/target-profit";
 
 const DAY_MS = 86_400_000;
 
@@ -91,7 +92,7 @@ export async function getProductAnalyticsOverview(options: {
     db.product.findMany({
       where: options.userId ? { userId: options.userId } : undefined,
       include: {
-        user: { select: { ebayAdRateBps: true, ebaySitewideDiscountBps: true, targetProfitEnabled: true, targetProfitCents: true, ebayConnection: { select: { status: true } } } },
+        user: { select: { ebayAdRateBps: true, ebaySitewideDiscountBps: true, targetProfitEnabled: true, targetProfitMode: true, targetProfitMinCents: true, targetProfitCents: true, ebayConnection: { select: { status: true } } } },
         listings: { include: { orders: { include: { amazonPurchaseItem: true } } } },
       },
       orderBy: { createdAt: "desc" },
@@ -236,7 +237,13 @@ export async function getProductAnalyticsOverview(options: {
       product.costCents, listing.priceCents, market.bestSellingPriceCents,
       market.averageCompetitorPriceCents, product.shippingCostCents,
       product.user.ebaySitewideDiscountBps, product.user.ebayAdRateBps,
-      product.user.targetProfitEnabled ? product.user.targetProfitCents : null,
+      resolveTargetProfitCents(product.user, {
+        amazonCostCents: product.costCents,
+        amazonShippingCents: product.shippingCostCents,
+        currentEbayPriceCents: listing.priceCents,
+        ebayRecommendedPriceCents: market.bestSellingPriceCents,
+        averageCompetitorPriceCents: market.averageCompetitorPriceCents,
+      }),
     ));
   }
 
