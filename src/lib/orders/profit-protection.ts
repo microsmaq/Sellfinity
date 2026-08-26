@@ -73,6 +73,23 @@ export async function protectVerifiedOrderMargins(
   let ebay = options.ebay;
   const latestPriceByListing = new Map<string, number>();
   const latestEbayIdByListing = new Map<string, string>();
+  const clearCoveredSiblingFailures = (listingId: string, currentOrderId: string, protectedPriceCents: number) => db.order.updateMany({
+    where: {
+      userId,
+      listingId,
+      id: { not: currentOrderId },
+      status: { not: "REFUNDED" },
+      sourcingStatus: { not: "CANCELLED" },
+      profitProtectionStatus: { in: ["FAILED", "REVIEW_REQUIRED"] },
+      profitProtectionNewPriceCents: { lte: protectedPriceCents },
+    },
+    data: {
+      profitProtectionStatus: "ALREADY_PROTECTED",
+      profitProtectionReviewedAt: new Date(),
+      profitProtectionNewPriceCents: protectedPriceCents,
+      profitProtectionError: null,
+    },
+  });
   for (const order of orders) {
     if (!order.amazonPurchaseItem) continue;
     const verifiedCostCents = actualAmazonCost(order.amazonPurchaseItem);
@@ -112,13 +129,16 @@ export async function protectVerifiedOrderMargins(
     summary.eligible++;
 
     if (decision.action === "already_protected") {
-      await db.order.update({ where: { id: order.id }, data: {
-        profitProtectionStatus: "ALREADY_PROTECTED",
-        profitProtectionReviewedAt: new Date(),
-        profitProtectionOldPriceCents: currentPriceCents,
-        profitProtectionNewPriceCents: currentPriceCents,
-        profitProtectionError: null,
-      } });
+      await db.$transaction([
+        db.order.update({ where: { id: order.id }, data: {
+          profitProtectionStatus: "ALREADY_PROTECTED",
+          profitProtectionReviewedAt: new Date(),
+          profitProtectionOldPriceCents: currentPriceCents,
+          profitProtectionNewPriceCents: currentPriceCents,
+          profitProtectionError: null,
+        } }),
+        clearCoveredSiblingFailures(order.listingId, order.id, currentPriceCents),
+      ]);
       summary.protected++;
       continue;
     }
@@ -178,13 +198,16 @@ export async function protectVerifiedOrderMargins(
         recoverEndedReasons: ["MANUAL"],
       });
       if (!published.ok) return published.error;
-      await db.order.update({ where: { id: order.id }, data: {
-        profitProtectionStatus: "RELISTED",
-        profitProtectionReviewedAt: new Date(),
-        profitProtectionOldPriceCents: currentPriceCents,
-        profitProtectionNewPriceCents: protectedPriceCents,
-        profitProtectionError: null,
-      } });
+      await db.$transaction([
+        db.order.update({ where: { id: order.id }, data: {
+          profitProtectionStatus: "RELISTED",
+          profitProtectionReviewedAt: new Date(),
+          profitProtectionOldPriceCents: currentPriceCents,
+          profitProtectionNewPriceCents: protectedPriceCents,
+          profitProtectionError: null,
+        } }),
+        clearCoveredSiblingFailures(order.listingId, order.id, protectedPriceCents),
+      ]);
       latestPriceByListing.set(order.listingId, protectedPriceCents);
       latestEbayIdByListing.set(order.listingId, published.ebayListingId);
       await recordSuccess(published.ebayListingId);
@@ -257,6 +280,7 @@ export async function protectVerifiedOrderMargins(
           profitProtectionNewPriceCents: protectedPriceCents,
           profitProtectionError: null,
         } }),
+        clearCoveredSiblingFailures(order.listingId, order.id, protectedPriceCents),
       ]);
       latestPriceByListing.set(order.listingId, protectedPriceCents);
       await recordSuccess(currentEbayListingId);

@@ -66,6 +66,14 @@ describe("fulfillment needs action", () => {
     expect(fulfillmentNeedsAction({ stage: "REFUNDED", trackingNumber: null })).toBe(false);
   });
 
+  it("keeps delivered orders visible until saved tracking is sent to eBay", () => {
+    expect(fulfillmentNeedsAction({
+      stage: "DELIVERED",
+      trackingNumber: "TBA333497182365",
+      trackingNeedsSync: true,
+    })).toBe(true);
+  });
+
   it("excludes a line eBay already considers fulfilled without requiring a local tracking copy", () => {
     expect(fulfillmentNeedsAction({
       stage: "IN_TRANSIT",

@@ -11,6 +11,7 @@ export function fulfillmentNeedsAction(input: {
   trackingNumber?: string | null;
   needsSource?: boolean;
   trackingError?: string | null;
+  trackingNeedsSync?: boolean;
   protectionNeedsReview?: boolean;
   ebayFulfilled?: boolean;
 }): boolean {
@@ -24,6 +25,7 @@ export function fulfillmentNeedsAction(input: {
     || input.stage === "PURCHASED"
     || !!input.needsSource
     || !!input.trackingError
+    || !!input.trackingNeedsSync
     || !!input.protectionNeedsReview;
 }
 

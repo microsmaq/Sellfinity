@@ -4,6 +4,7 @@ const mocks = vi.hoisted(() => ({
   findUser: vi.fn(),
   findOrders: vi.fn(),
   updateOrder: vi.fn(),
+  updateManyOrders: vi.fn(),
   updateListing: vi.fn(),
   transaction: vi.fn(),
   updateEbayListing: vi.fn(),
@@ -14,7 +15,7 @@ vi.mock("server-only", () => ({}));
 vi.mock("@/lib/db", () => ({
   db: {
     user: { findUnique: mocks.findUser },
-    order: { findMany: mocks.findOrders, update: mocks.updateOrder },
+    order: { findMany: mocks.findOrders, update: mocks.updateOrder, updateMany: mocks.updateManyOrders },
     listing: { update: mocks.updateListing },
     $transaction: mocks.transaction,
   },
@@ -52,6 +53,7 @@ function candidate(id: string, verifiedCostCents: number | null) {
       priceCents: 3_000,
       quantity: 5,
       title: `Listing ${id}`,
+      description: `Description for ${id}`,
       imageUrlsJson: '["https://i.ebayimg.com/undersized.jpg"]',
       product: { supplierUrl: "https://www.amazon.com/dp/example" },
     },
@@ -64,6 +66,7 @@ describe("profit protection candidate scanning", () => {
     vi.clearAllMocks();
     mocks.findUser.mockResolvedValue({ ebaySitewideDiscountBps: 0, ebayAdRateBps: 0 });
     mocks.updateOrder.mockResolvedValue({});
+    mocks.updateManyOrders.mockResolvedValue({ count: 0 });
     mocks.updateListing.mockResolvedValue({});
     mocks.transaction.mockResolvedValue([]);
     mocks.prepareImages.mockResolvedValue({
@@ -106,7 +109,6 @@ describe("profit protection candidate scanning", () => {
     const result = await protectVerifiedOrderMargins("user-1", {
       orderIds: ["picture-repair"],
     });
-
     expect(result.adjusted).toBe(1);
     expect(result.failed).toBe(0);
     expect(mocks.prepareImages).toHaveBeenCalledWith(
@@ -119,5 +121,17 @@ describe("profit protection candidate scanning", () => {
         imageUrls: ["https://sellfinity.app/api/generated-images/repaired"],
       }),
     );
+    expect(mocks.updateManyOrders).toHaveBeenCalledWith({
+      where: expect.objectContaining({
+        listingId: "listing-picture-repair",
+        id: { not: "picture-repair" },
+        profitProtectionStatus: { in: ["FAILED", "REVIEW_REQUIRED"] },
+        profitProtectionNewPriceCents: { lte: expect.any(Number) },
+      }),
+      data: expect.objectContaining({
+        profitProtectionStatus: "ALREADY_PROTECTED",
+        profitProtectionError: null,
+      }),
+    });
   });
 });

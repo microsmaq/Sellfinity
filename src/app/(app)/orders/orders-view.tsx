@@ -104,6 +104,7 @@ function tabMatches(order: FulfillmentOrderRow, tab: Tab): boolean {
       trackingNumber: order.trackingNumber,
       needsSource: order.needsSource,
       trackingError: order.trackingError,
+      trackingNeedsSync: Boolean(order.trackingNumber && !order.trackingSynced),
       protectionNeedsReview,
       ebayFulfilled: order.ebayFulfilled,
     });
@@ -118,6 +119,15 @@ function trackingUrl(carrier: string | null, tracking: string): string {
   if (normalized.includes("fedex")) return `https://www.fedex.com/fedextrack/?trknbr=${encodeURIComponent(tracking)}`;
   if (normalized.includes("usps")) return `https://tools.usps.com/go/TrackConfirmAction?tLabels=${encodeURIComponent(tracking)}`;
   return `https://www.google.com/search?q=${encodeURIComponent(`${carrier ?? "package"} ${tracking}`)}`;
+}
+
+function protectionErrorSummary(message: string | null): string {
+  if (!message) return "eBay did not provide a detailed reason. Retry the update; if it fails again, refresh the listing first.";
+  if (/25604|product not found|availability not found/i.test(message)) return "eBay lost part of this listing's inventory record. Retry protection to repair the inventory and apply the new price.";
+  if (/25001|core inventory service internal error|system error/i.test(message)) return "eBay had a temporary system error. Retry protection; the update will be attempted safely again.";
+  if (/500 pixels|picture policy/i.test(message)) return "A listing image is below eBay's minimum size. Retry protection to replace the invalid image and apply the price.";
+  if (/ended item|listing.*ended/i.test(message)) return "The eBay listing has ended. Retry protection to relist it at the protected price.";
+  return message.length > 260 ? `${message.slice(0, 257)}…` : message;
 }
 
 function CostBreakdown({ order, mobile = false }: { order: FulfillmentOrderRow; mobile?: boolean }) {
@@ -681,6 +691,12 @@ export function OrdersView({ orders, fetchError, profitProtectionEnabled, autoRe
                     <Badge tone={protectionApplied ? "green" : protectionFailed ? "red" : "indigo"}>{order.profitProtectionStatus === "RELISTED" ? "Relisted" : protectionApplied ? "Protected" : protectionFailed ? "Retry needed" : protectionReview ? "Review" : "Ready to protect"}</Badge>
                   </div>
                 )}
+                {(protectionFailed || protectionReview) && (
+                  <details className="mt-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+                    <summary className="cursor-pointer text-xs font-semibold text-slate-700">View price-protection error</summary>
+                    <p className="mt-2 text-xs leading-5 text-slate-600">{protectionErrorSummary(order.profitProtectionError)}</p>
+                  </details>
+                )}
                 <div className="mt-3 flex items-center justify-between gap-3 text-xs">
                   <span className={overdue ? "font-semibold text-red-600" : "text-slate-500"}>{order.shipByDate ? `Ship by ${displayDate(order.shipByDate)}` : displayDate(order.saleDate)}</span>
                   {order.stage === "AWAITING" && order.amazonUrl
@@ -754,7 +770,7 @@ export function OrdersView({ orders, fetchError, profitProtectionEnabled, autoRe
                       {order.profitProtectionStatus === "ALREADY_PROTECTED" && order.profitProtectionNewPriceCents !== null && <p className="mt-1 text-[11px] font-medium text-emerald-700">Future listing {formatCents(order.profitProtectionNewPriceCents)} · protected</p>}
                       {order.profitProtectionStatus === null && order.suggestedProtectedPriceCents !== null && <p className={cx("mt-1 text-[11px] font-medium", order.verifiedWinner || order.priceLocked ? "text-amber-700" : "text-indigo-700")}>{order.verifiedWinner || order.priceLocked ? "Price locked · suggested" : "Planned future price"} {formatCents(order.suggestedProtectedPriceCents)}</p>}
                       {(protectionReview || protectionFailed) && order.profitProtectionNewPriceCents !== null && <p className={cx("mt-1 text-[11px] font-medium", protectionFailed ? "text-red-700" : "text-amber-700")}>Target future price {formatCents(order.profitProtectionNewPriceCents)}</p>}
-                      {(protectionReview || protectionFailed) && <p className={cx("mt-1 max-w-[180px] whitespace-normal text-[11px]", protectionFailed ? "text-red-600" : "text-amber-700")} title={order.profitProtectionError ?? undefined}>{protectionFailed ? "Price update failed" : "Listing review needed"}</p>}
+                      {(protectionReview || protectionFailed) && <><p className={cx("mt-1 max-w-[180px] whitespace-normal text-[11px]", protectionFailed ? "text-red-600" : "text-amber-700")}>{protectionFailed ? "Price update failed" : "Listing review needed"}</p><details className="mt-1 max-w-[200px] text-left"><summary className="cursor-pointer text-[11px] font-medium text-slate-600">View error</summary><p className="mt-1 whitespace-normal text-[11px] leading-4 text-slate-500">{protectionErrorSummary(order.profitProtectionError)}</p></details></>}
                       {awaitingVerifiedCost && <p className="mt-1 max-w-[190px] whitespace-normal text-[11px] font-medium leading-4 text-amber-700">{priceChangedSinceSale ? `Current price ${formatCents(order.listingPriceCents!)} · sale price ${formatCents(order.soldUnitPriceCents)}` : "Price unchanged · awaiting verified cost"}</p>}
                     </td>
                     <td className="px-4 py-4">
