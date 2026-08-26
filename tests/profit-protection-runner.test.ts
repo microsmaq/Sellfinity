@@ -134,4 +134,23 @@ describe("profit protection candidate scanning", () => {
       }),
     });
   });
+
+  it("includes previous failures in an automatic refresh retry", async () => {
+    mocks.findOrders.mockResolvedValue([]);
+
+    await protectVerifiedOrderMargins("user-1", {
+      maxOrders: 200,
+      retryFailures: true,
+    });
+
+    expect(mocks.findOrders).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({
+        OR: [
+          { profitProtectionStatus: null },
+          { profitProtectionStatus: "FAILED" },
+        ],
+      }),
+      take: 2_000,
+    }));
+  });
 });

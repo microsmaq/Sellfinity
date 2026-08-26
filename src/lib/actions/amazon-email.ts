@@ -18,7 +18,7 @@ export async function syncAmazonEmailsNow() {
     // including links that previously required sign-in or had no number yet.
     const result = await syncAmazonPurchaseEmails(user.id, { retryTrackingFailures: true });
     const protection = user.autoProtectVerifiedProfit
-      ? await protectVerifiedOrderMargins(user.id, { maxOrders: 50 })
+      ? await protectVerifiedOrderMargins(user.id, { maxOrders: 200, retryFailures: true })
       : null;
     let tracking = { eligible: 0, uploaded: 0, savedLocally: 0, failed: 0 };
     let trackingError: string | null = null;

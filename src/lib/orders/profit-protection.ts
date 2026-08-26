@@ -28,7 +28,7 @@ export type ProfitProtectionSummary = {
 
 export async function protectVerifiedOrderMargins(
   userId: string,
-  options: { ebay?: EbayClient; orderIds?: string[]; maxOrders?: number } = {},
+  options: { ebay?: EbayClient; orderIds?: string[]; maxOrders?: number; retryFailures?: boolean } = {},
 ): Promise<ProfitProtectionSummary> {
   const summary: ProfitProtectionSummary = {
     checked: 0,
@@ -52,7 +52,7 @@ export async function protectVerifiedOrderMargins(
       status: { not: "REFUNDED" },
       sourcingStatus: { not: "CANCELLED" },
       amazonPurchaseItem: { isNot: null },
-      OR: explicitRetry
+      OR: explicitRetry || options.retryFailures
         ? [{ profitProtectionStatus: null }, { profitProtectionStatus: "FAILED" }]
         : [{ profitProtectionStatus: null }],
     },
