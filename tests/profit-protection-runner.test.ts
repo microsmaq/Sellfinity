@@ -69,6 +69,7 @@ describe("profit protection candidate scanning", () => {
     mocks.updateManyOrders.mockResolvedValue({ count: 0 });
     mocks.updateListing.mockResolvedValue({});
     mocks.transaction.mockResolvedValue([]);
+    mocks.updateEbayListing.mockResolvedValue(undefined);
     mocks.prepareImages.mockResolvedValue({
       imageUrls: ["https://sellfinity.app/api/generated-images/repaired"],
       repaired: 1,
@@ -125,8 +126,12 @@ describe("profit protection candidate scanning", () => {
       where: expect.objectContaining({
         listingId: "listing-picture-repair",
         id: { not: "picture-repair" },
-        profitProtectionStatus: { in: ["FAILED", "REVIEW_REQUIRED"] },
-        profitProtectionNewPriceCents: { lte: expect.any(Number) },
+        OR: expect.arrayContaining([
+          expect.objectContaining({
+            profitProtectionStatus: { in: ["FAILED", "REVIEW_REQUIRED"] },
+            profitProtectionNewPriceCents: { lte: expect.any(Number) },
+          }),
+        ]),
       }),
       data: expect.objectContaining({
         profitProtectionStatus: "ALREADY_PROTECTED",
@@ -151,6 +156,40 @@ describe("profit protection candidate scanning", () => {
         ],
       }),
       take: 2_000,
+    }));
+  });
+
+  it("updates a shared listing once at the highest required protected price", async () => {
+    mocks.findUser.mockResolvedValue({
+      ebaySitewideDiscountBps: 0,
+      ebayAdRateBps: 0,
+      targetProfitEnabled: false,
+      targetProfitCents: 0,
+      pricingStrategy: "FREE_SHIPPING",
+    });
+    const lower = candidate("shared-lower", 4_000);
+    const higher = candidate("shared-higher", 6_000);
+    for (const order of [lower, higher]) {
+      order.listingId = "shared-listing";
+      order.listing.id = "shared-listing";
+      order.listing.ebayListingId = "shared-ebay-item";
+    }
+    mocks.findOrders.mockResolvedValue([lower, higher]);
+
+    const result = await protectVerifiedOrderMargins("user-1", { maxOrders: 10 });
+
+    expect(result.adjusted).toBe(1);
+    expect(mocks.updateEbayListing).toHaveBeenCalledTimes(1);
+    expect(mocks.updateEbayListing).toHaveBeenCalledWith(
+      "shared-ebay-item",
+      expect.objectContaining({ priceCents: expect.any(Number) }),
+    );
+    expect(mocks.updateManyOrders).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({
+        listingId: "shared-listing",
+        OR: expect.arrayContaining([{ id: { in: ["shared-lower"] } }]),
+      }),
+      data: expect.objectContaining({ profitProtectionStatus: "ALREADY_PROTECTED" }),
     }));
   });
 });

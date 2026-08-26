@@ -74,18 +74,73 @@ export async function protectVerifiedOrderMargins(
     ? new Map()
     : await getProtectedPriceListings(userId, user.ebayAdRateBps);
 
+  // Several historical orders can point to the same eBay listing. Evaluate
+  // all verified costs first and keep only the order that requires the
+  // highest future price. One successful eBay update then covers every lower
+  // target for that listing.
+  const representativeOrderIds = new Set(orders.map((order) => order.id));
+  const coveredOrderIdsByRepresentative = new Map<string, string[]>();
+  const ordersByListing = new Map<string, typeof orders>();
+  for (const order of orders) {
+    const group = ordersByListing.get(order.listingId) ?? [];
+    group.push(order);
+    ordersByListing.set(order.listingId, group);
+  }
+  for (const listingOrders of ordersByListing.values()) {
+    const repricingCandidates: Array<{ orderId: string; targetPriceCents: number }> = [];
+    const verifiedOrderIds: string[] = [];
+    for (const order of listingOrders) {
+      if (!order.amazonPurchaseItem) continue;
+      const verifiedCostCents = actualAmazonCost(order.amazonPurchaseItem);
+      if (verifiedCostCents === null) continue;
+      verifiedOrderIds.push(order.id);
+      const realized = orderProfitBreakdown({ ...order, actualAmazonCostCents: verifiedCostCents }, user.ebayAdRateBps);
+      const decision = verifiedProfitProtectionDecision({
+        currentListingPriceCents: order.listing.priceCents,
+        orderQuantity: order.quantity,
+        realizedRevenueCents: realized.revenueCents,
+        realizedEbayFeeCents: realized.transactionFeeCents + realized.otherEbayCostCents + realized.shippingLabelCents + realized.refundCents,
+        realizedAdvertisingFeeCents: realized.advertisingFeeCents,
+        verifiedAmazonCostCents: verifiedCostCents,
+        sitewideDiscountBps: user.ebaySitewideDiscountBps,
+        adRateBps: user.ebayAdRateBps,
+        targetProfitCents: resolveTargetProfitCents(user, {
+          amazonCostCents: Math.ceil(verifiedCostCents / Math.max(1, order.quantity)),
+          currentEbayPriceCents: order.listing.priceCents,
+        }),
+      });
+      if (decision.action === "reprice") {
+        repricingCandidates.push({ orderId: order.id, targetPriceCents: decision.targetPriceCents });
+      }
+    }
+    if (repricingCandidates.length <= 1) continue;
+    const representative = repricingCandidates.reduce((highest, candidate) =>
+      candidate.targetPriceCents > highest.targetPriceCents ? candidate : highest,
+    );
+    const coveredIds = verifiedOrderIds.filter((orderId) => orderId !== representative.orderId);
+    for (const orderId of coveredIds) representativeOrderIds.delete(orderId);
+    coveredOrderIdsByRepresentative.set(representative.orderId, coveredIds);
+  }
+
   let ebay = options.ebay;
   const latestPriceByListing = new Map<string, number>();
   const latestEbayIdByListing = new Map<string, string>();
-  const clearCoveredSiblingFailures = (listingId: string, currentOrderId: string, protectedPriceCents: number) => db.order.updateMany({
+  const clearCoveredSiblingFailures = (listingId: string, currentOrderId: string, protectedPriceCents: number) => {
+    const coveredOrderIds = coveredOrderIdsByRepresentative.get(currentOrderId) ?? [];
+    return db.order.updateMany({
     where: {
       userId,
       listingId,
       id: { not: currentOrderId },
       status: { not: "REFUNDED" },
       sourcingStatus: { not: "CANCELLED" },
-      profitProtectionStatus: { in: ["FAILED", "REVIEW_REQUIRED"] },
-      profitProtectionNewPriceCents: { lte: protectedPriceCents },
+      OR: [
+        ...(coveredOrderIds.length ? [{ id: { in: coveredOrderIds } }] : []),
+        {
+          profitProtectionStatus: { in: ["FAILED", "REVIEW_REQUIRED"] },
+          profitProtectionNewPriceCents: { lte: protectedPriceCents },
+        },
+      ],
     },
     data: {
       profitProtectionStatus: "ALREADY_PROTECTED",
@@ -93,12 +148,14 @@ export async function protectVerifiedOrderMargins(
       profitProtectionNewPriceCents: protectedPriceCents,
       profitProtectionError: null,
     },
-  });
+    });
+  };
   for (const [orderIndex, order] of orders.entries()) {
     if (deadline !== null && Date.now() >= deadline) {
-      summary.deferred = orders.length - orderIndex;
+      summary.deferred = orders.slice(orderIndex).filter((candidate) => representativeOrderIds.has(candidate.id)).length;
       break;
     }
+    if (!representativeOrderIds.has(order.id)) continue;
     if (!order.amazonPurchaseItem) continue;
     const verifiedCostCents = actualAmazonCost(order.amazonPurchaseItem);
     if (verifiedCostCents === null) {
