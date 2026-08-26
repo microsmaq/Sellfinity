@@ -25,11 +25,12 @@ export type ProfitProtectionSummary = {
   protected: number;
   review: number;
   failed: number;
+  deferred: number;
 };
 
 export async function protectVerifiedOrderMargins(
   userId: string,
-  options: { ebay?: EbayClient; orderIds?: string[]; maxOrders?: number; retryFailures?: boolean } = {},
+  options: { ebay?: EbayClient; orderIds?: string[]; maxOrders?: number; retryFailures?: boolean; maxRuntimeMs?: number } = {},
 ): Promise<ProfitProtectionSummary> {
   const summary: ProfitProtectionSummary = {
     checked: 0,
@@ -41,7 +42,9 @@ export async function protectVerifiedOrderMargins(
     protected: 0,
     review: 0,
     failed: 0,
+    deferred: 0,
   };
+  const deadline = options.maxRuntimeMs ? Date.now() + Math.max(1_000, options.maxRuntimeMs) : null;
   const user = await db.user.findUnique({ where: { id: userId }, select: { ebaySitewideDiscountBps: true, ebayAdRateBps: true, targetProfitEnabled: true, targetProfitMode: true, targetProfitMinCents: true, targetProfitCents: true, pricingStrategy: true } });
   if (!user) return summary;
   const maxVerifiedOrders = options.maxOrders ?? 10;
@@ -91,7 +94,11 @@ export async function protectVerifiedOrderMargins(
       profitProtectionError: null,
     },
   });
-  for (const order of orders) {
+  for (const [orderIndex, order] of orders.entries()) {
+    if (deadline !== null && Date.now() >= deadline) {
+      summary.deferred = orders.length - orderIndex;
+      break;
+    }
     if (!order.amazonPurchaseItem) continue;
     const verifiedCostCents = actualAmazonCost(order.amazonPurchaseItem);
     if (verifiedCostCents === null) {

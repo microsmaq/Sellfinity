@@ -245,7 +245,8 @@ export function OrdersView({ orders, fetchError, profitProtectionEnabled, autoRe
       // its counters moving; 1.1.1 follows with authoritative totals.
       setRefreshRun((current) => current ? {
         ...current,
-        trackingProcessed: Math.min(current.trackingTotal, current.trackingProcessed + 1),
+        trackingTotal: Math.max(current.trackingTotal, current.trackingProcessed + 1),
+        trackingProcessed: current.trackingProcessed + 1,
         trackingFound: current.trackingFound + 1,
       } : current);
     }
@@ -268,6 +269,16 @@ export function OrdersView({ orders, fetchError, profitProtectionEnabled, autoRe
       document.removeEventListener("sellfinity:tracking-helper-progress", receiveHelperProgress);
     };
   }, []);
+
+  useEffect(() => {
+    if (refreshRun?.helper !== "starting") return;
+    const timer = window.setTimeout(() => {
+      setRefreshRun((current) => current?.helper === "starting"
+        ? { ...current, helper: "complete", trackingTotal: 0, trackingProcessed: 0, trackingFound: 0 }
+        : current);
+    }, 8_000);
+    return () => window.clearTimeout(timer);
+  }, [refreshRun?.helper]);
 
   useEffect(() => {
     if (!refreshRun || (refreshRun.server !== "running" && refreshRun.helper !== "running" && refreshRun.helper !== "starting")) return;
@@ -395,14 +406,20 @@ export function OrdersView({ orders, fetchError, profitProtectionEnabled, autoRe
   }
 
   function refreshFulfillment() {
-    const trackingTotal = displayOrders.filter((order) => !order.trackingNumber && !!order.amazonTrackingUrl).length;
+    const helperCandidates = displayOrders.filter((order) =>
+      !order.trackingNumber
+      && !!order.amazonTrackingUrl
+      && order.stage !== "DELIVERED"
+      && order.stage !== "CANCELLED"
+      && order.stage !== "REFUNDED"
+    ).length;
     const startedAt = Date.now();
     setRefreshElapsed(0);
     setRefreshRun({
       startedAt,
       server: "running",
-      helper: trackingTotal ? "starting" : "complete",
-      trackingTotal,
+      helper: helperCandidates ? "starting" : "complete",
+      trackingTotal: 0,
       trackingProcessed: 0,
       trackingFound: 0,
       result: null,
@@ -413,9 +430,11 @@ export function OrdersView({ orders, fetchError, profitProtectionEnabled, autoRe
     // it to scan, even if Refresh was clicked from another tab or after search.
     setTab("NEEDS_ACTION");
     setQuery("");
-    window.requestAnimationFrame(() => window.requestAnimationFrame(() => {
-      document.dispatchEvent(new CustomEvent("sellfinity:bulk-tracking-refresh"));
-    }));
+    if (helperCandidates) {
+      window.requestAnimationFrame(() => window.requestAnimationFrame(() => {
+        document.dispatchEvent(new CustomEvent("sellfinity:bulk-tracking-refresh"));
+      }));
+    }
     startTransition(async () => {
       try {
         const result = await syncAmazonEmailsNow();
@@ -447,6 +466,7 @@ export function OrdersView({ orders, fetchError, profitProtectionEnabled, autoRe
           if (result.protection.protected) details.push(`${result.protection.protected} listing${result.protection.protected === 1 ? " was" : "s were"} already protected`);
           if (result.protection.review) details.push(`${result.protection.review} price${result.protection.review === 1 ? "" : "s"} need review`);
           if (result.protection.failed) details.push(`${result.protection.failed} price update${result.protection.failed === 1 ? "" : "s"} failed`);
+          if (result.protection.deferred) details.push(`${result.protection.deferred} price check${result.protection.deferred === 1 ? " is" : "s are"} queued for the next refresh`);
           if (result.protection.winnerLocked) details.push(`${result.protection.winnerLocked} profitable listing price${result.protection.winnerLocked === 1 ? " was" : "s were"} preserved`);
           if (!result.protection.eligible && result.protection.checked) details.push(`${result.protection.checked} verified margin${result.protection.checked === 1 ? "" : "s"} checked`);
           if (result.protection.awaitingVerification) details.push(`${result.protection.awaitingVerification} price${result.protection.awaitingVerification === 1 ? " was" : "s were"} left unchanged because the Amazon cost is still estimated`);
@@ -620,8 +640,10 @@ export function OrdersView({ orders, fetchError, profitProtectionEnabled, autoRe
               status={refreshStatus}
               stats={[
                 { label: "elapsed", value: elapsedLabel(refreshElapsed), tone: "info" },
-                { label: "tracking links checked", value: `${refreshRun.trackingProcessed}/${refreshRun.trackingTotal}` },
-                { label: "tracking IDs found", value: refreshRun.trackingFound, tone: refreshRun.trackingFound ? "success" : "default" },
+                ...(refreshRun.trackingTotal > 0 && (refreshRun.helper === "running" || refreshRun.helper === "complete") ? [
+                  { label: "tracking links checked", value: `${refreshRun.trackingProcessed}/${refreshRun.trackingTotal}` },
+                  { label: "tracking IDs found", value: refreshRun.trackingFound, tone: refreshRun.trackingFound ? "success" as const : "default" as const },
+                ] : []),
               ]}
               className="border-0 shadow-none"
             />
@@ -629,7 +651,7 @@ export function OrdersView({ orders, fetchError, profitProtectionEnabled, autoRe
               {[
                 { label: "eBay orders", active: refreshRun.server === "running" && refreshElapsed < 8, done: refreshRun.server !== "running" },
                 { label: "Amazon emails", active: refreshRun.server === "running" && refreshElapsed >= 8, done: refreshRun.server !== "running" },
-                { label: "Tracking pages", active: refreshRun.helper === "running" || (refreshRun.helper === "starting" && !helperStartingTimedOut), done: refreshRun.helper === "complete" },
+                ...(refreshRun.helper === "running" || (refreshRun.helper === "complete" && refreshRun.trackingTotal > 0) ? [{ label: "Tracking pages", active: refreshRun.helper === "running", done: refreshRun.helper === "complete" }] : []),
                 { label: "Prices & stock", active: refreshRun.server === "running" && refreshElapsed >= 35, done: refreshRun.server === "complete" },
               ].map((stage) => (
                 <div key={stage.label} className={cx("flex items-center gap-2 rounded-lg border px-3 py-2 text-xs font-medium transition-colors", stage.done ? "border-emerald-200 bg-emerald-50 text-emerald-700" : stage.active ? "border-indigo-200 bg-indigo-50 text-indigo-700" : "border-slate-200 bg-white text-slate-400")}>
