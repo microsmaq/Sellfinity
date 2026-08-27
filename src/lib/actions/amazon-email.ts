@@ -37,6 +37,27 @@ export async function syncAmazonEmailsNow() {
   }
 }
 
+/** Lightweight Settings check: read recent Amazon messages and reconcile
+ * purchases already stored in Sellfinity. Fulfillment refresh owns the
+ * slower eBay import, tracking-page resolution, repricing, and restocking. */
+export async function checkAmazonPurchasesNow() {
+  const user = await requireUser();
+  try {
+    const result = await syncAmazonPurchaseEmails(user.id, {
+      maxMessages: 50,
+      resolveTracking: false,
+    });
+    const checkedAt = new Date().toISOString();
+    revalidatePath("/dashboard");
+    revalidatePath("/orders");
+    return { ...result, checkedAt };
+  } catch (error) {
+    const message = error instanceof Error ? error.message.slice(0, 300) : "Amazon email check failed";
+    await db.amazonEmailConnection.updateMany({ where: { userId: user.id }, data: { lastSyncError: message } });
+    return { error: message };
+  }
+}
+
 export async function setAutoUploadTracking(enabled: boolean) {
   const user = await requireUser();
   await db.amazonEmailConnection.update({ where: { userId: user.id }, data: { autoUploadTracking: enabled } });

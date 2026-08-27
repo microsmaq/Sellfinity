@@ -177,18 +177,19 @@ async function reopenAddressConflicts(userId: string): Promise<number> {
 
 export async function syncAmazonPurchaseEmails(
   userId: string,
-  options: { retryTrackingFailures?: boolean } = {},
+  options: { retryTrackingFailures?: boolean; resolveTracking?: boolean; maxMessages?: number } = {},
 ): Promise<{ examined: number; imported: number; matched: number; trackingResolution: TrackingResolutionResult }> {
   const token = await accessToken(userId);
   const connection = await db.amazonEmailConnection.findUniqueOrThrow({ where: { userId } });
   const processed = new Set<string>(JSON.parse(connection.processedMessageIdsJson) as string[]);
+  const maxMessages = Math.max(1, Math.min(500, Math.round(options.maxMessages ?? 500)));
   let pageToken: string | undefined; const ids: string[] = [];
   do {
-    const params = new URLSearchParams({ q: AMAZON_EMAIL_SEARCH_QUERY, maxResults: "100" });
+    const params = new URLSearchParams({ q: AMAZON_EMAIL_SEARCH_QUERY, maxResults: String(Math.min(100, maxMessages - ids.length)) });
     if (pageToken) params.set("pageToken", pageToken);
     const page = await gmail<{ messages?: { id: string }[]; nextPageToken?: string }>(token, `messages?${params}`);
     ids.push(...(page.messages ?? []).map((message) => message.id)); pageToken = page.nextPageToken;
-  } while (pageToken && ids.length < 500);
+  } while (pageToken && ids.length < maxMessages);
   let imported = 0;
   const observedStatuses = new Map<string, "ORDERED" | "SHIPPED" | "DELIVERED" | "CANCELLED">();
   const rank = { ORDERED: 1, SHIPPED: 2, DELIVERED: 3, CANCELLED: 4 } as const;
@@ -304,9 +305,11 @@ export async function syncAmazonPurchaseEmails(
     },
     data: { sourcingStatus: "CANCELLED", ebayTrackingSyncError: null },
   });
-  const trackingResolution = await resolveMissingAmazonTracking(userId, {
-    retryFailed: options.retryTrackingFailures,
-  });
+  const trackingResolution = options.resolveTracking === false
+    ? { examined: 0, resolved: 0, pending: 0 }
+    : await resolveMissingAmazonTracking(userId, {
+        retryFailed: options.retryTrackingFailures,
+      });
   await db.amazonEmailConnection.update({ where: { userId }, data: { lastSyncedAt: new Date(), lastSyncError: null, processedMessageIdsJson: JSON.stringify([...processed].slice(-1000)), syncVersion: AMAZON_EMAIL_SYNC_VERSION } });
   return { examined: ids.length, imported, matched, trackingResolution };
 }
