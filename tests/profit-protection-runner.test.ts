@@ -192,4 +192,26 @@ describe("profit protection candidate scanning", () => {
       data: expect.objectContaining({ profitProtectionStatus: "ALREADY_PROTECTED" }),
     }));
   });
+
+  it("uses free shipping when a protected listing needs no more than one dollar of shipping", async () => {
+    mocks.findUser.mockResolvedValue({
+      ebaySitewideDiscountBps: 0,
+      ebayAdRateBps: 0,
+      targetProfitEnabled: false,
+      targetProfitCents: 0,
+      pricingStrategy: "AI",
+    });
+    mocks.findOrders.mockResolvedValue([candidate("small-shipping-gap", 2_500)]);
+
+    const result = await protectVerifiedOrderMargins("user-1", { maxOrders: 10 });
+
+    expect(result.adjusted).toBe(1);
+    expect(mocks.updateEbayListing).toHaveBeenCalledWith(
+      "ebay-small-shipping-gap",
+      expect.objectContaining({
+        priceCents: expect.any(Number),
+        buyerShippingCents: 0,
+      }),
+    );
+  });
 });

@@ -29,6 +29,19 @@ describe("listingPricePlan", () => {
     expect(plan.modeledProfitCents).toBeGreaterThanOrEqual(700);
   });
 
+  it("uses free shipping when AI would charge one dollar or less", () => {
+    const free = listingPricePlan({ ...base, pricingStrategy: "FREE_SHIPPING" });
+    const plan = listingPricePlan({
+      ...base,
+      ebayRecommendedPriceCents: free.itemPriceCents - 50,
+      averageCompetitorPriceCents: free.itemPriceCents - 50,
+      pricingStrategy: "AI",
+    });
+    expect(plan.shippingStrategy).toBe("FREE_SHIPPING");
+    expect(plan.buyerShippingCents).toBe(0);
+    expect(plan.modeledProfitCents).toBeGreaterThanOrEqual(700);
+  });
+
   it("honors explicit free and buyer-paid choices", () => {
     const free = listingPricePlan({ ...base, ebayRecommendedPriceCents: 2_500, pricingStrategy: "FREE_SHIPPING" });
     const paid = listingPricePlan({ ...base, ebayRecommendedPriceCents: 5_000, pricingStrategy: "BUYER_PAID_SHIPPING" });

@@ -6,9 +6,9 @@ import { actualAmazonCost } from "@/lib/amazon-email/sync";
 import { recordListingActivity } from "@/lib/listings/activity-history";
 import { publishListingForUser } from "@/lib/listings/publish";
 import { getProtectedPriceListings } from "@/lib/listings/winner";
-import { isEndedEbayListingError, verifiedProfitProtectionDecision } from "./profit-protection-policy";
+import { isEndedEbayListingError, VERIFIED_MARGIN_TARGET_BPS, VERIFIED_PROFIT_TARGET_CENTS, verifiedProfitProtectionDecision } from "./profit-protection-policy";
 import { discountedEbayPriceCents, grossUpEbayPriceCents } from "@/lib/fees";
-import { MAX_BUYER_SHIPPING_CENTS, normalizePricingStrategy } from "@/lib/listings/shipping-strategy";
+import { listingPricePlan, MAX_BUYER_SHIPPING_CENTS, MIN_BUYER_SHIPPING_CENTS, normalizePricingStrategy, trueProfitWithBuyerShippingCents } from "@/lib/listings/shipping-strategy";
 import { isEbayPicturePolicyError, prepareEbayImages } from "@/lib/ebay/image-policy";
 import { parseImageUrls, serializeImageUrls } from "@/lib/types";
 import { orderProfitBreakdown } from "./profit";
@@ -226,6 +226,30 @@ export async function protectVerifiedOrderMargins(
       } else {
         protectedPriceCents = currentPriceCents;
       }
+    }
+    if (protectedBuyerShippingCents > 0 && protectedBuyerShippingCents < MIN_BUYER_SHIPPING_CENTS) {
+      protectedBuyerShippingCents = 0;
+      const unitCostCents = Math.ceil(verifiedCostCents / Math.max(1, order.quantity));
+      const minimumProfitCents = user.targetProfitEnabled
+        ? user.targetProfitMode === "AI_RANGE"
+          ? Math.max(0, user.targetProfitMinCents)
+          : Math.max(0, user.targetProfitCents)
+        : Math.min(
+            VERIFIED_PROFIT_TARGET_CENTS,
+            Math.ceil(discountedEbayPriceCents(currentPriceCents, user.ebaySitewideDiscountBps) * VERIFIED_MARGIN_TARGET_BPS / 10_000),
+          );
+      const currentFreeProfitCents = trueProfitWithBuyerShippingCents(currentPriceCents, 0, unitCostCents, 0, user.ebaySitewideDiscountBps, user.ebayAdRateBps);
+      protectedPriceCents = currentFreeProfitCents >= minimumProfitCents
+        ? currentPriceCents
+        : listingPricePlan({
+            amazonCostCents: unitCostCents,
+            amazonShippingCents: 0,
+            currentEbayPriceCents: currentPriceCents,
+            sitewideDiscountBps: user.ebaySitewideDiscountBps,
+            adRateBps: user.ebayAdRateBps,
+            targetProfitCents: minimumProfitCents,
+            pricingStrategy: "FREE_SHIPPING",
+          }).itemPriceCents;
     }
 
     const recordSuccess = async (ebayListingId: string) => {

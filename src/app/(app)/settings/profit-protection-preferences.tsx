@@ -117,7 +117,7 @@ export function ProfitProtectionPreferences({ initialDiscountBps, initialAdRateB
       try {
         const result = await setPricingStrategy(pricingStrategy);
         setPricingStrategyState(result.strategy);
-        setMessage({ text: result.strategy === "AI" ? "AI pricing saved. Free shipping stays preferred; buyer-paid shipping is used only when needed, up to $7." : result.strategy === "FREE_SHIPPING" ? "Free-shipping pricing saved." : "Buyer-paid-shipping pricing saved. Shipping is capped at $7 per listing.", error: false });
+        setMessage({ text: result.strategy === "AI" ? "AI pricing saved. Free shipping stays preferred; meaningful buyer-paid shipping is used only when needed, from $1.01 to $7." : result.strategy === "FREE_SHIPPING" ? "Free-shipping pricing saved." : "Buyer-paid-shipping pricing saved. Shipping is capped at $7 per listing.", error: false });
       } catch {
         setMessage({ text: "Could not save the pricing strategy.", error: true });
       }
@@ -139,7 +139,7 @@ export function ProfitProtectionPreferences({ initialDiscountBps, initialAdRateB
               <span className="rounded-full bg-indigo-50 px-2 py-0.5 text-[11px] font-semibold text-indigo-700">AI recommended</span>
             </div>
             <p className="mt-2 text-sm leading-6 text-slate-600">Choose how new and suggested prices balance a competitive item price with shipping. AI prefers free shipping, then matches the strongest market price and adds only the shipping needed to reach your profit target.</p>
-            <p className="mt-1 text-xs leading-5 text-slate-500">Buyer-paid shipping never exceeds $7. eBay fees on the item and shipping are included in the profit model.</p>
+            <p className="mt-1 text-xs leading-5 text-slate-500">Buyer-paid shipping is used only above $1 and never exceeds $7. Smaller amounts become free shipping, and AI may accept less profit to keep the item competitive—but never below your minimum. eBay fees on the item and shipping are included in the profit model.</p>
           </div>
           <div className="flex w-full items-end gap-2 sm:w-auto">
             <label className="w-full sm:w-56">

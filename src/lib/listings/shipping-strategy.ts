@@ -10,6 +10,7 @@ import { aiSuggestedListingPriceCents, trueProfitCents } from "./cleanup";
 import { resolveTargetProfitCents } from "./target-profit";
 
 export const MAX_BUYER_SHIPPING_CENTS = 700;
+export const MIN_BUYER_SHIPPING_CENTS = 101;
 
 export type PricingStrategy = "AI" | "FREE_SHIPPING" | "BUYER_PAID_SHIPPING";
 export type ListingShippingStrategy = "FREE_SHIPPING" | "BUYER_PAID_SHIPPING";
@@ -140,6 +141,25 @@ export function listingPricePlan(input: {
       buyerShippingCents < MAX_BUYER_SHIPPING_CENTS &&
       trueProfitWithBuyerShippingCents(itemPriceCents, buyerShippingCents, input.amazonCostCents, input.amazonShippingCents, sitewideDiscountBps, adRateBps) < profitGoal
     ) buyerShippingCents++;
+  }
+  // A token shipping charge adds checkout friction without creating a
+  // meaningful headline-price advantage. Remove $1.00 or less and accept a
+  // smaller profit when the competitive item price still clears the seller's
+  // configured minimum. Raise only enough to restore that minimum otherwise.
+  if (buyerShippingCents < MIN_BUYER_SHIPPING_CENTS) {
+    const minimumProfitGoal = input.targetProfitMode === "AI_RANGE"
+      ? Math.min(profitGoal, Math.max(0, Math.round(input.targetProfitMinCents ?? 100)))
+      : profitGoal;
+    const competitiveFreeProfit = trueProfitWithBuyerShippingCents(itemPriceCents, 0, input.amazonCostCents, input.amazonShippingCents, sitewideDiscountBps, adRateBps);
+    const freeItemPriceCents = competitiveFreeProfit >= minimumProfitGoal
+      ? itemPriceCents
+      : minimumItemPriceForProfit(minimumProfitGoal, 0, input.amazonCostCents, input.amazonShippingCents, sitewideDiscountBps, adRateBps);
+    return {
+      itemPriceCents: freeItemPriceCents,
+      buyerShippingCents: 0,
+      shippingStrategy: "FREE_SHIPPING",
+      modeledProfitCents: trueProfitWithBuyerShippingCents(freeItemPriceCents, 0, input.amazonCostCents, input.amazonShippingCents, sitewideDiscountBps, adRateBps),
+    };
   }
   if (trueProfitWithBuyerShippingCents(itemPriceCents, buyerShippingCents, input.amazonCostCents, input.amazonShippingCents, sitewideDiscountBps, adRateBps) < profitGoal) {
     itemPriceCents = minimumItemPriceForProfit(profitGoal, buyerShippingCents, input.amazonCostCents, input.amazonShippingCents, sitewideDiscountBps, adRateBps);
