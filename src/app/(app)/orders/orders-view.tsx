@@ -10,7 +10,7 @@ import { formatCents } from "@/lib/money";
 import { protectOrderMargin, setAutoProfitProtection } from "@/lib/actions/profit-protection";
 import { syncAmazonEmailsNow } from "@/lib/actions/amazon-email";
 import { linkAmazonPurchase, markOrderCancelled, reassignAmazonPurchase, setAutoRestockFulfilledListings, submitManualOrderTracking } from "@/lib/actions/orders";
-import { fulfillmentNeedsAction, type FulfillmentStage } from "@/lib/orders/fulfillment-stage";
+import { fulfillmentActionReason, fulfillmentNeedsAction, type FulfillmentActionReason, type FulfillmentStage } from "@/lib/orders/fulfillment-stage";
 
 export type FulfillmentOrderRow = {
   id: string;
@@ -119,6 +119,49 @@ function trackingUrl(carrier: string | null, tracking: string): string {
   if (normalized.includes("fedex")) return `https://www.fedex.com/fedextrack/?trknbr=${encodeURIComponent(tracking)}`;
   if (normalized.includes("usps")) return `https://tools.usps.com/go/TrackConfirmAction?tLabels=${encodeURIComponent(tracking)}`;
   return `https://www.google.com/search?q=${encodeURIComponent(`${carrier ?? "package"} ${tracking}`)}`;
+}
+
+function orderActionReason(order: FulfillmentOrderRow): FulfillmentActionReason | null {
+  return fulfillmentActionReason({
+    stage: order.stage,
+    trackingNumber: order.trackingNumber,
+    needsSource: order.needsSource,
+    trackingError: order.trackingError,
+    trackingNeedsSync: Boolean(order.trackingNumber && !order.trackingSynced),
+    protectionNeedsReview: order.profitProtectionStatus === "REVIEW_REQUIRED" || order.profitProtectionStatus === "FAILED",
+    ebayFulfilled: order.ebayFulfilled,
+  });
+}
+
+/** Price protection changes one eBay listing, not every historical order that
+ * sold from it. Keep the strictest failed target as the single actionable row
+ * while preserving every order that still needs its own fulfillment work. */
+function consolidatedNeedsActionOrders(orders: FulfillmentOrderRow[]): FulfillmentOrderRow[] {
+  const protectionRepresentative = new Map<string, FulfillmentOrderRow>();
+  for (const order of orders) {
+    if (orderActionReason(order) !== "PRICE_PROTECTION") continue;
+    const listingKey = order.ebayListingId ?? `sku:${order.sku}`;
+    const current = protectionRepresentative.get(listingKey);
+    if (!current
+      || (order.profitProtectionNewPriceCents ?? 0) > (current.profitProtectionNewPriceCents ?? 0)
+      || ((order.profitProtectionNewPriceCents ?? 0) === (current.profitProtectionNewPriceCents ?? 0)
+        && new Date(order.saleDate).getTime() > new Date(current.saleDate).getTime())) {
+      protectionRepresentative.set(listingKey, order);
+    }
+  }
+  const representativeIds = new Set([...protectionRepresentative.values()].map((order) => order.id));
+  return orders.filter((order) => {
+    const reason = orderActionReason(order);
+    return reason !== null && (reason !== "PRICE_PROTECTION" || representativeIds.has(order.id));
+  });
+}
+
+function actionReasonLabel(order: FulfillmentOrderRow): string | null {
+  const reason = orderActionReason(order);
+  if (reason === "PRICE_PROTECTION") return "Future price needs retry";
+  if (reason === "TRACKING") return order.trackingError ? "Tracking update failed" : "Send tracking to eBay";
+  if (reason === "FULFILLMENT") return order.needsSource ? "Amazon source needed" : order.stage === "AWAITING" ? "Purchase needed" : "Tracking needed";
+  return null;
 }
 
 function protectionErrorSummary(message: string | null): string {
@@ -535,26 +578,29 @@ export function OrdersView({ orders, fetchError, profitProtectionEnabled, autoRe
         ? "Email and eBay refresh finished. The signed-in browser helper is still checking tracking pages."
         : refreshRun.result ?? "Refresh finished.";
 
+  const needsActionOrders = useMemo(() => consolidatedNeedsActionOrders(displayOrders), [displayOrders]);
+  const needsActionIds = useMemo(() => new Set(needsActionOrders.map((order) => order.id)), [needsActionOrders]);
+
   const tabCounts = useMemo(() => ({
     ALL: displayOrders.length,
-    NEEDS_ACTION: displayOrders.filter((order) => tabMatches(order, "NEEDS_ACTION")).length,
+    NEEDS_ACTION: needsActionOrders.length,
     PURCHASED: displayOrders.filter((order) => order.stage === "PURCHASED").length,
     IN_TRANSIT: displayOrders.filter((order) => order.stage === "IN_TRANSIT").length,
     DELIVERED: displayOrders.filter((order) => order.stage === "DELIVERED").length,
     EXCEPTIONS: displayOrders.filter((order) => tabMatches(order, "EXCEPTIONS")).length,
-  }), [displayOrders]);
+  }), [displayOrders, needsActionOrders]);
 
   const filtered = useMemo(() => {
     const needle = query.trim().toLowerCase();
     return displayOrders
-      .filter((order) => tabMatches(order, tab))
+      .filter((order) => tab === "NEEDS_ACTION" ? needsActionIds.has(order.id) : tabMatches(order, tab))
       .filter((order) => !needle || [order.ebayOrderId, order.ebayListingId ?? "", order.title, order.buyerUsername, order.amazonOrderId ?? "", order.amazonTitle ?? "", order.trackingNumber ?? ""].some((value) => value.toLowerCase().includes(needle)))
       .sort((a, b) => {
         if (sort === "PROFIT") return (b.profitCents ?? -Infinity) - (a.profitCents ?? -Infinity);
         if (sort === "SHIP_BY") return (a.shipByDate ? new Date(a.shipByDate).getTime() : Infinity) - (b.shipByDate ? new Date(b.shipByDate).getTime() : Infinity);
         return new Date(b.saleDate).getTime() - new Date(a.saleDate).getTime();
       });
-  }, [displayOrders, query, sort, tab]);
+  }, [displayOrders, needsActionIds, query, sort, tab]);
 
   const financialOrders = displayOrders.filter((order) => order.stage !== "CANCELLED" && order.stage !== "REFUNDED");
   const realizedProfit = financialOrders.filter((order) => order.costVerified && order.profitCents !== null).reduce((sum, order) => sum + (order.profitCents ?? 0), 0);
@@ -664,6 +710,11 @@ export function OrdersView({ orders, fetchError, profitProtectionEnabled, autoRe
         ) : refreshMessage && <p className="border-b border-indigo-100 bg-indigo-50 px-4 py-3 text-sm text-indigo-800" role="status">{refreshMessage}</p>}
 
         {fetchError && <p className="border-b border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">Live status is temporarily unavailable: {fetchError}</p>}
+        {tab === "NEEDS_ACTION" && (
+          <p className="border-b border-sky-100 bg-sky-50/70 px-4 py-2.5 text-xs leading-5 text-sky-900">
+            Shipped or delivered orders appear here only when tracking still needs to reach eBay or the listing&apos;s future price needs attention. Repeated price issues are grouped into one row per listing.
+          </p>
+        )}
 
         <div className="space-y-3 bg-slate-50/60 p-3 md:hidden">
           {filtered.map((order) => {
@@ -689,7 +740,7 @@ export function OrdersView({ orders, fetchError, profitProtectionEnabled, autoRe
                     ? <img src={order.imageUrl} alt="" className="h-14 w-14 shrink-0 rounded-xl border border-slate-200 bg-white object-contain" />
                     : <div className="h-14 w-14 shrink-0 rounded-xl bg-slate-100" />}
                   <div className="min-w-0 flex-1">
-                    <div className="flex flex-wrap items-center justify-between gap-2"><div className="flex flex-wrap gap-1.5"><Badge tone={meta.tone}>{meta.label}</Badge>{order.verifiedWinner && <Badge tone="amber">🏆 Winner</Badge>}{!order.verifiedWinner && order.priceLocked && <Badge tone="indigo">🔒 Price locked</Badge>}</div><span className="text-[11px] text-slate-400">#{order.ebayOrderId}</span></div>
+                    <div className="flex flex-wrap items-center justify-between gap-2"><div className="flex flex-wrap gap-1.5"><Badge tone={meta.tone}>{meta.label}</Badge>{tab === "NEEDS_ACTION" && actionReasonLabel(order) && <Badge tone="slate">{actionReasonLabel(order)}</Badge>}{order.verifiedWinner && <Badge tone="amber">🏆 Winner</Badge>}{!order.verifiedWinner && order.priceLocked && <Badge tone="indigo">🔒 Price locked</Badge>}</div><span className="text-[11px] text-slate-400">#{order.ebayOrderId}</span></div>
                     <p className="mt-2 line-clamp-2 text-[13px] font-semibold leading-5 text-slate-950">{order.title}</p>
                     <p className="mt-1 text-xs text-slate-500">{order.buyerUsername} · Qty {order.quantity}</p>
                   </div>
@@ -783,7 +834,7 @@ export function OrdersView({ orders, fetchError, profitProtectionEnabled, autoRe
                     <td className="whitespace-nowrap px-5 py-4"><p className="font-semibold text-slate-900">#{order.ebayOrderId}</p><p className="mt-1 text-xs text-slate-500">{displayDate(order.saleDate)}</p>{order.shipByDate && <p className={cx("mt-1 text-xs", overdue ? "font-semibold text-red-600" : "text-slate-500")}>Ship by {displayDate(order.shipByDate)}</p>}</td>
                     <td className="max-w-[330px] px-4 py-4"><div className="flex gap-3">{order.imageUrl ? /* External marketplace image hosts are dynamic. */
                       <img src={order.imageUrl} alt="" className="h-12 w-12 shrink-0 rounded-lg border border-slate-200 bg-white object-contain" /> : <div className="h-12 w-12 shrink-0 rounded-lg bg-slate-100" />}<div className="min-w-0">{order.ebayUrl ? <a href={order.ebayUrl} target="_blank" rel="noreferrer" className="line-clamp-2 font-medium text-slate-900 hover:text-indigo-700">{order.title}</a> : <p className="line-clamp-2 font-medium text-slate-900">{order.title}</p>}<p className="mt-1 text-xs text-slate-500">{order.buyerUsername} · Qty {order.quantity}</p>{order.verifiedWinner && <div className="mt-1.5"><Badge tone="amber">🏆 Verified winner · price locked</Badge></div>}{!order.verifiedWinner && order.priceLocked && <div className="mt-1.5"><Badge tone="indigo">🔒 Price locked · profitable sale</Badge></div>}{order.variation && <p className="mt-0.5 truncate text-xs text-violet-700">{order.variation}</p>}</div></div></td>
-                    <td className="px-4 py-4"><Badge tone={meta.tone}>{meta.label}</Badge>{order.amazonOrderId && <p className="mt-2 text-xs text-slate-500">Amazon #{order.amazonOrderId}</p>}{order.matchConfidence !== null && <p className="mt-0.5 text-[11px] text-slate-400">{order.matchConfidence}% source match</p>}{order.amazonOrderId && duplicateAwaitingOrders(order).length > 0 && <details className="mt-2"><summary className="cursor-pointer text-[11px] font-semibold text-amber-700">Correct match</summary><div className="mt-1.5 grid gap-1">{duplicateAwaitingOrders(order).map((target) => <button key={target.id} type="button" disabled={pending || reassigningOrderId === order.id} onClick={() => moveAmazonMatch(order, target)} className="rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-left text-[11px] font-medium text-amber-900 hover:bg-amber-100 disabled:opacity-50">{reassigningOrderId === order.id ? "Moving…" : `Move to ${target.buyerUsername}`}</button>)}</div></details>}{order.stage === "AWAITING" && !order.amazonOrderId && <details className="mt-2"><summary className="cursor-pointer text-[11px] font-semibold text-slate-600">Already purchased?</summary><div className="mt-1.5 grid gap-1.5"><input value={amazonOrderNumbers[order.id] ?? ""} onChange={(event) => setAmazonOrderNumbers((current) => ({ ...current, [order.id]: event.target.value }))} placeholder="Amazon order number" aria-label={`Amazon order number for ${order.ebayOrderId}`} className="w-44 rounded-md border border-slate-300 bg-white px-2 py-1.5 text-xs text-slate-900 placeholder-slate-400 focus:border-indigo-500 focus:outline-none" /><Button size="sm" variant="secondary" disabled={pending || linkingOrderId === order.id} onClick={() => linkKnownAmazonOrder(order)}>{linkingOrderId === order.id ? "Validating…" : "Link purchase"}</Button></div></details>}</td>
+                    <td className="px-4 py-4"><Badge tone={meta.tone}>{meta.label}</Badge>{tab === "NEEDS_ACTION" && actionReasonLabel(order) && <div className="mt-1.5"><Badge tone="slate">{actionReasonLabel(order)}</Badge></div>}{order.amazonOrderId && <p className="mt-2 text-xs text-slate-500">Amazon #{order.amazonOrderId}</p>}{order.matchConfidence !== null && <p className="mt-0.5 text-[11px] text-slate-400">{order.matchConfidence}% source match</p>}{order.amazonOrderId && duplicateAwaitingOrders(order).length > 0 && <details className="mt-2"><summary className="cursor-pointer text-[11px] font-semibold text-amber-700">Correct match</summary><div className="mt-1.5 grid gap-1">{duplicateAwaitingOrders(order).map((target) => <button key={target.id} type="button" disabled={pending || reassigningOrderId === order.id} onClick={() => moveAmazonMatch(order, target)} className="rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-left text-[11px] font-medium text-amber-900 hover:bg-amber-100 disabled:opacity-50">{reassigningOrderId === order.id ? "Moving…" : `Move to ${target.buyerUsername}`}</button>)}</div></details>}{order.stage === "AWAITING" && !order.amazonOrderId && <details className="mt-2"><summary className="cursor-pointer text-[11px] font-semibold text-slate-600">Already purchased?</summary><div className="mt-1.5 grid gap-1.5"><input value={amazonOrderNumbers[order.id] ?? ""} onChange={(event) => setAmazonOrderNumbers((current) => ({ ...current, [order.id]: event.target.value }))} placeholder="Amazon order number" aria-label={`Amazon order number for ${order.ebayOrderId}`} className="w-44 rounded-md border border-slate-300 bg-white px-2 py-1.5 text-xs text-slate-900 placeholder-slate-400 focus:border-indigo-500 focus:outline-none" /><Button size="sm" variant="secondary" disabled={pending || linkingOrderId === order.id} onClick={() => linkKnownAmazonOrder(order)}>{linkingOrderId === order.id ? "Validating…" : "Link purchase"}</Button></div></details>}</td>
                     <td className="max-w-[240px] px-4 py-4">{order.trackingNumber ? <><a href={trackingUrl(order.carrier, order.trackingNumber)} target="_blank" rel="noreferrer" className="break-all font-medium text-indigo-700 hover:underline">{order.trackingNumber}</a><p className="mt-1 text-xs text-slate-500">{order.carrier ?? "Carrier pending"}{order.trackingSynced ? " · sent to eBay" : order.stage === "DELIVERED" ? " · saved" : " · waiting for eBay"}</p></> : <>{order.amazonTrackingUrl ? <><a href={order.amazonTrackingUrl} target="_blank" rel="noreferrer" className="font-medium text-indigo-700 hover:underline">Open Amazon tracking ↗</a><p className="mt-1 text-xs text-amber-700">Tracking number pending</p></> : <span className="text-slate-400">Not available yet</span>}{order.stage !== "CANCELLED" && order.stage !== "REFUNDED" && <div className="mt-2 space-y-1.5"><input data-order-id={order.id} value={manualTracking[order.id] ?? ""} onChange={(event) => setManualTracking((current) => ({ ...current, [order.id]: event.target.value }))} onKeyDown={(event) => { if (event.key === "Enter") submitTracking(order, event.currentTarget.value); }} placeholder="Enter tracking number" aria-label={`Tracking number for ${order.ebayOrderId}`} className="w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-xs text-slate-900 placeholder-slate-400 focus:border-indigo-500 focus:outline-none" /><Button size="sm" variant="secondary" disabled={pending || savingTrackingOrderId === order.id} onClick={() => submitTracking(order)} className="w-full">{savingTrackingOrderId === order.id ? "Saving…" : order.stage === "DELIVERED" ? "Save tracking" : "Save & mark shipped"}</Button></div>}</>}</td>
                     <td className="whitespace-nowrap px-4 py-4 text-right"><p className="font-semibold tabular-nums text-slate-900">{formatCents(order.revenueCents)}</p><p className="mt-1 text-[11px] text-slate-400">eBay sale</p></td>
                     <td className="whitespace-nowrap px-4 py-4 text-right"><CostBreakdown order={order} /><p className="mt-1 text-[11px] text-slate-400">{order.costVerified ? "Verified Amazon" : "Estimated Amazon"} · {order.financialsActual ? "actual eBay" : "estimated eBay"}</p></td>

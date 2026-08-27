@@ -6,7 +6,9 @@ export type FulfillmentStage =
   | "CANCELLED"
   | "REFUNDED";
 
-export function fulfillmentNeedsAction(input: {
+export type FulfillmentActionReason = "FULFILLMENT" | "TRACKING" | "PRICE_PROTECTION";
+
+export type FulfillmentActionInput = {
   stage: FulfillmentStage;
   trackingNumber?: string | null;
   needsSource?: boolean;
@@ -14,19 +16,26 @@ export function fulfillmentNeedsAction(input: {
   trackingNeedsSync?: boolean;
   protectionNeedsReview?: boolean;
   ebayFulfilled?: boolean;
-}): boolean {
-  if (input.stage === "CANCELLED" || input.stage === "REFUNDED") return false;
+};
+
+export function fulfillmentActionReason(input: FulfillmentActionInput): FulfillmentActionReason | null {
+  if (input.stage === "CANCELLED" || input.stage === "REFUNDED") return null;
   // eBay is the destination system for fulfillment. If it already considers
   // the line fulfilled, a missing local copy of its tracking number is not a
   // seller action. Refresh separately recovers that number when available.
-  if (input.ebayFulfilled) return !!input.trackingError || !!input.protectionNeedsReview;
-  return !input.trackingNumber
-    || input.stage === "AWAITING"
-    || input.stage === "PURCHASED"
-    || !!input.needsSource
-    || !!input.trackingError
-    || !!input.trackingNeedsSync
-    || !!input.protectionNeedsReview;
+  if (input.ebayFulfilled) {
+    if (input.trackingError) return "TRACKING";
+    return input.protectionNeedsReview ? "PRICE_PROTECTION" : null;
+  }
+  if (input.trackingError || input.trackingNeedsSync) return "TRACKING";
+  if (!input.trackingNumber || input.stage === "AWAITING" || input.stage === "PURCHASED" || input.needsSource) {
+    return "FULFILLMENT";
+  }
+  return input.protectionNeedsReview ? "PRICE_PROTECTION" : null;
+}
+
+export function fulfillmentNeedsAction(input: FulfillmentActionInput): boolean {
+  return fulfillmentActionReason(input) !== null;
 }
 
 /** Prefer the linked Amazon purchase lifecycle over a stale local sourcing

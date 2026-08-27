@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { fulfillmentNeedsAction, fulfillmentStage } from "@/lib/orders/fulfillment-stage";
+import { fulfillmentActionReason, fulfillmentNeedsAction, fulfillmentStage } from "@/lib/orders/fulfillment-stage";
 
 describe("fulfillmentStage", () => {
   it("shows an ordered Amazon purchase as awaiting shipment", () => {
@@ -80,5 +80,20 @@ describe("fulfillment needs action", () => {
       trackingNumber: null,
       ebayFulfilled: true,
     })).toBe(false);
+  });
+
+  it("distinguishes a completed listing price issue from order fulfillment work", () => {
+    expect(fulfillmentActionReason({
+      stage: "DELIVERED",
+      trackingNumber: "1Z999AA10123456784",
+      ebayFulfilled: true,
+      protectionNeedsReview: true,
+    })).toBe("PRICE_PROTECTION");
+    expect(fulfillmentActionReason({
+      stage: "DELIVERED",
+      trackingNumber: "1Z999AA10123456784",
+      trackingNeedsSync: true,
+      protectionNeedsReview: true,
+    })).toBe("TRACKING");
   });
 });
