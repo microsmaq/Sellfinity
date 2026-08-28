@@ -103,7 +103,7 @@ describe("fulfillment needs action", () => {
       trackingNumber: "TBA333160158855",
       trackingError: "eBay 30500 System error",
       trackingErrorActionable: false,
-      trackingNeedsSync: false,
+      trackingNeedsSync: true,
     })).toBeNull();
   });
 });

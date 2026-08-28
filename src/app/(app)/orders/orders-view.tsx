@@ -122,7 +122,7 @@ function orderActionReason(order: FulfillmentOrderRow): FulfillmentActionReason 
     needsSource: order.needsSource,
     trackingError: order.trackingError,
     trackingErrorActionable: !deliveredTemporaryEbayError,
-    trackingNeedsSync: Boolean(order.trackingNumber && !order.trackingSynced),
+    trackingNeedsSync: !deliveredTemporaryEbayError && Boolean(order.trackingNumber && !order.trackingSynced),
     protectionNeedsReview: order.profitProtectionStatus === "REVIEW_REQUIRED" || order.profitProtectionStatus === "FAILED",
     ebayFulfilled: order.ebayFulfilled,
   });

@@ -21,6 +21,7 @@ export type FulfillmentActionInput = {
 
 export function fulfillmentActionReason(input: FulfillmentActionInput): FulfillmentActionReason | null {
   if (input.stage === "CANCELLED" || input.stage === "REFUNDED") return null;
+  const trackingSuppressed = !!input.trackingError && input.trackingErrorActionable === false;
   // eBay is the destination system for fulfillment. If it already considers
   // the line fulfilled, a missing local copy of its tracking number is not a
   // seller action. Refresh separately recovers that number when available.
@@ -28,7 +29,7 @@ export function fulfillmentActionReason(input: FulfillmentActionInput): Fulfillm
     if (input.trackingError && input.trackingErrorActionable !== false) return "TRACKING";
     return input.protectionNeedsReview ? "PRICE_PROTECTION" : null;
   }
-  if ((input.trackingError && input.trackingErrorActionable !== false) || input.trackingNeedsSync) return "TRACKING";
+  if ((input.trackingError && !trackingSuppressed) || (input.trackingNeedsSync && !trackingSuppressed)) return "TRACKING";
   if (!input.trackingNumber || input.stage === "AWAITING" || input.stage === "PURCHASED" || input.needsSource) {
     return "FULFILLMENT";
   }
