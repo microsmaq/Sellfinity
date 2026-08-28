@@ -38,6 +38,11 @@ For one transactional summary email after every publishing batch, verify the
 example `Sellfinity <updates@sellfinity.app>`), and
 `APP_URL=https://www.sellfinity.app` in Vercel.
 
+For administrator-only eBay competitor research, add `COUNTDOWN_API_KEY` as a
+Production secret in Vercel. Seller listing tools never call Countdown; admin
+research results are retained in the shared catalog and fall back to eBay
+Browse if Countdown is temporarily unavailable.
+
 For optional Amazon purchase detection through Gmail, create a Google OAuth
 web application, enable Gmail API, add
 `https://www.sellfinity.app/api/amazon-email/callback` as an authorized

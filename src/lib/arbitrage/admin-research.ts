@@ -1,5 +1,5 @@
 import { db } from "@/lib/db";
-import { searchEbayProducts, researchEbayMarket } from "@/lib/ebay/market";
+import { researchAdminEbayMarket, searchAdminEbayProducts } from "./admin-ebay-market";
 import { estimateMargin } from "@/lib/fees";
 import { getScraper } from "@/lib/mirror";
 import { extractAsin } from "@/lib/mirror/scraper";
@@ -82,7 +82,7 @@ export async function researchAdminCatalogProduct(id: string): Promise<void> {
   }
   const sourceSnapshot = sharedAmazonSnapshotData(source);
 
-  const candidates = await searchEbayProducts(source.title, 50);
+  const candidates = await searchAdminEbayProducts(source.title, 50);
   const attached = candidates.length
     ? await db.adminArbitrageProduct.findMany({
         where: {
@@ -150,7 +150,7 @@ export async function researchAdminCatalogProduct(id: string): Promise<void> {
     return;
   }
 
-  const market = await researchEbayMarket(
+  const market = await researchAdminEbayMarket(
     best.candidate.title,
     best.candidate.itemId,
   );
@@ -277,7 +277,7 @@ export async function refreshAdminEbayMarket(id: string): Promise<{
     throw new Error("This catalog row has no researched eBay equivalent.");
   }
   const [market, assessment] = await Promise.all([
-    researchEbayMarket(item.ebayTitle, item.ebayItemId, {
+    researchAdminEbayMarket(item.ebayTitle, item.ebayItemId, {
       allowReferenceFallback: true,
     }),
     assessProductMatch(
