@@ -6,7 +6,7 @@ import { db } from "@/lib/db";
 import { importOrders } from "@/lib/orders/import";
 import { restockLowFulfillmentInventory } from "@/lib/orders/auto-restock";
 import { getEbayClientForUser } from "@/lib/ebay";
-import { ebayCarrierCode, normalizeTrackingNumber, remoteFulfillmentLookupKeys, storedFulfillmentIdentity } from "@/lib/amazon-email/tracking-utils";
+import { ebayCarrierCode, normalizeTrackingNumber, remoteFulfillmentLookupKeys, storedFulfillmentIdentity, trackingUploadErrorDisposition } from "@/lib/amazon-email/tracking-utils";
 import { sourcingStatusForAmazonPurchase } from "@/lib/amazon-email/status";
 import { fulfillmentIdentityEvidence, fulfillmentProductFallbackAllowed, fulfillmentTitleSimilarity } from "@/lib/amazon-email/title-match";
 
@@ -193,13 +193,24 @@ export async function submitManualOrderTracking(orderId: string, rawTrackingNumb
     if (!remote && !fallback) {
       return { error: "This order could not be mapped safely to an exact eBay order line." };
     }
-    await ebay.createShippingFulfillment(user.id, {
+    const uploadInput = {
       orderId: remote?.remoteOrder.orderId ?? fallback!.orderId,
       lineItemId: remote?.line.lineItemId ?? fallback!.lineItemId,
       quantity: remote ? Math.min(order.quantity, remote.line.quantity) : Math.max(1, order.quantity),
       trackingNumber,
       shippingCarrierCode: carrier,
-    });
+    };
+    try {
+      await ebay.createShippingFulfillment(user.id, uploadInput);
+    } catch (firstError) {
+      const firstMessage = firstError instanceof Error ? firstError.message : "eBay tracking update failed";
+      const disposition = trackingUploadErrorDisposition(firstMessage);
+      if (disposition === "RETRYABLE") {
+        await ebay.createShippingFulfillment(user.id, uploadInput);
+      } else if (disposition !== "ALREADY_SHIPPED") {
+        throw firstError;
+      }
+    }
     const sourcingStatus = "SHIPPED";
     await db.order.update({ where: { id: order.id }, data: {
       status: "SHIPPED",

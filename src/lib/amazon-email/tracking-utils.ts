@@ -64,6 +64,12 @@ export function storedFulfillmentIdentity(input: {
     : null;
 }
 
+export function trackingUploadErrorDisposition(message: string): "ALREADY_SHIPPED" | "RETRYABLE" | "FAILED" {
+  if (/32320|tracking number already used[\s\S]*marked as shipped/i.test(message)) return "ALREADY_SHIPPED";
+  if (/\b30500\b|\(500\)|system error/i.test(message)) return "RETRYABLE";
+  return "FAILED";
+}
+
 export function trackingAppliesToAsin(trackingAsinsJson: string, purchaseItemCount: number, asin: string): boolean {
   try {
     const trackingAsins = JSON.parse(trackingAsinsJson) as unknown;

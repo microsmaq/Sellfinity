@@ -1,7 +1,7 @@
 import "server-only";
 import { db } from "@/lib/db";
 import { getEbayClientForUser } from "@/lib/ebay";
-import { ebayCarrierCode, normalizeTrackingNumber, remoteFulfillmentLookupKeys, storedFulfillmentIdentity, trackingAppliesToAsin, trackingCandidateForUpload } from "./tracking-utils";
+import { ebayCarrierCode, normalizeTrackingNumber, remoteFulfillmentLookupKeys, storedFulfillmentIdentity, trackingAppliesToAsin, trackingCandidateForUpload, trackingUploadErrorDisposition } from "./tracking-utils";
 
 export type TrackingUploadResult = {
   eligible: number;
@@ -79,13 +79,26 @@ export async function uploadAmazonTrackingToEbay(userId: string): Promise<Tracki
     const shippingCarrierCode = ebayCarrierCode(candidate.carrier, trackingNumber);
     eligible++;
     try {
-      await ebay.createShippingFulfillment(userId, {
+      const uploadInput = {
         orderId: remote?.orderId ?? fallback!.orderId,
         lineItemId: remote?.line.lineItemId ?? fallback!.lineItemId,
         quantity: remote ? Math.min(order.quantity, remote.line.quantity) : Math.max(1, order.quantity),
         trackingNumber,
         shippingCarrierCode,
-      });
+      };
+      try {
+        await ebay.createShippingFulfillment(userId, uploadInput);
+      } catch (firstError) {
+        const firstMessage = firstError instanceof Error ? firstError.message : "eBay tracking update failed";
+        const disposition = trackingUploadErrorDisposition(firstMessage);
+        // eBay error 32320 explicitly confirms that it accepted the shipment.
+        // A transient 30500/500 gets one bounded retry in the same refresh.
+        if (disposition === "RETRYABLE") {
+          await ebay.createShippingFulfillment(userId, uploadInput);
+        } else if (disposition !== "ALREADY_SHIPPED") {
+          throw firstError;
+        }
+      }
       await db.order.update({ where: { id: order.id }, data: {
         status: "SHIPPED",
         // A tracking number proves shipment, not delivery. Preserve Delivered

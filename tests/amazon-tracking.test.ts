@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { amazonStatusCanUploadTracking, ebayCarrierCode, normalizeTrackingNumber, remoteFulfillmentKey, remoteFulfillmentLookupKeys, storedFulfillmentIdentity, trackingAppliesToAsin, trackingCandidateForUpload } from "@/lib/amazon-email/tracking-utils";
+import { amazonStatusCanUploadTracking, ebayCarrierCode, normalizeTrackingNumber, remoteFulfillmentKey, remoteFulfillmentLookupKeys, storedFulfillmentIdentity, trackingAppliesToAsin, trackingCandidateForUpload, trackingUploadErrorDisposition } from "@/lib/amazon-email/tracking-utils";
 import { trackingFromPage } from "@/lib/amazon-email/tracking-resolver-utils";
 
 describe("Amazon tracking normalization", () => {
@@ -64,6 +64,15 @@ describe("Amazon tracking normalization", () => {
 
   it("refuses a stored id without an unambiguous line", () => {
     expect(storedFulfillmentIdentity({ ebayOrderId: "13-14962-68653" })).toBeNull();
+  });
+
+  it("treats eBay's already-used confirmation as shipped and retries system errors", () => {
+    expect(trackingUploadErrorDisposition("32320: Tracking number already used. However the fulfillment has been marked as shipped."))
+      .toBe("ALREADY_SHIPPED");
+    expect(trackingUploadErrorDisposition("eBay request failed (500): 30500 System error."))
+      .toBe("RETRYABLE");
+    expect(trackingUploadErrorDisposition("Invalid tracking number"))
+      .toBe("FAILED");
   });
 
   it("extracts carrier tracking from a redirected tracking page", () => {
