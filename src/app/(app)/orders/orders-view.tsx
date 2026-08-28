@@ -10,7 +10,8 @@ import { formatCents } from "@/lib/money";
 import { protectOrderMargin, setAutoProfitProtection } from "@/lib/actions/profit-protection";
 import { syncAmazonEmailsNow } from "@/lib/actions/amazon-email";
 import { linkAmazonPurchase, markOrderCancelled, reassignAmazonPurchase, setAutoRestockFulfilledListings, submitManualOrderTracking } from "@/lib/actions/orders";
-import { fulfillmentActionReason, fulfillmentNeedsAction, type FulfillmentActionReason, type FulfillmentStage } from "@/lib/orders/fulfillment-stage";
+import { fulfillmentActionReason, type FulfillmentActionReason, type FulfillmentStage } from "@/lib/orders/fulfillment-stage";
+import { trackingUploadErrorDisposition } from "@/lib/amazon-email/tracking-utils";
 
 export type FulfillmentOrderRow = {
   id: string;
@@ -98,17 +99,7 @@ function displayDate(value: string): string {
 function tabMatches(order: FulfillmentOrderRow, tab: Tab): boolean {
   const protectionNeedsReview = order.profitProtectionStatus === "REVIEW_REQUIRED" || order.profitProtectionStatus === "FAILED";
   if (tab === "ALL") return true;
-  if (tab === "NEEDS_ACTION") {
-    return fulfillmentNeedsAction({
-      stage: order.stage,
-      trackingNumber: order.trackingNumber,
-      needsSource: order.needsSource,
-      trackingError: order.trackingError,
-      trackingNeedsSync: Boolean(order.trackingNumber && !order.trackingSynced),
-      protectionNeedsReview,
-      ebayFulfilled: order.ebayFulfilled,
-    });
-  }
+  if (tab === "NEEDS_ACTION") return orderActionReason(order) !== null;
   if (tab === "EXCEPTIONS") return order.stage === "CANCELLED" || order.stage === "REFUNDED" || !!order.trackingError || protectionNeedsReview;
   return order.stage === tab;
 }
@@ -122,11 +113,15 @@ function trackingUrl(carrier: string | null, tracking: string): string {
 }
 
 function orderActionReason(order: FulfillmentOrderRow): FulfillmentActionReason | null {
+  const deliveredTemporaryEbayError = order.stage === "DELIVERED"
+    && !!order.trackingError
+    && trackingUploadErrorDisposition(order.trackingError) === "RETRYABLE";
   return fulfillmentActionReason({
     stage: order.stage,
     trackingNumber: order.trackingNumber,
     needsSource: order.needsSource,
     trackingError: order.trackingError,
+    trackingErrorActionable: !deliveredTemporaryEbayError,
     trackingNeedsSync: Boolean(order.trackingNumber && !order.trackingSynced),
     protectionNeedsReview: order.profitProtectionStatus === "REVIEW_REQUIRED" || order.profitProtectionStatus === "FAILED",
     ebayFulfilled: order.ebayFulfilled,
@@ -712,7 +707,7 @@ export function OrdersView({ orders, fetchError, profitProtectionEnabled, autoRe
         {fetchError && <p className="border-b border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">Live status is temporarily unavailable: {fetchError}</p>}
         {tab === "NEEDS_ACTION" && (
           <p className="border-b border-sky-100 bg-sky-50/70 px-4 py-2.5 text-xs leading-5 text-sky-900">
-            Shipped or delivered orders appear here only when tracking still needs to reach eBay or the listing&apos;s future price needs attention. Repeated price issues are grouped into one row per listing.
+            Shipped or delivered orders appear here only when you can still resolve tracking or the listing&apos;s future price needs attention. Temporary eBay errors on delivered orders retry automatically under Exceptions.
           </p>
         )}
 

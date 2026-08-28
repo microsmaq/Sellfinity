@@ -96,4 +96,14 @@ describe("fulfillment needs action", () => {
       protectionNeedsReview: true,
     })).toBe("TRACKING");
   });
+
+  it("does not require user action for a non-actionable delivered tracking error", () => {
+    expect(fulfillmentActionReason({
+      stage: "DELIVERED",
+      trackingNumber: "TBA333160158855",
+      trackingError: "eBay 30500 System error",
+      trackingErrorActionable: false,
+      trackingNeedsSync: false,
+    })).toBeNull();
+  });
 });

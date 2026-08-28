@@ -13,6 +13,7 @@ export type FulfillmentActionInput = {
   trackingNumber?: string | null;
   needsSource?: boolean;
   trackingError?: string | null;
+  trackingErrorActionable?: boolean;
   trackingNeedsSync?: boolean;
   protectionNeedsReview?: boolean;
   ebayFulfilled?: boolean;
@@ -24,10 +25,10 @@ export function fulfillmentActionReason(input: FulfillmentActionInput): Fulfillm
   // the line fulfilled, a missing local copy of its tracking number is not a
   // seller action. Refresh separately recovers that number when available.
   if (input.ebayFulfilled) {
-    if (input.trackingError) return "TRACKING";
+    if (input.trackingError && input.trackingErrorActionable !== false) return "TRACKING";
     return input.protectionNeedsReview ? "PRICE_PROTECTION" : null;
   }
-  if (input.trackingError || input.trackingNeedsSync) return "TRACKING";
+  if ((input.trackingError && input.trackingErrorActionable !== false) || input.trackingNeedsSync) return "TRACKING";
   if (!input.trackingNumber || input.stage === "AWAITING" || input.stage === "PURCHASED" || input.needsSource) {
     return "FULFILLMENT";
   }
