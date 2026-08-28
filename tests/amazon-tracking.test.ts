@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { amazonStatusCanUploadTracking, ebayCarrierCode, normalizeTrackingNumber, remoteFulfillmentKey, remoteFulfillmentLookupKeys, trackingAppliesToAsin, trackingCandidateForUpload } from "@/lib/amazon-email/tracking-utils";
+import { amazonStatusCanUploadTracking, ebayCarrierCode, normalizeTrackingNumber, remoteFulfillmentKey, remoteFulfillmentLookupKeys, storedFulfillmentIdentity, trackingAppliesToAsin, trackingCandidateForUpload } from "@/lib/amazon-email/tracking-utils";
 import { trackingFromPage } from "@/lib/amazon-email/tracking-resolver-utils";
 
 describe("Amazon tracking normalization", () => {
@@ -50,6 +50,20 @@ describe("Amazon tracking normalization", () => {
       .toEqual(["12-34567-89012-10001234567890", "12-34567-89012"]);
     expect(remoteFulfillmentLookupKeys("12-34567-89012", "10001234567890", 2))
       .toEqual(["12-34567-89012-10001234567890"]);
+  });
+
+  it("recovers an exact eBay line from stored current and legacy identities", () => {
+    expect(storedFulfillmentIdentity({
+      ebayOrderId: "02-14985-01871-10083068706302",
+      ebayCheckoutOrderId: "02-14985-01871",
+    })).toEqual({ orderId: "02-14985-01871", lineItemId: "10083068706302" });
+    expect(storedFulfillmentIdentity({
+      ebayOrderId: "13-14962-68653-10085054611113",
+    })).toEqual({ orderId: "13-14962-68653", lineItemId: "10085054611113" });
+  });
+
+  it("refuses a stored id without an unambiguous line", () => {
+    expect(storedFulfillmentIdentity({ ebayOrderId: "13-14962-68653" })).toBeNull();
   });
 
   it("extracts carrier tracking from a redirected tracking page", () => {

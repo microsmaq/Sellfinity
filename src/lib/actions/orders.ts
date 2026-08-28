@@ -6,7 +6,7 @@ import { db } from "@/lib/db";
 import { importOrders } from "@/lib/orders/import";
 import { restockLowFulfillmentInventory } from "@/lib/orders/auto-restock";
 import { getEbayClientForUser } from "@/lib/ebay";
-import { ebayCarrierCode, normalizeTrackingNumber, remoteFulfillmentLookupKeys } from "@/lib/amazon-email/tracking-utils";
+import { ebayCarrierCode, normalizeTrackingNumber, remoteFulfillmentLookupKeys, storedFulfillmentIdentity } from "@/lib/amazon-email/tracking-utils";
 import { sourcingStatusForAmazonPurchase } from "@/lib/amazon-email/status";
 import { fulfillmentIdentityEvidence, fulfillmentProductFallbackAllowed, fulfillmentTitleSimilarity } from "@/lib/amazon-email/title-match";
 
@@ -185,17 +185,18 @@ export async function submitManualOrderTracking(orderId: string, rawTrackingNumb
           : [],
       ),
     );
-    if (candidates.length !== 1) {
-      return { error: candidates.length > 1
-        ? "This eBay order has multiple possible lines. Refresh the order before adding tracking."
-        : "This order is no longer an open eBay fulfillment or could not be mapped safely." };
+    if (candidates.length > 1) {
+      return { error: "This eBay order has multiple possible lines. Refresh the order before adding tracking." };
     }
-
-    const [{ remoteOrder, line }] = candidates;
+    const remote = candidates[0];
+    const fallback = remote ? null : storedFulfillmentIdentity(order);
+    if (!remote && !fallback) {
+      return { error: "This order could not be mapped safely to an exact eBay order line." };
+    }
     await ebay.createShippingFulfillment(user.id, {
-      orderId: remoteOrder.orderId,
-      lineItemId: line.lineItemId,
-      quantity: Math.min(order.quantity, line.quantity),
+      orderId: remote?.remoteOrder.orderId ?? fallback!.orderId,
+      lineItemId: remote?.line.lineItemId ?? fallback!.lineItemId,
+      quantity: remote ? Math.min(order.quantity, remote.line.quantity) : Math.max(1, order.quantity),
       trackingNumber,
       shippingCarrierCode: carrier,
     });

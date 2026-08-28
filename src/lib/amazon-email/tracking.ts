@@ -1,7 +1,7 @@
 import "server-only";
 import { db } from "@/lib/db";
 import { getEbayClientForUser } from "@/lib/ebay";
-import { ebayCarrierCode, normalizeTrackingNumber, remoteFulfillmentLookupKeys, trackingAppliesToAsin, trackingCandidateForUpload } from "./tracking-utils";
+import { ebayCarrierCode, normalizeTrackingNumber, remoteFulfillmentLookupKeys, storedFulfillmentIdentity, trackingAppliesToAsin, trackingCandidateForUpload } from "./tracking-utils";
 
 export type TrackingUploadResult = {
   eligible: number;
@@ -22,7 +22,7 @@ export async function uploadAmazonTrackingToEbay(userId: string): Promise<Tracki
     where: {
       userId,
       ebayTrackingSyncedAt: null,
-      status: { not: "REFUNDED" },
+      status: { notIn: ["REFUNDED", "SHIPPED"] },
       sourcingStatus: { not: "CANCELLED" },
       OR: [
         { ebayTrackingNumber: { not: null } },
@@ -68,7 +68,11 @@ export async function uploadAmazonTrackingToEbay(userId: string): Promise<Tracki
     });
     if (!candidate) continue;
     const remote = remoteLines.get(order.ebayOrderId);
-    if (!remote) continue;
+    // Older orders can disappear from eBay's open-order feed before their
+    // locally saved tracking was uploaded. The stored composite identity is
+    // still sufficient to address that exact eBay line safely.
+    const fallback = remote ? null : storedFulfillmentIdentity(order);
+    if (!remote && !fallback) continue;
 
     const trackingNumber = normalizeTrackingNumber(candidate.trackingNumber);
     if (trackingNumber.length < 8 || trackingNumber.length > 30) continue;
@@ -76,9 +80,9 @@ export async function uploadAmazonTrackingToEbay(userId: string): Promise<Tracki
     eligible++;
     try {
       await ebay.createShippingFulfillment(userId, {
-        orderId: remote.orderId,
-        lineItemId: remote.line.lineItemId,
-        quantity: Math.min(order.quantity, remote.line.quantity),
+        orderId: remote?.orderId ?? fallback!.orderId,
+        lineItemId: remote?.line.lineItemId ?? fallback!.lineItemId,
+        quantity: remote ? Math.min(order.quantity, remote.line.quantity) : Math.max(1, order.quantity),
         trackingNumber,
         shippingCarrierCode,
       });

@@ -44,6 +44,26 @@ export function remoteFulfillmentLookupKeys(orderId: string, lineItemId: string,
   return lineCount === 1 ? [composite, orderId] : [composite];
 }
 
+/** Resolve the REST Fulfillment API identifiers retained in a locally stored
+ * order. Current imports store checkoutOrderId separately; older imports used
+ * the composite `<checkout order>-<line item>` value as ebayOrderId. */
+export function storedFulfillmentIdentity(input: {
+  ebayOrderId: string;
+  ebayCheckoutOrderId?: string | null;
+}): { orderId: string; lineItemId: string } | null {
+  const checkoutOrderId = input.ebayCheckoutOrderId?.trim();
+  if (checkoutOrderId) {
+    const prefix = `${checkoutOrderId}-`;
+    if (!input.ebayOrderId.startsWith(prefix)) return null;
+    const lineItemId = input.ebayOrderId.slice(prefix.length).trim();
+    return lineItemId ? { orderId: checkoutOrderId, lineItemId } : null;
+  }
+  const legacyComposite = input.ebayOrderId.match(/^(\d{2}-\d{5}-\d{5})-(\d+)$/);
+  return legacyComposite
+    ? { orderId: legacyComposite[1], lineItemId: legacyComposite[2] }
+    : null;
+}
+
 export function trackingAppliesToAsin(trackingAsinsJson: string, purchaseItemCount: number, asin: string): boolean {
   try {
     const trackingAsins = JSON.parse(trackingAsinsJson) as unknown;
