@@ -41,6 +41,7 @@ async function ebayJson<T>(url: string, token: string, stage: string): Promise<T
 
 export async function fetchEbayBrowseBestSellers(
   researchTerm: string,
+  offset = 0,
 ): Promise<CountdownBestSellerSnapshot> {
   const config = ebayEnvConfig();
   if (!config) throw new Error("eBay Browse API is not configured.");
@@ -49,6 +50,7 @@ export async function fetchEbayBrowseBestSellers(
   const searchParams = new URLSearchParams({
     q: term,
     limit: String(SEARCH_LIMIT),
+    offset: String(Math.max(0, Math.floor(offset))),
     filter: "priceCurrency:USD,buyingOptions:{FIXED_PRICE}",
   });
   const search = await ebayJson<{
@@ -106,7 +108,11 @@ export async function fetchEbayBrowseBestSellers(
     }
     if (detailed.length === 0 && firstFailure) throw firstFailure;
   }
-  const items = mapBrowseBestSellerItems(detailed);
+  const items = mapBrowseBestSellerItems(detailed).map((item, index) => ({
+    ...item,
+    sourcePosition: Math.max(0, Math.floor(offset)) + index + 1,
+  }));
+  const inspectedCount = batchAccessDenied ? Math.min(ids.length, INDIVIDUAL_DETAIL_LIMIT) : ids.length;
   return {
     capturedAt: new Date().toISOString(),
     researchTerm: term,
@@ -114,10 +120,11 @@ export async function fetchEbayBrowseBestSellers(
     totalResults: Number(search.total ?? ids.length),
     creditsUsed: 0,
     creditsRemaining: null,
-    requestedResults: ids.length,
+    requestedResults: inspectedCount,
     fallbackUsed: true,
     sampledListings: detailed.length,
     provider: "EBAY_BROWSE",
     providerDetailMode: batchAccessDenied ? "INDIVIDUAL" : "BATCH",
+    searchOffset: Math.max(0, Math.floor(offset)),
   } as CountdownBestSellerSnapshot;
 }

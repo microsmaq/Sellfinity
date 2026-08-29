@@ -81,6 +81,8 @@ export type CountdownBestSellerSnapshot = {
   sampledListings?: number;
   provider?: "COUNTDOWN" | "EBAY_BROWSE";
   providerDetailMode?: "BATCH" | "INDIVIDUAL";
+  searchOffset?: number;
+  newItemsAdded?: number;
 };
 
 export function countdownConfigured(): boolean {

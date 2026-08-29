@@ -29,9 +29,12 @@ export type BestSellerPage = {
 };
 
 function cacheKey(snapshot: CountdownBestSellerSnapshot): string {
-  const day = snapshot.capturedAt.slice(0, 10);
-  const scope = snapshot.researchTerm
-    ? snapshot.researchTerm.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 48) || "search"
+  return cacheKeyFor(snapshot.researchTerm, snapshot.capturedAt.slice(0, 10));
+}
+
+function cacheKeyFor(researchTerm: string, day: string): string {
+  const scope = researchTerm
+    ? researchTerm.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 48) || "search"
     : "all";
   return `${CACHE_PREFIX}${day}:${scope}`;
 }
@@ -46,13 +49,50 @@ function parseSnapshot(dataJson: string): CountdownBestSellerSnapshot | null {
 }
 
 export async function refreshAdminBestSellers(researchTerm = "") {
+  const term = researchTerm.trim().slice(0, 120) || "electronics";
+  const todayKey = cacheKeyFor(term, new Date().toISOString().slice(0, 10));
+  const existingCache = await db.scanCache.findUnique({
+    where: { cacheKey: todayKey },
+    select: { dataJson: true },
+  });
+  const existing = existingCache ? parseSnapshot(existingCache.dataJson) : null;
+  const previousOffset = existing?.provider === "EBAY_BROWSE"
+    ? Math.max(0, Number(existing.searchOffset ?? 0))
+    : 0;
+  const previousPageSize = existing?.provider === "EBAY_BROWSE"
+    ? Math.max(1, Number(existing.requestedResults ?? 0) || 100)
+    : 0;
+  const resultCap = Math.min(10_000, Math.max(0, Number(existing?.totalResults ?? 0)));
+  const proposedOffset = previousOffset + previousPageSize;
+  const nextOffset = resultCap > 0 && proposedOffset >= resultCap ? 0 : proposedOffset;
   let snapshot: CountdownBestSellerSnapshot;
   try {
-    snapshot = await fetchCountdownBestSellers(researchTerm);
+    snapshot = await fetchCountdownBestSellers(term);
   } catch (error) {
     const message = error instanceof Error ? error.message : "";
     if (!/\b50[234]\b|currently unavailable|could not return/i.test(message)) throw error;
-    snapshot = await fetchEbayBrowseBestSellers(researchTerm);
+    snapshot = await fetchEbayBrowseBestSellers(term, nextOffset);
+  }
+
+  const priorItems = existing?.items ?? [];
+  const priorIds = new Set(priorItems.map((item) => item.itemId));
+  const newItemsAdded = snapshot.items.reduce(
+    (count, item) => count + (priorIds.has(item.itemId) ? 0 : 1),
+    0,
+  );
+  if (existing) {
+    const merged = new Map(priorItems.map((item) => [item.itemId, item]));
+    for (const item of snapshot.items) merged.set(item.itemId, item);
+    snapshot = {
+      ...snapshot,
+      items: [...merged.values()].sort(
+        (a, b) => b.quantitySold - a.quantitySold || a.sourcePosition - b.sourcePosition,
+      ),
+      sampledListings: Number(existing.sampledListings ?? 0) + Number(snapshot.sampledListings ?? 0),
+      newItemsAdded,
+    };
+  } else {
+    snapshot.newItemsAdded = snapshot.items.length;
   }
   await db.scanCache.upsert({
     where: { cacheKey: cacheKey(snapshot) },

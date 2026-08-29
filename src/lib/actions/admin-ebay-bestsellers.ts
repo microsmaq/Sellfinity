@@ -20,7 +20,7 @@ export async function refreshEbayBestSellers(
     return {
       ok: true,
       message: snapshot.provider === "EBAY_BROWSE"
-        ? `Saved ${snapshot.items.length} proven sellers from ${snapshot.sampledListings ?? 0} eBay listings. Official eBay fallback used; 0 Countdown credits.`
+        ? `Added ${snapshot.newItemsAdded ?? snapshot.items.length} new proven seller${snapshot.newItemsAdded === 1 ? "" : "s"}; ${snapshot.items.length} now stored for this category. Scanned the next eBay result page; 0 Countdown credits.`
         : `Saved ${snapshot.items.length} proven sellers from ${snapshot.sampledListings ?? 0} sampled listings. Countdown used ${snapshot.creditsUsed ?? "the provider-reported number of"} credit${snapshot.creditsUsed === 1 ? "" : "s"}.`,
     };
   } catch (error) {
