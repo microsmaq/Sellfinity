@@ -3,6 +3,7 @@
 import { useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { refreshEbayBestSellers } from "@/lib/actions/admin-ebay-bestsellers";
+import { EBAY_BESTSELLER_CATEGORIES } from "@/lib/ebay/bestseller-categories";
 
 const MAX_PAGES_PER_RUN = 25;
 const MAX_EMPTY_PAGES = 5;
@@ -29,29 +30,28 @@ const initialProgress: Progress = {
   error: false,
 };
 
-export function BestSellerRefreshForm({ defaultTerm = "electronics" }: { defaultTerm?: string }) {
+export function BestSellerRefreshForm({
+  defaultTerm = "electronics",
+  defaultCategoryId,
+}: {
+  defaultTerm?: string;
+  defaultCategoryId?: string;
+}) {
   const router = useRouter();
   const [target, setTarget] = useState(20);
   const [progress, setProgress] = useState(initialProgress);
-  const categories = [
-    ["electronics", "Electronics"],
-    ["home and garden", "Home & garden"],
-    ["health and beauty", "Health & beauty"],
-    ["toys and hobbies", "Toys & hobbies"],
-    ["auto parts", "Auto parts"],
-    ["pet supplies", "Pet supplies"],
-    ["sporting goods", "Sporting goods"],
-    ["clothing shoes accessories", "Fashion & accessories"],
-  ] as const;
-  const categoryValues = new Set(categories.map(([value]) => value));
-  const selectedCategory = categoryValues.has(defaultTerm as typeof categories[number][0]) ? defaultTerm : "electronics";
-  const customTerm = categoryValues.has(defaultTerm as typeof categories[number][0]) ? "" : defaultTerm;
+  const inferredCategory = EBAY_BESTSELLER_CATEGORIES.find((category) => category.searchTerm === defaultTerm);
+  const selectedCategory = EBAY_BESTSELLER_CATEGORIES.some((category) => category.id === defaultCategoryId)
+    ? defaultCategoryId
+    : inferredCategory?.id ?? "293";
+  const selectedCategoryTerm = EBAY_BESTSELLER_CATEGORIES.find((category) => category.id === selectedCategory)?.searchTerm;
+  const customTerm = defaultTerm === selectedCategoryTerm ? "" : defaultTerm;
 
   async function run(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (progress.running) return;
     const submitted = new FormData(event.currentTarget);
-    const researchTerm = String(submitted.get("researchTerm") ?? "electronics");
+    const categoryId = String(submitted.get("categoryId") ?? "293");
     const custom = String(submitted.get("customTerm") ?? "");
     let added = 0;
     let pages = 0;
@@ -64,7 +64,7 @@ export function BestSellerRefreshForm({ defaultTerm = "electronics" }: { default
 
     while (added < target && pages < MAX_PAGES_PER_RUN && emptyPages < MAX_EMPTY_PAGES && hasMore) {
       const payload = new FormData();
-      payload.set("researchTerm", researchTerm);
+      payload.set("categoryId", categoryId);
       payload.set("customTerm", custom);
       const result = await refreshEbayBestSellers(null, payload);
       if (!result?.ok) {
@@ -105,11 +105,11 @@ export function BestSellerRefreshForm({ defaultTerm = "electronics" }: { default
   return <div className="w-full xl:w-auto">
     <form onSubmit={run} className="grid w-full gap-2 sm:grid-cols-2 xl:grid-cols-[11rem_13rem_8rem_auto]">
       <label className="sr-only" htmlFor="bestseller-category">Category</label>
-      <select id="bestseller-category" name="researchTerm" defaultValue={selectedCategory} disabled={progress.running} className="min-h-10 rounded-xl border border-slate-300 bg-white px-3 text-sm font-medium text-slate-700 outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/15 disabled:opacity-60">
-        {categories.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+      <select id="bestseller-category" name="categoryId" defaultValue={selectedCategory} disabled={progress.running} className="min-h-10 rounded-xl border border-slate-300 bg-white px-3 text-sm font-medium text-slate-700 outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/15 disabled:opacity-60">
+        {EBAY_BESTSELLER_CATEGORIES.map((category) => <option key={category.id} value={category.id}>{category.label}</option>)}
       </select>
       <label className="sr-only" htmlFor="bestseller-custom-term">Optional custom keyword</label>
-      <input id="bestseller-custom-term" name="customTerm" defaultValue={customTerm} disabled={progress.running} placeholder="Optional custom keyword" className="min-h-10 min-w-0 rounded-xl border border-slate-300 bg-white px-3 text-sm outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/15 disabled:opacity-60" />
+      <input id="bestseller-custom-term" name="customTerm" defaultValue={customTerm} disabled={progress.running} placeholder="Keyword within category" className="min-h-10 min-w-0 rounded-xl border border-slate-300 bg-white px-3 text-sm outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/15 disabled:opacity-60" />
       <label className="sr-only" htmlFor="bestseller-target">Products to add</label>
       <select id="bestseller-target" value={target} disabled={progress.running} onChange={(event) => setTarget(Number(event.target.value))} className="min-h-10 rounded-xl border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-700 outline-none transition focus:border-indigo-500 disabled:opacity-60">
         {[10, 20, 50, 100].map((value) => <option key={value} value={value}>Add {value}</option>)}

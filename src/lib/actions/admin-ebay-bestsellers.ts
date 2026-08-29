@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { requireAdmin } from "@/lib/auth";
 import { refreshAdminBestSellers } from "@/lib/ebay/admin-bestsellers";
+import { ebayBestSellerCategory } from "@/lib/ebay/bestseller-categories";
 
 export type BestSellerRefreshState = {
   ok: boolean;
@@ -18,11 +19,11 @@ export async function refreshEbayBestSellers(
   formData: FormData,
 ): Promise<BestSellerRefreshState> {
   await requireAdmin();
-  const category = String(formData.get("researchTerm") ?? "electronics").trim();
+  const category = ebayBestSellerCategory(String(formData.get("categoryId") ?? "293"));
   const customTerm = String(formData.get("customTerm") ?? "").trim();
-  const term = (customTerm || category || "electronics").slice(0, 120);
+  const term = (customTerm || category.searchTerm).slice(0, 120);
   try {
-    const snapshot = await refreshAdminBestSellers(term);
+    const snapshot = await refreshAdminBestSellers(term, category.id, category.label);
     revalidatePath("/admin/ebay-bestsellers");
     return {
       ok: true,

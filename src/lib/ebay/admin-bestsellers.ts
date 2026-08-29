@@ -5,7 +5,10 @@ import {
   type CountdownBestSeller,
   type CountdownBestSellerSnapshot,
 } from "./countdown";
-import { fetchEbayBrowseBestSellers } from "./browse-bestsellers";
+import {
+  BROWSE_BESTSELLER_PAGE_SIZE,
+  fetchEbayBrowseBestSellers,
+} from "./browse-bestsellers";
 
 const CACHE_PREFIX = "countdown:ebay-bestsellers:";
 
@@ -29,14 +32,14 @@ export type BestSellerPage = {
 };
 
 function cacheKey(snapshot: CountdownBestSellerSnapshot): string {
-  return cacheKeyFor(snapshot.researchTerm, snapshot.capturedAt.slice(0, 10));
+  return cacheKeyFor(snapshot.researchTerm, snapshot.capturedAt.slice(0, 10), snapshot.categoryId);
 }
 
-function cacheKeyFor(researchTerm: string, day: string): string {
+function cacheKeyFor(researchTerm: string, day: string, categoryId?: string): string {
   const scope = researchTerm
     ? researchTerm.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 48) || "search"
     : "all";
-  return `${CACHE_PREFIX}${day}:${scope}`;
+  return `${CACHE_PREFIX}${day}:${categoryId ? `category-${categoryId}:` : ""}${scope}`;
 }
 
 function parseSnapshot(dataJson: string): CountdownBestSellerSnapshot | null {
@@ -48,9 +51,13 @@ function parseSnapshot(dataJson: string): CountdownBestSellerSnapshot | null {
   }
 }
 
-export async function refreshAdminBestSellers(researchTerm = "") {
+export async function refreshAdminBestSellers(
+  researchTerm = "",
+  categoryId?: string,
+  categoryLabel?: string,
+) {
   const term = researchTerm.trim().slice(0, 120) || "electronics";
-  const todayKey = cacheKeyFor(term, new Date().toISOString().slice(0, 10));
+  const todayKey = cacheKeyFor(term, new Date().toISOString().slice(0, 10), categoryId);
   const existingCache = await db.scanCache.findUnique({
     where: { cacheKey: todayKey },
     select: { dataJson: true },
@@ -60,21 +67,24 @@ export async function refreshAdminBestSellers(researchTerm = "") {
     ? Math.max(0, Number(existing.searchOffset ?? 0))
     : 0;
   const previousPageSize = existing?.provider === "EBAY_BROWSE"
-    ? Math.max(1, Number(existing.requestedResults ?? 0) || 100)
+    ? existing.providerDetailMode === "INDIVIDUAL"
+      ? Math.min(BROWSE_BESTSELLER_PAGE_SIZE, Math.max(1, Number(existing.requestedResults ?? 0) || BROWSE_BESTSELLER_PAGE_SIZE))
+      : Math.max(1, Number(existing.requestedResults ?? 0) || BROWSE_BESTSELLER_PAGE_SIZE)
     : 0;
   const resultCap = Math.min(10_000, Math.max(0, Number(existing?.totalResults ?? 0)));
   const proposedOffset = previousOffset + previousPageSize;
-  const nextOffset = resultCap > 0 && proposedOffset >= resultCap ? 0 : proposedOffset;
+  const alignedOffset = Math.floor(proposedOffset / BROWSE_BESTSELLER_PAGE_SIZE) * BROWSE_BESTSELLER_PAGE_SIZE;
+  const nextOffset = resultCap > 0 && alignedOffset >= resultCap ? 0 : alignedOffset;
   let snapshot: CountdownBestSellerSnapshot;
   if (existing?.provider === "EBAY_BROWSE") {
-    snapshot = await fetchEbayBrowseBestSellers(term, nextOffset);
+    snapshot = await fetchEbayBrowseBestSellers(term, nextOffset, categoryId, categoryLabel);
   } else {
     try {
       snapshot = await fetchCountdownBestSellers(term);
     } catch (error) {
       const message = error instanceof Error ? error.message : "";
       if (!/\b50[234]\b|currently unavailable|could not return/i.test(message)) throw error;
-      snapshot = await fetchEbayBrowseBestSellers(term, nextOffset);
+      snapshot = await fetchEbayBrowseBestSellers(term, nextOffset, categoryId, categoryLabel);
     }
   }
 

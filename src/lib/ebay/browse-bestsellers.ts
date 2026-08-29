@@ -6,7 +6,7 @@ import {
   type BrowseBestSellerItem,
 } from "./browse-bestseller-map";
 
-const SEARCH_LIMIT = 100;
+export const BROWSE_BESTSELLER_PAGE_SIZE = 40;
 const DETAIL_BATCH_SIZE = 20;
 const INDIVIDUAL_DETAIL_LIMIT = 40;
 const INDIVIDUAL_CONCURRENCY = 5;
@@ -42,17 +42,24 @@ async function ebayJson<T>(url: string, token: string, stage: string): Promise<T
 export async function fetchEbayBrowseBestSellers(
   researchTerm: string,
   offset = 0,
+  categoryId?: string,
+  categoryLabel?: string,
 ): Promise<CountdownBestSellerSnapshot> {
   const config = ebayEnvConfig();
   if (!config) throw new Error("eBay Browse API is not configured.");
   const term = researchTerm.trim().slice(0, 120) || "electronics";
   const token = await appAccessToken(config);
+  const normalizedOffset = Math.max(
+    0,
+    Math.floor(offset / BROWSE_BESTSELLER_PAGE_SIZE) * BROWSE_BESTSELLER_PAGE_SIZE,
+  );
   const searchParams = new URLSearchParams({
     q: term,
-    limit: String(SEARCH_LIMIT),
-    offset: String(Math.max(0, Math.floor(offset))),
+    limit: String(BROWSE_BESTSELLER_PAGE_SIZE),
+    offset: String(normalizedOffset),
     filter: "priceCurrency:USD,buyingOptions:{FIXED_PRICE}",
   });
+  if (categoryId) searchParams.set("category_ids", categoryId);
   const search = await ebayJson<{
     total?: number;
     itemSummaries?: BrowseBestSellerItem[];
@@ -110,7 +117,7 @@ export async function fetchEbayBrowseBestSellers(
   }
   const items = mapBrowseBestSellerItems(detailed).map((item, index) => ({
     ...item,
-    sourcePosition: Math.max(0, Math.floor(offset)) + index + 1,
+    sourcePosition: normalizedOffset + index + 1,
   }));
   const inspectedCount = batchAccessDenied ? Math.min(ids.length, INDIVIDUAL_DETAIL_LIMIT) : ids.length;
   const totalResults = Number(search.total ?? ids.length);
@@ -126,8 +133,10 @@ export async function fetchEbayBrowseBestSellers(
     sampledListings: detailed.length,
     provider: "EBAY_BROWSE",
     providerDetailMode: batchAccessDenied ? "INDIVIDUAL" : "BATCH",
-    searchOffset: Math.max(0, Math.floor(offset)),
+    searchOffset: normalizedOffset,
     lastBatchSampledListings: detailed.length,
-    hasMoreResults: Math.max(0, Math.floor(offset)) + inspectedCount < Math.min(10_000, totalResults),
+    hasMoreResults: normalizedOffset + inspectedCount < Math.min(10_000, totalResults),
+    categoryId,
+    categoryLabel,
   } as CountdownBestSellerSnapshot;
 }

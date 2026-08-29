@@ -7,6 +7,7 @@ import {
 } from "@/lib/ebay/admin-bestsellers";
 import { Badge, Card, PageHeader, StatCard } from "@/components/ui";
 import { BestSellerRefreshForm } from "./refresh-form";
+import { ebayBestSellerCategory } from "@/lib/ebay/bestseller-categories";
 
 export const metadata = { title: "eBay bestsellers — Sellfinity" };
 export const maxDuration = 120;
@@ -50,12 +51,15 @@ export default async function EbayBestSellersPage({
   };
   const sortHref = (key: BestSellerSort) => href({ sort: key, dir: sort === key && descending ? "asc" : "desc", page: 1 });
   const captured = data.snapshot ? new Date(data.snapshot.capturedAt) : null;
+  const categorySearchTerm = data.snapshot?.categoryId
+    ? ebayBestSellerCategory(data.snapshot.categoryId).searchTerm
+    : "";
 
   return <div className="space-y-5">
     <PageHeader
       title="eBay bestsellers"
-      subtitle="Admin-only proven-demand research. A product appears only when eBay explicitly reports a positive quantity sold. Snapshots are saved locally, so searching, sorting, and reopening this page use no Countdown credits."
-      actions={<BestSellerRefreshForm defaultTerm={data.snapshot?.researchTerm ?? "electronics"} />}
+      subtitle="Admin-only proven-demand research using the selected official eBay category. An optional keyword narrows that category. Only listings with a positive quantity sold are saved locally."
+      actions={<BestSellerRefreshForm defaultTerm={data.snapshot?.researchTerm ?? "electronics"} defaultCategoryId={data.snapshot?.categoryId} />}
     />
 
     {data.snapshot ? <>
@@ -78,7 +82,8 @@ export default async function EbayBestSellersPage({
             <input type="hidden" name="sort" value={sort}/><input type="hidden" name="dir" value={descending ? "desc" : "asc"}/>
           </form>
           <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-slate-500">
-            <Badge tone="indigo">{data.snapshot.researchTerm || "All eBay"}</Badge>
+            <Badge tone="indigo">{data.snapshot.categoryLabel || data.snapshot.researchTerm || "All eBay"}</Badge>
+            {data.snapshot.categoryLabel && data.snapshot.researchTerm !== categorySearchTerm && <span>Keyword: {data.snapshot.researchTerm}</span>}
             <span>Captured {captured?.toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short" })}</span>
             <span>·</span><span>{data.snapshot.requestedResults ?? 240}-result request{data.snapshot.fallbackUsed ? " · lighter fallback used" : ""}</span>
             <span>·</span><span>Stored filters use 0 credits</span>
