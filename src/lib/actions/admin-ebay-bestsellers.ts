@@ -11,7 +11,9 @@ export async function refreshEbayBestSellers(
   formData: FormData,
 ): Promise<BestSellerRefreshState> {
   await requireAdmin();
-  const term = String(formData.get("researchTerm") ?? "").trim().slice(0, 120);
+  const category = String(formData.get("researchTerm") ?? "electronics").trim();
+  const customTerm = String(formData.get("customTerm") ?? "").trim();
+  const term = (customTerm || category || "electronics").slice(0, 120);
   try {
     const snapshot = await refreshAdminBestSellers(term);
     revalidatePath("/admin/ebay-bestsellers");

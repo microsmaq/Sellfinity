@@ -18,10 +18,27 @@ function SubmitButton() {
 
 export function BestSellerRefreshForm({ defaultTerm = "electronics" }: { defaultTerm?: string }) {
   const [state, action] = useActionState<BestSellerRefreshState, FormData>(refreshEbayBestSellers, null);
+  const categories = [
+    ["electronics", "Electronics"],
+    ["home and garden", "Home & garden"],
+    ["health and beauty", "Health & beauty"],
+    ["toys and hobbies", "Toys & hobbies"],
+    ["auto parts", "Auto parts"],
+    ["pet supplies", "Pet supplies"],
+    ["sporting goods", "Sporting goods"],
+    ["clothing shoes accessories", "Fashion & accessories"],
+  ] as const;
+  const categoryValues = new Set(categories.map(([value]) => value));
+  const selectedCategory = categoryValues.has(defaultTerm as typeof categories[number][0]) ? defaultTerm : "electronics";
+  const customTerm = categoryValues.has(defaultTerm as typeof categories[number][0]) ? "" : defaultTerm;
   return <div className="w-full sm:w-auto">
-    <form action={action} className="flex w-full flex-col gap-2 sm:flex-row">
-      <input name="researchTerm" list="ebay-bestseller-categories" defaultValue={defaultTerm || "electronics"} placeholder="Category or keyword" className="min-h-10 min-w-0 flex-1 rounded-xl border border-slate-300 bg-white px-3 text-sm outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/15 sm:w-60" />
-      <datalist id="ebay-bestseller-categories"><option value="electronics"/><option value="home and garden"/><option value="health and beauty"/><option value="toys and hobbies"/><option value="auto parts"/><option value="pet supplies"/><option value="sporting goods"/><option value="clothing shoes accessories"/></datalist>
+    <form action={action} className="grid w-full gap-2 sm:grid-cols-[12rem_14rem_auto]">
+      <label className="sr-only" htmlFor="bestseller-category">Category</label>
+      <select id="bestseller-category" name="researchTerm" defaultValue={selectedCategory} className="min-h-10 rounded-xl border border-slate-300 bg-white px-3 text-sm font-medium text-slate-700 outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/15">
+        {categories.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+      </select>
+      <label className="sr-only" htmlFor="bestseller-custom-term">Optional custom keyword</label>
+      <input id="bestseller-custom-term" name="customTerm" defaultValue={customTerm} placeholder="Optional custom keyword" className="min-h-10 min-w-0 rounded-xl border border-slate-300 bg-white px-3 text-sm outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/15" />
       <SubmitButton />
     </form>
     {state && <p role="status" className={cx("mt-2 text-xs sm:text-right", state.ok ? "text-emerald-600" : "text-red-600")}>{state.message}</p>}
