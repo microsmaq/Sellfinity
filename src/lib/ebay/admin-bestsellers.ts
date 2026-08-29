@@ -22,6 +22,8 @@ export type BestSellerSort =
 export type BestSellerPage = {
   snapshot: CountdownBestSellerSnapshot | null;
   availableDates: { key: string; label: string; capturedAt: string; researchTerm: string }[];
+  allResults: boolean;
+  combinedSnapshots: number;
   rows: CountdownBestSeller[];
   page: number;
   pageSize: number;
@@ -138,9 +140,29 @@ export async function listAdminBestSellers(options: {
     return snapshot ? [{ key: cache.cacheKey, snapshot }] : [];
   });
   const selected = options.snapshotKey
-    ? parsed.find((entry) => entry.key === options.snapshotKey) ?? parsed[0]
-    : parsed[0];
-  const snapshot = selected?.snapshot ?? null;
+    ? parsed.find((entry) => entry.key === options.snapshotKey)
+    : undefined;
+  const allResults = !selected;
+  const combinedItems = new Map<string, CountdownBestSeller>();
+  if (allResults) {
+    // Caches are newest first, so retain the newest stored version of each
+    // listing while combining every category and keyword snapshot.
+    for (const { snapshot: item } of parsed) {
+      for (const product of item.items) {
+        if (!combinedItems.has(product.itemId)) combinedItems.set(product.itemId, product);
+      }
+    }
+  }
+  const newest = parsed[0]?.snapshot;
+  const snapshot = selected?.snapshot ?? (newest ? {
+    capturedAt: newest.capturedAt,
+    researchTerm: "",
+    items: [...combinedItems.values()],
+    totalResults: combinedItems.size,
+    creditsUsed: null,
+    creditsRemaining: null,
+    sampledListings: parsed.reduce((sum, item) => sum + Number(item.snapshot.sampledListings ?? 0), 0),
+  } satisfies CountdownBestSellerSnapshot : null);
   const query = options.query?.trim().toLowerCase() ?? "";
   const sort = options.sort ?? "sales";
   const direction = options.descending === false ? 1 : -1;
@@ -167,6 +189,8 @@ export async function listAdminBestSellers(options: {
     : 0;
   return {
     snapshot,
+    allResults,
+    combinedSnapshots: parsed.length,
     availableDates: parsed.map(({ key, snapshot: item }) => ({
       key,
       capturedAt: item.capturedAt,

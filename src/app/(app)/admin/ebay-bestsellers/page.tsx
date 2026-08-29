@@ -64,17 +64,18 @@ export default async function EbayBestSellersPage({
 
     {data.snapshot ? <>
       <section className="grid grid-cols-2 gap-3 xl:grid-cols-4">
-        <StatCard label="Proven sellers" value={data.totalRows.toLocaleString()} sub={`${(data.snapshot.sampledListings ?? data.snapshot.items.length).toLocaleString()} listings sampled`} tone="positive" />
+        <StatCard label="Proven sellers" value={data.totalRows.toLocaleString()} sub={data.allResults ? `${data.combinedSnapshots.toLocaleString()} saved research snapshots combined` : `${(data.snapshot.sampledListings ?? data.snapshot.items.length).toLocaleString()} listings sampled`} tone="positive" />
         <StatCard label="Reported sales" value={data.totalReportedSales.toLocaleString()} sub="Cumulative quantity sold" tone="positive" />
         <StatCard label="Average landed price" value={money(data.averagePriceCents)} sub="Item price plus buyer shipping" />
-        <StatCard label="Data provider" value={data.snapshot.provider === "EBAY_BROWSE" ? "eBay" : "Countdown"} sub={data.snapshot.provider === "EBAY_BROWSE" ? `Official ${data.snapshot.providerDetailMode === "INDIVIDUAL" ? "limited-detail" : "batch"} fallback · 0 Countdown credits` : `${data.snapshot.creditsUsed ?? "—"} credits used · ${data.snapshot.creditsRemaining ?? "—"} remaining`} />
+        <StatCard label="Data provider" value={data.allResults ? "Stored data" : data.snapshot.provider === "EBAY_BROWSE" ? "eBay" : "Countdown"} sub={data.allResults ? "Newest version of every unique item · 0 API calls" : data.snapshot.provider === "EBAY_BROWSE" ? `Official ${data.snapshot.providerDetailMode === "INDIVIDUAL" ? "limited-detail" : "batch"} fallback · 0 Countdown credits` : `${data.snapshot.creditsUsed ?? "—"} credits used · ${data.snapshot.creditsRemaining ?? "—"} remaining`} />
       </section>
 
       <Card className="overflow-hidden">
         <div className="border-b border-slate-200 bg-slate-50/70 px-4 py-4 sm:px-5">
           <form action="/admin/ebay-bestsellers" method="get" className="grid gap-3 lg:grid-cols-[minmax(16rem,1fr)_minmax(15rem,.65fr)_auto_auto]">
             <input name="q" defaultValue={query} placeholder="Search title, item ID, seller, or condition" className="min-h-10 rounded-xl border border-slate-300 bg-white px-3 text-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/15" />
-            <select name="snapshot" defaultValue={snapshotKey ?? data.availableDates[0]?.key} className="min-h-10 rounded-xl border border-slate-300 bg-white px-3 text-sm text-slate-700 outline-none focus:border-indigo-500">
+            <select name="snapshot" defaultValue={snapshotKey ?? ""} className="min-h-10 rounded-xl border border-slate-300 bg-white px-3 text-sm text-slate-700 outline-none focus:border-indigo-500">
+              <option value="">All stored results</option>
               {data.availableDates.map((item) => <option key={item.key} value={item.key}>{item.label}</option>)}
             </select>
             <select name="pageSize" defaultValue={pageSize} className="min-h-10 rounded-xl border border-slate-300 bg-white px-3 text-sm text-slate-700"><option value="25">25 rows</option><option value="50">50 rows</option><option value="100">100 rows</option></select>
@@ -82,10 +83,10 @@ export default async function EbayBestSellersPage({
             <input type="hidden" name="sort" value={sort}/><input type="hidden" name="dir" value={descending ? "desc" : "asc"}/>
           </form>
           <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-slate-500">
-            <Badge tone="indigo">{data.snapshot.categoryLabel || data.snapshot.researchTerm || "All eBay"}</Badge>
+            <Badge tone="indigo">{data.allResults ? "All categories" : data.snapshot.categoryLabel || data.snapshot.researchTerm || "All eBay"}</Badge>
             {data.snapshot.categoryLabel && data.snapshot.researchTerm !== categorySearchTerm && <span>Keyword: {data.snapshot.researchTerm}</span>}
             <span>Captured {captured?.toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short" })}</span>
-            <span>·</span><span>{data.snapshot.requestedResults ?? 240}-result request{data.snapshot.fallbackUsed ? " · lighter fallback used" : ""}</span>
+            <span>·</span><span>{data.allResults ? `${data.combinedSnapshots} snapshots combined` : `${data.snapshot.requestedResults ?? 240}-result request${data.snapshot.fallbackUsed ? " · lighter fallback used" : ""}`}</span>
             <span>·</span><span>Stored filters use 0 credits</span>
           </div>
         </div>
