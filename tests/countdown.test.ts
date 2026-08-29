@@ -109,6 +109,8 @@ describe("Countdown eBay bestseller snapshots", () => {
     const secondUrl = new URL(String(fetchMock.mock.calls[1][0]));
     const thirdUrl = new URL(String(fetchMock.mock.calls[2][0]));
     expect(firstUrl.searchParams.get("search_term")).toBe("electronics");
+    expect(firstUrl.searchParams.get("sort_by")).toBe("best match");
+    expect(firstUrl.searchParams.get("listing_type")).toBe("buy it now");
     expect(firstUrl.searchParams.get("num")).toBe("240");
     expect(secondUrl.searchParams.get("num")).toBe("120");
     expect(thirdUrl.searchParams.get("num")).toBe("60");
