@@ -55,7 +55,7 @@ export default async function EbayBestSellersPage({
     <PageHeader
       title="eBay bestsellers"
       subtitle="Admin-only eBay demand research ranked by the quantity sold reported on each listing. Snapshots are saved locally by date, so searching, sorting, and reopening this page use no Countdown credits."
-      actions={<BestSellerRefreshForm defaultTerm={data.snapshot?.researchTerm ?? ""} />}
+      actions={<BestSellerRefreshForm defaultTerm={data.snapshot?.researchTerm ?? "popular products"} />}
     />
 
     {data.snapshot ? <>
@@ -80,7 +80,8 @@ export default async function EbayBestSellersPage({
           <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-slate-500">
             <Badge tone="indigo">{data.snapshot.researchTerm || "All eBay"}</Badge>
             <span>Captured {captured?.toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short" })}</span>
-            <span>·</span><span>One stored snapshot; filters use 0 credits</span>
+            <span>·</span><span>{data.snapshot.requestedResults ?? 240}-result request{data.snapshot.fallbackUsed ? " · lighter fallback used" : ""}</span>
+            <span>·</span><span>Stored filters use 0 credits</span>
           </div>
         </div>
 

@@ -1,8 +1,14 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  fetchCountdownBestSellers,
   mapCountdownBestSellerResults,
   mapCountdownSearchResults,
 } from "@/lib/ebay/countdown";
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+  vi.restoreAllMocks();
+});
 
 describe("Countdown eBay research mapping", () => {
   it("maps exact live listings and includes buyer-paid shipping in market price", () => {
@@ -83,5 +89,34 @@ describe("Countdown eBay bestseller snapshots", () => {
     });
     expect(snapshot.items).toHaveLength(1);
     expect(snapshot.items[0].title).toBe("Kept");
+  });
+
+  it("uses a valid broad term and retries one 503 with the lighter supported result size", async () => {
+    vi.stubEnv("COUNTDOWN_API_KEY", "test-key");
+    const fetchMock = vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(new Response("upstream unavailable", { status: 503 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        request_info: { success: true, credits_used: 1, credits_remaining: 20 },
+        search_results: [],
+      }), { status: 200, headers: { "content-type": "application/json" } }));
+    const snapshot = await fetchCountdownBestSellers("");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const firstUrl = new URL(String(fetchMock.mock.calls[0][0]));
+    const secondUrl = new URL(String(fetchMock.mock.calls[1][0]));
+    expect(firstUrl.searchParams.get("search_term")).toBe("popular products");
+    expect(firstUrl.searchParams.get("num")).toBe("240");
+    expect(secondUrl.searchParams.get("num")).toBe("120");
+    expect(snapshot).toMatchObject({ researchTerm: "popular products", requestedResults: 120, fallbackUsed: true });
+  });
+
+  it("does not retry a successful Countdown response", async () => {
+    vi.stubEnv("COUNTDOWN_API_KEY", "test-key");
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({
+      request_info: { success: true, credits_used: 1 },
+      search_results: [],
+    }), { status: 200, headers: { "content-type": "application/json" } }));
+    const snapshot = await fetchCountdownBestSellers("electronics");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(snapshot).toMatchObject({ researchTerm: "electronics", requestedResults: 240, fallbackUsed: false });
   });
 });

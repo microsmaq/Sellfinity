@@ -76,6 +76,8 @@ export type CountdownBestSellerSnapshot = {
   totalResults: number;
   creditsUsed: number | null;
   creditsRemaining: number | null;
+  requestedResults?: number;
+  fallbackUsed?: boolean;
 };
 
 export function countdownConfigured(): boolean {
@@ -181,39 +183,68 @@ export async function fetchCountdownBestSellers(
 ): Promise<CountdownBestSellerSnapshot> {
   const apiKey = process.env.COUNTDOWN_API_KEY?.trim();
   if (!apiKey) throw new Error("Countdown API is not configured.");
-  const term = researchTerm.trim().slice(0, 120);
+  // Countdown's supported search path requires a term. Empty eBay category
+  // URLs can produce an upstream 503, so an empty admin field uses a broad,
+  // valid research term instead.
+  const term = researchTerm.trim().slice(0, 120) || "popular products";
+  let requestSize = 240;
+  let fallbackUsed = false;
+  let response = await requestCountdownBestSellerSearch(apiKey, term, requestSize);
+  if ([502, 503, 504].includes(response.status)) {
+    // Retry only an upstream service failure, once, with a lighter page. A
+    // successful response is never repeated, preserving trial credits.
+    fallbackUsed = true;
+    requestSize = 120;
+    response = await requestCountdownBestSellerSearch(apiKey, term, requestSize);
+  }
+  if (!response.ok) {
+    const detail = await countdownErrorDetail(response);
+    throw new Error(`Countdown bestseller research failed (${response.status})${detail ? `: ${detail}` : ". Please try again shortly."}`);
+  }
+  const data = await response.json() as CountdownSearchResponse;
+  if (data.request_info?.success === false) {
+    throw new Error(`Countdown bestseller research failed: ${data.request_info.message?.slice(0, 180) || "provider rejected the request"}.`);
+  }
+  return {
+    ...mapCountdownBestSellerResults(data, term),
+    requestedResults: requestSize,
+    fallbackUsed,
+  };
+}
+
+function requestCountdownBestSellerSearch(apiKey: string, term: string, num: number) {
   const params = new URLSearchParams({
     api_key: apiKey,
     type: "search",
     ebay_domain: "ebay.com",
     customer_location: "us",
-    num: "240",
+    search_term: term,
+    sort_by: "best_match",
+    listing_type: "buy_it_now",
+    condition: "all",
+    num: String(num),
     output: "json",
     allow_rewritten_results: "false",
   });
-  if (term) {
-    params.set("search_term", term);
-    params.set("sort_by", "best_match");
-    params.set("listing_type", "buy_it_now");
-    params.set("condition", "all");
-  } else {
-    // Countdown accepts an eBay search-results URL. A blank category-zero
-    // search gives the widest single-call sample possible on a trial plan.
-    params.set(
-      "url",
-      "https://www.ebay.com/sch/i.html?_nkw=&_sacat=0&LH_BIN=1&_sop=12",
-    );
-  }
-  const response = await fetch(`${COUNTDOWN_ENDPOINT}?${params}`, {
+  return fetch(`${COUNTDOWN_ENDPOINT}?${params}`, {
     cache: "no-store",
     signal: AbortSignal.timeout(60_000),
   });
-  if (!response.ok) throw new Error(`Countdown bestseller research failed (${response.status}).`);
-  const data = await response.json() as CountdownSearchResponse;
-  if (data.request_info?.success === false) {
-    throw new Error(`Countdown bestseller research failed: ${data.request_info.message?.slice(0, 180) || "provider rejected the request"}.`);
+}
+
+async function countdownErrorDetail(response: Response): Promise<string> {
+  try {
+    const body = await response.text();
+    if (!body) return "";
+    try {
+      const parsed = JSON.parse(body) as { request_info?: { message?: string }; message?: string; error?: string };
+      return (parsed.request_info?.message ?? parsed.message ?? parsed.error ?? "").trim().slice(0, 180);
+    } catch {
+      return body.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().slice(0, 180);
+    }
+  } catch {
+    return "";
   }
-  return mapCountdownBestSellerResults(data, term);
 }
 
 export function mapCountdownBestSellerResults(

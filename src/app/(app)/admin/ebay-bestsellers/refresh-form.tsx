@@ -16,14 +16,13 @@ function SubmitButton() {
   </button>;
 }
 
-export function BestSellerRefreshForm({ defaultTerm = "" }: { defaultTerm?: string }) {
+export function BestSellerRefreshForm({ defaultTerm = "popular products" }: { defaultTerm?: string }) {
   const [state, action] = useActionState<BestSellerRefreshState, FormData>(refreshEbayBestSellers, null);
   return <div className="w-full sm:w-auto">
     <form action={action} className="flex w-full flex-col gap-2 sm:flex-row">
-      <input name="researchTerm" defaultValue={defaultTerm} placeholder="Optional category or keyword" className="min-h-10 min-w-0 flex-1 rounded-xl border border-slate-300 bg-white px-3 text-sm outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/15 sm:w-60" />
+      <input name="researchTerm" defaultValue={defaultTerm || "popular products"} placeholder="Category or keyword" className="min-h-10 min-w-0 flex-1 rounded-xl border border-slate-300 bg-white px-3 text-sm outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/15 sm:w-60" />
       <SubmitButton />
     </form>
     {state && <p role="status" className={cx("mt-2 text-xs sm:text-right", state.ok ? "text-emerald-600" : "text-red-600")}>{state.message}</p>}
   </div>;
 }
-
