@@ -78,6 +78,7 @@ export type CountdownBestSellerSnapshot = {
   creditsRemaining: number | null;
   requestedResults?: number;
   fallbackUsed?: boolean;
+  sampledListings?: number;
 };
 
 export function countdownConfigured(): boolean {
@@ -258,7 +259,11 @@ export function mapCountdownBestSellerResults(
     const itemId = numericListingId(result);
     const title = result.title?.trim();
     const priceCents = Math.round(finiteNonNegative(result.price?.value) * 100);
-    if (!itemId || seen.has(itemId) || !title || !result.link || priceCents <= 0) return [];
+    const quantitySold = Math.floor(finiteNonNegative(result.quantity_sold));
+    // This page is demand research, not a generic eBay search. Missing sold
+    // counts are unknown rather than zero, so only explicit positive eBay
+    // quantity-sold evidence is retained.
+    if (!itemId || seen.has(itemId) || !title || !result.link || priceCents <= 0 || quantitySold <= 0) return [];
     seen.add(itemId);
     const shippingCents = Math.round(finiteNonNegative(result.shipping_cost) * 100);
     const feedback = Number(result.seller_info?.positive_feedback_percent);
@@ -271,7 +276,7 @@ export function mapCountdownBestSellerResults(
       priceCents,
       shippingCents,
       totalPriceCents: priceCents + shippingCents,
-      quantitySold: Math.floor(finiteNonNegative(result.quantity_sold)),
+      quantitySold,
       condition: result.condition?.trim() || "Not specified",
       sellerName: result.seller_info?.name?.trim() || "Unknown seller",
       sellerFeedbackPct: Number.isFinite(feedback) ? feedback : null,
@@ -293,6 +298,7 @@ export function mapCountdownBestSellerResults(
     totalResults: Number.isFinite(total) ? total : items.length,
     creditsUsed: Number.isFinite(used) ? used : null,
     creditsRemaining: Number.isFinite(remaining) ? remaining : null,
+    sampledListings: data.search_results?.length ?? 0,
   };
 }
 

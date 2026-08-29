@@ -54,13 +54,13 @@ export default async function EbayBestSellersPage({
   return <div className="space-y-5">
     <PageHeader
       title="eBay bestsellers"
-      subtitle="Admin-only eBay demand research ranked by the quantity sold reported on each listing. Snapshots are saved locally by date, so searching, sorting, and reopening this page use no Countdown credits."
+      subtitle="Admin-only proven-demand research. A product appears only when eBay explicitly reports a positive quantity sold. Snapshots are saved locally, so searching, sorting, and reopening this page use no Countdown credits."
       actions={<BestSellerRefreshForm defaultTerm={data.snapshot?.researchTerm ?? "popular products"} />}
     />
 
     {data.snapshot ? <>
       <section className="grid grid-cols-2 gap-3 xl:grid-cols-4">
-        <StatCard label="Listings captured" value={data.totalRows.toLocaleString()} sub={`of ${data.snapshot.totalResults.toLocaleString()} eBay results`} />
+        <StatCard label="Proven sellers" value={data.totalRows.toLocaleString()} sub={`${(data.snapshot.sampledListings ?? data.snapshot.items.length).toLocaleString()} listings sampled`} tone="positive" />
         <StatCard label="Reported sales" value={data.totalReportedSales.toLocaleString()} sub="Cumulative quantity sold" tone="positive" />
         <StatCard label="Average landed price" value={money(data.averagePriceCents)} sub="Item price plus buyer shipping" />
         <StatCard label="Countdown balance" value={data.snapshot.creditsRemaining?.toLocaleString() ?? "—"} sub={`${data.snapshot.creditsUsed ?? "—"} used for this refresh`} />
@@ -90,7 +90,7 @@ export default async function EbayBestSellersPage({
             <thead className="border-b border-slate-200 bg-white text-[11px] uppercase tracking-[.06em] text-slate-500"><tr>
               <th className="px-4 py-3 font-semibold">#</th>
               <th className="px-4 py-3 font-semibold"><Link href={sortHref("title")} className="hover:text-indigo-600">Product ↕</Link></th>
-              <th className="px-4 py-3 text-right font-semibold"><Link href={sortHref("sales")} className="hover:text-indigo-600">Reported sales ↕</Link></th>
+              <th className="px-4 py-3 text-right font-semibold"><Link href={sortHref("sales")} className="hover:text-indigo-600">Proven sales ↕</Link></th>
               <th className="px-4 py-3 text-right font-semibold"><Link href={sortHref("price")} className="hover:text-indigo-600">Price ↕</Link></th>
               <th className="px-4 py-3 text-right font-semibold">Shipping</th>
               <th className="px-4 py-3 font-semibold"><Link href={sortHref("seller")} className="hover:text-indigo-600">Seller ↕</Link></th>
@@ -109,7 +109,7 @@ export default async function EbayBestSellersPage({
               <td className="px-4 py-3 align-top"><Badge>{item.condition}</Badge></td>
             </tr>)}</tbody>
           </table>
-          {data.rows.length === 0 && <div className="px-5 py-16 text-center text-sm text-slate-500">No products match this search.</div>}
+          {data.rows.length === 0 && <div className="px-5 py-16 text-center text-sm text-slate-500">{query ? "No proven sellers match this search." : "No listings with an explicit positive eBay sold count were found in this snapshot. Try a focused category or keyword."}</div>}
         </div>
 
         <div className="flex flex-col gap-3 border-t border-slate-200 px-4 py-4 text-sm sm:flex-row sm:items-center sm:justify-between sm:px-5">
@@ -117,7 +117,7 @@ export default async function EbayBestSellersPage({
           <div className="flex gap-2"><Link aria-disabled={data.page <= 1} href={data.page <= 1 ? href({ page: 1 }) : href({ page: data.page - 1 })} className={`rounded-lg border px-3 py-2 font-semibold ${data.page <= 1 ? "pointer-events-none text-slate-300" : "text-slate-700 hover:bg-slate-50"}`}>Previous</Link><Link aria-disabled={data.page >= data.totalPages} href={data.page >= data.totalPages ? href({ page: data.totalPages }) : href({ page: data.page + 1 })} className={`rounded-lg border px-3 py-2 font-semibold ${data.page >= data.totalPages ? "pointer-events-none text-slate-300" : "text-slate-700 hover:bg-slate-50"}`}>Next</Link></div>
         </div>
       </Card>
-      <p className="px-1 text-xs leading-5 text-slate-500">“Reported sales” is eBay’s cumulative quantity-sold value for the listing, not guaranteed sales on the snapshot date. The date selector shows what eBay reported when each snapshot was collected.</p>
+      <p className="px-1 text-xs leading-5 text-slate-500">“Proven sales” is eBay’s explicit cumulative quantity-sold value for the active listing. Listings where eBay does not publish this figure are excluded—not treated as zero. The snapshot date shows when Sellfinity collected the evidence.</p>
     </> : <Card className="px-6 py-16 text-center"><div className="mx-auto max-w-xl"><p className="text-lg font-bold text-slate-900">No bestseller snapshot yet</p><p className="mt-2 text-sm leading-6 text-slate-500">Run one refresh to collect up to 240 listings in a single broad request. Sellfinity will save and reuse that data without spending more trial credits when you search, sort, paginate, or revisit the page.</p></div></Card>}
   </div>;
 }

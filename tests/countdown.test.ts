@@ -85,10 +85,13 @@ describe("Countdown eBay bestseller snapshots", () => {
         { title: "Kept", link: "https://www.ebay.com/itm/123456789012", price: { value: 5 }, quantity_sold: 2 },
         { title: "Duplicate", link: "https://www.ebay.com/itm/123456789012", price: { value: 6 }, quantity_sold: 20 },
         { title: "Auction", link: "https://www.ebay.com/itm/223456789012", price: { value: 6 }, is_auction: true },
+        { title: "Unreported sales", link: "https://www.ebay.com/itm/323456789012", price: { value: 8 } },
+        { title: "Explicit zero", link: "https://www.ebay.com/itm/423456789012", price: { value: 9 }, quantity_sold: 0 },
       ],
     });
     expect(snapshot.items).toHaveLength(1);
     expect(snapshot.items[0].title).toBe("Kept");
+    expect(snapshot.sampledListings).toBe(5);
   });
 
   it("uses a valid broad term and retries one 503 with the lighter supported result size", async () => {

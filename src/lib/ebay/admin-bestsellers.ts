@@ -79,7 +79,10 @@ export async function listAdminBestSellers(options: {
   const query = options.query?.trim().toLowerCase() ?? "";
   const sort = options.sort ?? "sales";
   const direction = options.descending === false ? 1 : -1;
-  const filtered = (snapshot?.items ?? []).filter((item) => !query ||
+  // Enforce the proven-demand rule while reading too, so snapshots created by
+  // older releases immediately stop showing unknown/zero-sales rows.
+  const proven = (snapshot?.items ?? []).filter((item) => Number(item.quantitySold) > 0);
+  const filtered = proven.filter((item) => !query ||
     `${item.title} ${item.itemId} ${item.sellerName} ${item.condition}`.toLowerCase().includes(query));
   filtered.sort((a, b) => {
     let compared = 0;
@@ -114,4 +117,3 @@ export async function listAdminBestSellers(options: {
     averagePriceCents,
   };
 }
-

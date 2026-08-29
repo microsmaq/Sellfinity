@@ -17,7 +17,7 @@ export async function refreshEbayBestSellers(
     revalidatePath("/admin/ebay-bestsellers");
     return {
       ok: true,
-      message: `Saved ${snapshot.items.length} listings. Countdown used ${snapshot.creditsUsed ?? "the provider-reported number of"} credit${snapshot.creditsUsed === 1 ? "" : "s"}.`,
+      message: `Saved ${snapshot.items.length} proven sellers from ${snapshot.sampledListings ?? 0} sampled listings. Countdown used ${snapshot.creditsUsed ?? "the provider-reported number of"} credit${snapshot.creditsUsed === 1 ? "" : "s"}.`,
     };
   } catch (error) {
     return {
