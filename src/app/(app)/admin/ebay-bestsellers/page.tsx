@@ -55,7 +55,7 @@ export default async function EbayBestSellersPage({
     <PageHeader
       title="eBay bestsellers"
       subtitle="Admin-only proven-demand research. A product appears only when eBay explicitly reports a positive quantity sold. Snapshots are saved locally, so searching, sorting, and reopening this page use no Countdown credits."
-      actions={<BestSellerRefreshForm defaultTerm={data.snapshot?.researchTerm ?? "popular products"} />}
+      actions={<BestSellerRefreshForm defaultTerm={data.snapshot?.researchTerm ?? "electronics"} />}
     />
 
     {data.snapshot ? <>

@@ -187,20 +187,22 @@ export async function fetchCountdownBestSellers(
   // Countdown's supported search path requires a term. Empty eBay category
   // URLs can produce an upstream 503, so an empty admin field uses a broad,
   // valid research term instead.
-  const term = researchTerm.trim().slice(0, 120) || "popular products";
-  let requestSize = 240;
+  const term = researchTerm.trim().slice(0, 120) || "electronics";
+  const requestSizes = [240, 120, 60] as const;
+  let requestSize: number = requestSizes[0];
   let fallbackUsed = false;
   let response = await requestCountdownBestSellerSearch(apiKey, term, requestSize);
-  if ([502, 503, 504].includes(response.status)) {
-    // Retry only an upstream service failure, once, with a lighter page. A
-    // successful response is never repeated, preserving trial credits.
+  for (const smallerSize of requestSizes.slice(1)) {
+    if (![502, 503, 504].includes(response.status)) break;
+    // Countdown explicitly reports that unavailable requests are not charged.
+    // Step down through its documented sizes and stop at the first success.
     fallbackUsed = true;
-    requestSize = 120;
+    requestSize = smallerSize;
     response = await requestCountdownBestSellerSearch(apiKey, term, requestSize);
   }
   if (!response.ok) {
     const detail = await countdownErrorDetail(response);
-    throw new Error(`Countdown bestseller research failed (${response.status})${detail ? `: ${detail}` : ". Please try again shortly."}`);
+    throw new Error(`Countdown could not return this eBay search at 240, 120, or 60 results (${response.status})${detail ? `: ${detail}` : ". The provider is temporarily unavailable."}`);
   }
   const data = await response.json() as CountdownSearchResponse;
   if (data.request_info?.success === false) {

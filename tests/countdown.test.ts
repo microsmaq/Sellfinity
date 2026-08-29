@@ -94,22 +94,25 @@ describe("Countdown eBay bestseller snapshots", () => {
     expect(snapshot.sampledListings).toBe(5);
   });
 
-  it("uses a valid broad term and retries one 503 with the lighter supported result size", async () => {
+  it("uses a valid category and steps through supported sizes after free 503 responses", async () => {
     vi.stubEnv("COUNTDOWN_API_KEY", "test-key");
     const fetchMock = vi.spyOn(globalThis, "fetch")
       .mockResolvedValueOnce(new Response("upstream unavailable", { status: 503 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ request_info: { message: "Request is currently unavailable. You have not been charged for this request." } }), { status: 503 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({
         request_info: { success: true, credits_used: 1, credits_remaining: 20 },
         search_results: [],
       }), { status: 200, headers: { "content-type": "application/json" } }));
     const snapshot = await fetchCountdownBestSellers("");
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
     const firstUrl = new URL(String(fetchMock.mock.calls[0][0]));
     const secondUrl = new URL(String(fetchMock.mock.calls[1][0]));
-    expect(firstUrl.searchParams.get("search_term")).toBe("popular products");
+    const thirdUrl = new URL(String(fetchMock.mock.calls[2][0]));
+    expect(firstUrl.searchParams.get("search_term")).toBe("electronics");
     expect(firstUrl.searchParams.get("num")).toBe("240");
     expect(secondUrl.searchParams.get("num")).toBe("120");
-    expect(snapshot).toMatchObject({ researchTerm: "popular products", requestedResults: 120, fallbackUsed: true });
+    expect(thirdUrl.searchParams.get("num")).toBe("60");
+    expect(snapshot).toMatchObject({ researchTerm: "electronics", requestedResults: 60, fallbackUsed: true });
   });
 
   it("does not retry a successful Countdown response", async () => {
