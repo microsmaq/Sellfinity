@@ -83,6 +83,8 @@ export type CountdownBestSellerSnapshot = {
   providerDetailMode?: "BATCH" | "INDIVIDUAL";
   searchOffset?: number;
   newItemsAdded?: number;
+  lastBatchSampledListings?: number;
+  hasMoreResults?: boolean;
 };
 
 export function countdownConfigured(): boolean {

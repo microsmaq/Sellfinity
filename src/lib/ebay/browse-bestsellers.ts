@@ -113,11 +113,12 @@ export async function fetchEbayBrowseBestSellers(
     sourcePosition: Math.max(0, Math.floor(offset)) + index + 1,
   }));
   const inspectedCount = batchAccessDenied ? Math.min(ids.length, INDIVIDUAL_DETAIL_LIMIT) : ids.length;
+  const totalResults = Number(search.total ?? ids.length);
   return {
     capturedAt: new Date().toISOString(),
     researchTerm: term,
     items,
-    totalResults: Number(search.total ?? ids.length),
+    totalResults,
     creditsUsed: 0,
     creditsRemaining: null,
     requestedResults: inspectedCount,
@@ -126,5 +127,7 @@ export async function fetchEbayBrowseBestSellers(
     provider: "EBAY_BROWSE",
     providerDetailMode: batchAccessDenied ? "INDIVIDUAL" : "BATCH",
     searchOffset: Math.max(0, Math.floor(offset)),
+    lastBatchSampledListings: detailed.length,
+    hasMoreResults: Math.max(0, Math.floor(offset)) + inspectedCount < Math.min(10_000, totalResults),
   } as CountdownBestSellerSnapshot;
 }

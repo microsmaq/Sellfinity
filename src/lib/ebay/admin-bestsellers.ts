@@ -66,14 +66,19 @@ export async function refreshAdminBestSellers(researchTerm = "") {
   const proposedOffset = previousOffset + previousPageSize;
   const nextOffset = resultCap > 0 && proposedOffset >= resultCap ? 0 : proposedOffset;
   let snapshot: CountdownBestSellerSnapshot;
-  try {
-    snapshot = await fetchCountdownBestSellers(term);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "";
-    if (!/\b50[234]\b|currently unavailable|could not return/i.test(message)) throw error;
+  if (existing?.provider === "EBAY_BROWSE") {
     snapshot = await fetchEbayBrowseBestSellers(term, nextOffset);
+  } else {
+    try {
+      snapshot = await fetchCountdownBestSellers(term);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "";
+      if (!/\b50[234]\b|currently unavailable|could not return/i.test(message)) throw error;
+      snapshot = await fetchEbayBrowseBestSellers(term, nextOffset);
+    }
   }
 
+  const lastBatchSampledListings = Number(snapshot.lastBatchSampledListings ?? snapshot.sampledListings ?? 0);
   const priorItems = existing?.items ?? [];
   const priorIds = new Set(priorItems.map((item) => item.itemId));
   const newItemsAdded = snapshot.items.reduce(
@@ -90,9 +95,11 @@ export async function refreshAdminBestSellers(researchTerm = "") {
       ),
       sampledListings: Number(existing.sampledListings ?? 0) + Number(snapshot.sampledListings ?? 0),
       newItemsAdded,
+      lastBatchSampledListings,
     };
   } else {
     snapshot.newItemsAdded = snapshot.items.length;
+    snapshot.lastBatchSampledListings = lastBatchSampledListings;
   }
   await db.scanCache.upsert({
     where: { cacheKey: cacheKey(snapshot) },
