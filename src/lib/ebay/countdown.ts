@@ -79,6 +79,7 @@ export type CountdownBestSellerSnapshot = {
   requestedResults?: number;
   fallbackUsed?: boolean;
   sampledListings?: number;
+  provider?: "COUNTDOWN" | "EBAY_BROWSE";
 };
 
 export function countdownConfigured(): boolean {
@@ -212,6 +213,7 @@ export async function fetchCountdownBestSellers(
     ...mapCountdownBestSellerResults(data, term),
     requestedResults: requestSize,
     fallbackUsed,
+    provider: "COUNTDOWN",
   };
 }
 

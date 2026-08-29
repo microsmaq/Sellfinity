@@ -19,7 +19,9 @@ export async function refreshEbayBestSellers(
     revalidatePath("/admin/ebay-bestsellers");
     return {
       ok: true,
-      message: `Saved ${snapshot.items.length} proven sellers from ${snapshot.sampledListings ?? 0} sampled listings. Countdown used ${snapshot.creditsUsed ?? "the provider-reported number of"} credit${snapshot.creditsUsed === 1 ? "" : "s"}.`,
+      message: snapshot.provider === "EBAY_BROWSE"
+        ? `Saved ${snapshot.items.length} proven sellers from ${snapshot.sampledListings ?? 0} eBay listings. Official eBay fallback used; 0 Countdown credits.`
+        : `Saved ${snapshot.items.length} proven sellers from ${snapshot.sampledListings ?? 0} sampled listings. Countdown used ${snapshot.creditsUsed ?? "the provider-reported number of"} credit${snapshot.creditsUsed === 1 ? "" : "s"}.`,
     };
   } catch (error) {
     return {

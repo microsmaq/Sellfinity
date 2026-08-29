@@ -5,6 +5,7 @@ import {
   type CountdownBestSeller,
   type CountdownBestSellerSnapshot,
 } from "./countdown";
+import { fetchEbayBrowseBestSellers } from "./browse-bestsellers";
 
 const CACHE_PREFIX = "countdown:ebay-bestsellers:";
 
@@ -45,7 +46,14 @@ function parseSnapshot(dataJson: string): CountdownBestSellerSnapshot | null {
 }
 
 export async function refreshAdminBestSellers(researchTerm = "") {
-  const snapshot = await fetchCountdownBestSellers(researchTerm);
+  let snapshot: CountdownBestSellerSnapshot;
+  try {
+    snapshot = await fetchCountdownBestSellers(researchTerm);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "";
+    if (!/\b50[234]\b|currently unavailable|could not return/i.test(message)) throw error;
+    snapshot = await fetchEbayBrowseBestSellers(researchTerm);
+  }
   await db.scanCache.upsert({
     where: { cacheKey: cacheKey(snapshot) },
     create: { cacheKey: cacheKey(snapshot), dataJson: JSON.stringify(snapshot) },
