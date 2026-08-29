@@ -8,6 +8,8 @@ import {
 
 const SEARCH_LIMIT = 100;
 const DETAIL_BATCH_SIZE = 20;
+const INDIVIDUAL_DETAIL_LIMIT = 40;
+const INDIVIDUAL_CONCURRENCY = 5;
 
 async function ebayJson<T>(url: string, token: string, stage: string): Promise<T> {
   const response = await fetch(url, {
@@ -56,17 +58,53 @@ export async function fetchEbayBrowseBestSellers(
   const ids = (search.itemSummaries ?? [])
     .map((item) => item.itemId?.trim())
     .filter((itemId): itemId is string => Boolean(itemId));
-  const detailed: BrowseBestSellerItem[] = [];
+  let detailed: BrowseBestSellerItem[] = [];
+  let batchAccessDenied = false;
   for (let index = 0; index < ids.length; index += DETAIL_BATCH_SIZE) {
     const params = new URLSearchParams({
       item_ids: ids.slice(index, index + DETAIL_BATCH_SIZE).join(","),
     });
-    const result = await ebayJson<{ items?: BrowseBestSellerItem[] }>(
-      `${config.apiHost}/buy/browse/v1/item/?${params}`,
-      token,
-      "item-details batch",
-    );
-    detailed.push(...(result.items ?? []));
+    try {
+      const result = await ebayJson<{ items?: BrowseBestSellerItem[] }>(
+        `${config.apiHost}/buy/browse/v1/item/?${params}`,
+        token,
+        "item-details batch",
+      );
+      detailed.push(...(result.items ?? []));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "";
+      if (/item-details batch failed \(403\).*\b1100\b/i.test(message)) {
+        batchAccessDenied = true;
+        detailed = [];
+        break;
+      }
+      throw error;
+    }
+  }
+  if (batchAccessDenied) {
+    // Some eBay applications can search and call getItem but are denied the
+    // bulk getItems method. Limit and cache individual calls to protect the
+    // application's daily Browse quota.
+    const individualIds = ids.slice(0, INDIVIDUAL_DETAIL_LIMIT);
+    let firstFailure: Error | null = null;
+    for (let index = 0; index < individualIds.length; index += INDIVIDUAL_CONCURRENCY) {
+      const group = await Promise.allSettled(
+        individualIds.slice(index, index + INDIVIDUAL_CONCURRENCY).map((itemId) =>
+          ebayJson<BrowseBestSellerItem>(
+            `${config.apiHost}/buy/browse/v1/item/${encodeURIComponent(itemId)}`,
+            token,
+            "single-item details",
+          ),
+        ),
+      );
+      for (const result of group) {
+        if (result.status === "fulfilled") detailed.push(result.value);
+        else if (!firstFailure) firstFailure = result.reason instanceof Error
+          ? result.reason
+          : new Error("eBay single-item details failed.");
+      }
+    }
+    if (detailed.length === 0 && firstFailure) throw firstFailure;
   }
   const items = mapBrowseBestSellerItems(detailed);
   return {
@@ -80,5 +118,6 @@ export async function fetchEbayBrowseBestSellers(
     fallbackUsed: true,
     sampledListings: detailed.length,
     provider: "EBAY_BROWSE",
+    providerDetailMode: batchAccessDenied ? "INDIVIDUAL" : "BATCH",
   } as CountdownBestSellerSnapshot;
 }

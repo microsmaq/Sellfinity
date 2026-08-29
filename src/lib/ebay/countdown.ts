@@ -80,6 +80,7 @@ export type CountdownBestSellerSnapshot = {
   fallbackUsed?: boolean;
   sampledListings?: number;
   provider?: "COUNTDOWN" | "EBAY_BROWSE";
+  providerDetailMode?: "BATCH" | "INDIVIDUAL";
 };
 
 export function countdownConfigured(): boolean {

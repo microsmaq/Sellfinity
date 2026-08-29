@@ -63,7 +63,7 @@ export default async function EbayBestSellersPage({
         <StatCard label="Proven sellers" value={data.totalRows.toLocaleString()} sub={`${(data.snapshot.sampledListings ?? data.snapshot.items.length).toLocaleString()} listings sampled`} tone="positive" />
         <StatCard label="Reported sales" value={data.totalReportedSales.toLocaleString()} sub="Cumulative quantity sold" tone="positive" />
         <StatCard label="Average landed price" value={money(data.averagePriceCents)} sub="Item price plus buyer shipping" />
-        <StatCard label="Data provider" value={data.snapshot.provider === "EBAY_BROWSE" ? "eBay" : "Countdown"} sub={data.snapshot.provider === "EBAY_BROWSE" ? "Official fallback · 0 Countdown credits" : `${data.snapshot.creditsUsed ?? "—"} credits used · ${data.snapshot.creditsRemaining ?? "—"} remaining`} />
+        <StatCard label="Data provider" value={data.snapshot.provider === "EBAY_BROWSE" ? "eBay" : "Countdown"} sub={data.snapshot.provider === "EBAY_BROWSE" ? `Official ${data.snapshot.providerDetailMode === "INDIVIDUAL" ? "limited-detail" : "batch"} fallback · 0 Countdown credits` : `${data.snapshot.creditsUsed ?? "—"} credits used · ${data.snapshot.creditsRemaining ?? "—"} remaining`} />
       </section>
 
       <Card className="overflow-hidden">
