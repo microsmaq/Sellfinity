@@ -9,7 +9,7 @@ import {
 const SEARCH_LIMIT = 100;
 const DETAIL_BATCH_SIZE = 20;
 
-async function ebayJson<T>(url: string, token: string): Promise<T> {
+async function ebayJson<T>(url: string, token: string, stage: string): Promise<T> {
   const response = await fetch(url, {
     headers: {
       Authorization: `Bearer ${token}`,
@@ -18,7 +18,22 @@ async function ebayJson<T>(url: string, token: string): Promise<T> {
     cache: "no-store",
     signal: AbortSignal.timeout(45_000),
   });
-  if (!response.ok) throw new Error(`eBay Browse bestseller research failed (${response.status}).`);
+  if (!response.ok) {
+    let detail = "";
+    try {
+      const payload = await response.json() as {
+        errors?: { errorId?: number; message?: string; longMessage?: string }[];
+      };
+      const first = payload.errors?.[0];
+      detail = [first?.errorId ? `eBay ${first.errorId}` : "", first?.message || first?.longMessage || ""]
+        .filter(Boolean)
+        .join(": ")
+        .slice(0, 240);
+    } catch {
+      detail = "";
+    }
+    throw new Error(`eBay Browse ${stage} failed (${response.status})${detail ? `: ${detail}` : ". The eBay application may not have Production Buy API access."}`);
+  }
   return response.json() as Promise<T>;
 }
 
@@ -37,7 +52,7 @@ export async function fetchEbayBrowseBestSellers(
   const search = await ebayJson<{
     total?: number;
     itemSummaries?: BrowseBestSellerItem[];
-  }>(`${config.apiHost}/buy/browse/v1/item_summary/search?${searchParams}`, token);
+  }>(`${config.apiHost}/buy/browse/v1/item_summary/search?${searchParams}`, token, "search");
   const ids = (search.itemSummaries ?? [])
     .map((item) => item.itemId?.trim())
     .filter((itemId): itemId is string => Boolean(itemId));
@@ -49,6 +64,7 @@ export async function fetchEbayBrowseBestSellers(
     const result = await ebayJson<{ items?: BrowseBestSellerItem[] }>(
       `${config.apiHost}/buy/browse/v1/item/?${params}`,
       token,
+      "item-details batch",
     );
     detailed.push(...(result.items ?? []));
   }
