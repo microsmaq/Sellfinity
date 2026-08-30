@@ -2,6 +2,7 @@
 
 import { useRef, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
+import { createPortal } from "react-dom";
 import { refreshEbayBestSellers } from "@/lib/actions/admin-ebay-bestsellers";
 import { EBAY_BESTSELLER_CATEGORIES } from "@/lib/ebay/bestseller-categories";
 
@@ -209,8 +210,8 @@ export function BestSellerRefreshForm({
       </div>}
     </form>
 
-    {showLargeRunWarning && <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/45 p-4 backdrop-blur-sm" role="alertdialog" aria-modal="true" aria-labelledby="large-bestseller-run-title">
-      <div className="w-full max-w-lg rounded-2xl border border-amber-200 bg-white p-5 shadow-2xl sm:p-6">
+    {showLargeRunWarning && typeof document !== "undefined" && createPortal(<div className="fixed inset-0 z-[100] flex min-h-dvh items-center justify-center overflow-y-auto bg-slate-950/45 p-4 backdrop-blur-sm" role="alertdialog" aria-modal="true" aria-labelledby="large-bestseller-run-title">
+      <div className="my-auto w-full max-w-lg rounded-2xl border border-amber-200 bg-white p-5 shadow-2xl sm:p-6">
         <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-amber-100 text-xl text-amber-700">!</div>
         <h2 id="large-bestseller-run-title" className="mt-4 text-lg font-extrabold text-slate-900">Large eBay research run</h2>
         <p className="mt-2 text-sm leading-6 text-slate-600">Finding {target.toLocaleString()} system-wide new proven sellers can take a long time and may require thousands of official eBay search and item-detail requests.</p>
@@ -224,6 +225,6 @@ export function BestSellerRefreshForm({
           <button type="button" onClick={() => { largeRunConfirmed.current = true; setShowLargeRunWarning(false); formRef.current?.requestSubmit(); }} className="min-h-11 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 px-5 text-sm font-extrabold text-white shadow-lg shadow-amber-500/20 transition hover:-translate-y-0.5">Continue with {target.toLocaleString()}</button>
         </div>
       </div>
-    </div>}
+    </div>, document.body)}
   </div>;
 }
