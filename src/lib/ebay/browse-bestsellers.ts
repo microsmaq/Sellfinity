@@ -5,6 +5,7 @@ import {
   mapBrowseBestSellerItems,
   type BrowseBestSellerItem,
 } from "./browse-bestseller-map";
+import { filterUnstoredBestSellerIds } from "./bestseller-dedupe";
 
 export const BROWSE_BESTSELLER_PAGE_SIZE = 40;
 const DETAIL_BATCH_SIZE = 20;
@@ -44,6 +45,7 @@ export async function fetchEbayBrowseBestSellers(
   offset = 0,
   categoryId?: string,
   categoryLabel?: string,
+  storedItemIds: Iterable<string> = [],
 ): Promise<CountdownBestSellerSnapshot> {
   const config = ebayEnvConfig();
   if (!config) throw new Error("eBay Browse API is not configured.");
@@ -67,11 +69,12 @@ export async function fetchEbayBrowseBestSellers(
   const ids = (search.itemSummaries ?? [])
     .map((item) => item.itemId?.trim())
     .filter((itemId): itemId is string => Boolean(itemId));
+  const detailIds = filterUnstoredBestSellerIds(ids, storedItemIds);
   let detailed: BrowseBestSellerItem[] = [];
   let batchAccessDenied = false;
-  for (let index = 0; index < ids.length; index += DETAIL_BATCH_SIZE) {
+  for (let index = 0; index < detailIds.length; index += DETAIL_BATCH_SIZE) {
     const params = new URLSearchParams({
-      item_ids: ids.slice(index, index + DETAIL_BATCH_SIZE).join(","),
+      item_ids: detailIds.slice(index, index + DETAIL_BATCH_SIZE).join(","),
     });
     try {
       const result = await ebayJson<{ items?: BrowseBestSellerItem[] }>(
@@ -94,7 +97,7 @@ export async function fetchEbayBrowseBestSellers(
     // Some eBay applications can search and call getItem but are denied the
     // bulk getItems method. Limit and cache individual calls to protect the
     // application's daily Browse quota.
-    const individualIds = ids.slice(0, INDIVIDUAL_DETAIL_LIMIT);
+    const individualIds = detailIds.slice(0, INDIVIDUAL_DETAIL_LIMIT);
     let firstFailure: Error | null = null;
     for (let index = 0; index < individualIds.length; index += INDIVIDUAL_CONCURRENCY) {
       const group = await Promise.allSettled(
@@ -119,7 +122,7 @@ export async function fetchEbayBrowseBestSellers(
     ...item,
     sourcePosition: normalizedOffset + index + 1,
   }));
-  const inspectedCount = batchAccessDenied ? Math.min(ids.length, INDIVIDUAL_DETAIL_LIMIT) : ids.length;
+  const resultPageCount = ids.length;
   const totalResults = Number(search.total ?? ids.length);
   return {
     capturedAt: new Date().toISOString(),
@@ -128,14 +131,14 @@ export async function fetchEbayBrowseBestSellers(
     totalResults,
     creditsUsed: 0,
     creditsRemaining: null,
-    requestedResults: inspectedCount,
+    requestedResults: resultPageCount,
     fallbackUsed: true,
     sampledListings: detailed.length,
     provider: "EBAY_BROWSE",
     providerDetailMode: batchAccessDenied ? "INDIVIDUAL" : "BATCH",
     searchOffset: normalizedOffset,
     lastBatchSampledListings: detailed.length,
-    hasMoreResults: normalizedOffset + inspectedCount < Math.min(10_000, totalResults),
+    hasMoreResults: normalizedOffset + resultPageCount < Math.min(10_000, totalResults),
     categoryId,
     categoryLabel,
   } as CountdownBestSellerSnapshot;

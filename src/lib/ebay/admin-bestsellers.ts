@@ -96,14 +96,14 @@ export async function refreshAdminBestSellers(
   const nextOffset = resultCap > 0 && alignedOffset >= resultCap ? 0 : alignedOffset;
   let snapshot: CountdownBestSellerSnapshot;
   if (existing?.provider === "EBAY_BROWSE") {
-    snapshot = await fetchEbayBrowseBestSellers(term, nextOffset, categoryId, categoryLabel);
+    snapshot = await fetchEbayBrowseBestSellers(term, nextOffset, categoryId, categoryLabel, globallyStoredIds);
   } else {
     try {
       snapshot = await fetchCountdownBestSellers(term);
     } catch (error) {
       const message = error instanceof Error ? error.message : "";
       if (!/\b50[234]\b|currently unavailable|could not return/i.test(message)) throw error;
-      snapshot = await fetchEbayBrowseBestSellers(term, nextOffset, categoryId, categoryLabel);
+      snapshot = await fetchEbayBrowseBestSellers(term, nextOffset, categoryId, categoryLabel, globallyStoredIds);
     }
   }
 

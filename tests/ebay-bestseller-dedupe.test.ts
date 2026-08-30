@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { countGloballyNewBestSellers } from "@/lib/ebay/bestseller-dedupe";
+import {
+  countGloballyNewBestSellers,
+  filterUnstoredBestSellerIds,
+} from "@/lib/ebay/bestseller-dedupe";
 
 describe("eBay bestseller system-wide deduplication", () => {
   it("counts only item IDs that have never been stored", () => {
@@ -9,5 +12,12 @@ describe("eBay bestseller system-wide deduplication", () => {
       { itemId: "new-one" },
       { itemId: "new-two" },
     ], ["already-stored", "stored-elsewhere"])).toBe(2);
+  });
+
+  it("removes stored IDs before requesting eBay item details", () => {
+    expect(filterUnstoredBestSellerIds(
+      ["stored-one", "new-one", "stored-two", "new-two"],
+      ["stored-one", "stored-two"],
+    )).toEqual(["new-one", "new-two"]);
   });
 });

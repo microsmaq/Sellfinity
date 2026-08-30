@@ -11,3 +11,11 @@ export function countGloballyNewBestSellers(
   }
   return added;
 }
+
+export function filterUnstoredBestSellerIds(
+  itemIds: string[],
+  storedItemIds: Iterable<string>,
+): string[] {
+  const known = new Set(storedItemIds);
+  return itemIds.filter((itemId) => itemId && !known.has(itemId));
+}
