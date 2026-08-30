@@ -7,7 +7,10 @@ import {
 } from "@/lib/ebay/admin-bestsellers";
 import { Badge, Card, PageHeader, StatCard } from "@/components/ui";
 import { BestSellerRefreshForm } from "./refresh-form";
-import { ebayBestSellerCategory } from "@/lib/ebay/bestseller-categories";
+import {
+  EBAY_BESTSELLER_CATEGORIES,
+  ebayBestSellerCategory,
+} from "@/lib/ebay/bestseller-categories";
 
 export const metadata = { title: "eBay bestsellers — Sellfinity" };
 export const maxDuration = 120;
@@ -22,24 +25,37 @@ export default async function EbayBestSellersPage({
   await requireAdmin();
   const params = await searchParams;
   const query = typeof params.q === "string" ? params.q : "";
-  const snapshotKey = typeof params.snapshot === "string" ? params.snapshot : undefined;
+  const requestedCategory = typeof params.category === "string" ? params.category : "";
+  const categoryId = EBAY_BESTSELLER_CATEGORIES.some((category) => category.id === requestedCategory) ? requestedCategory : "";
+  const requestedMinPrice = typeof params.minPrice === "string" && params.minPrice !== "" ? Number(params.minPrice) : Number.NaN;
+  const requestedMaxPrice = typeof params.maxPrice === "string" && params.maxPrice !== "" ? Number(params.maxPrice) : Number.NaN;
+  const requestedMinSales = typeof params.minSales === "string" && params.minSales !== "" ? Number(params.minSales) : Number.NaN;
+  const minPrice = Number.isFinite(requestedMinPrice) ? Math.max(0, requestedMinPrice) : null;
+  const maxPrice = Number.isFinite(requestedMaxPrice) ? Math.max(0, requestedMaxPrice) : null;
+  const minSales = Number.isFinite(requestedMinSales) ? Math.max(0, Math.floor(requestedMinSales)) : null;
   const allowedSorts: BestSellerSort[] = ["sales", "weekSales", "monthSales", "price", "title", "seller", "position"];
   const requestedSort = typeof params.sort === "string" ? params.sort : "sales";
   const sort = allowedSorts.includes(requestedSort as BestSellerSort) ? requestedSort as BestSellerSort : "sales";
   const descending = params.dir !== "asc";
   const pageSize = [25, 50, 100].includes(Number(params.pageSize)) ? Number(params.pageSize) : 50;
   const data = await listAdminBestSellers({
-    snapshotKey,
     query,
     sort,
     descending,
     page: Math.max(1, Number(params.page ?? 1) || 1),
     pageSize,
+    categoryId: categoryId || undefined,
+    minPriceCents: minPrice != null && Number.isFinite(minPrice) ? Math.round(minPrice * 100) : undefined,
+    maxPriceCents: maxPrice != null && Number.isFinite(maxPrice) ? Math.round(maxPrice * 100) : undefined,
+    minSales: minSales != null && Number.isFinite(minSales) ? minSales : undefined,
   });
   const href = (changes: Record<string, string | number | undefined>) => {
     const next = new URLSearchParams();
     if (query) next.set("q", query);
-    if (snapshotKey) next.set("snapshot", snapshotKey);
+    if (categoryId) next.set("category", categoryId);
+    if (minPrice != null && Number.isFinite(minPrice)) next.set("minPrice", String(minPrice));
+    if (maxPrice != null && Number.isFinite(maxPrice)) next.set("maxPrice", String(maxPrice));
+    if (minSales != null && Number.isFinite(minSales)) next.set("minSales", String(minSales));
     next.set("sort", sort);
     next.set("dir", descending ? "desc" : "asc");
     next.set("pageSize", String(pageSize));
@@ -51,9 +67,6 @@ export default async function EbayBestSellersPage({
   };
   const sortHref = (key: BestSellerSort) => href({ sort: key, dir: sort === key && descending ? "asc" : "desc", page: 1 });
   const captured = data.snapshot ? new Date(data.snapshot.capturedAt) : null;
-  const categorySearchTerm = data.snapshot?.categoryId
-    ? ebayBestSellerCategory(data.snapshot.categoryId).searchTerm
-    : "";
 
   return <div className="space-y-5">
     <PageHeader
@@ -74,19 +87,34 @@ export default async function EbayBestSellersPage({
 
       <Card className="overflow-hidden">
         <div className="border-b border-slate-200 bg-slate-50/70 px-4 py-4 sm:px-5">
-          <form action="/admin/ebay-bestsellers" method="get" className="grid gap-3 lg:grid-cols-[minmax(16rem,1fr)_minmax(15rem,.65fr)_auto_auto]">
-            <input name="q" defaultValue={query} placeholder="Search title, item ID, seller, or condition" className="min-h-10 rounded-xl border border-slate-300 bg-white px-3 text-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/15" />
-            <select name="snapshot" defaultValue={snapshotKey ?? ""} className="min-h-10 rounded-xl border border-slate-300 bg-white px-3 text-sm text-slate-700 outline-none focus:border-indigo-500">
-              <option value="">All stored results</option>
-              {data.availableDates.map((item) => <option key={item.key} value={item.key}>{item.label}</option>)}
-            </select>
-            <select name="pageSize" defaultValue={pageSize} className="min-h-10 rounded-xl border border-slate-300 bg-white px-3 text-sm text-slate-700"><option value="25">25 rows</option><option value="50">50 rows</option><option value="100">100 rows</option></select>
-            <button className="min-h-10 rounded-xl border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 transition hover:bg-slate-100">Apply</button>
+          <form action="/admin/ebay-bestsellers" method="get" className="grid gap-3 md:grid-cols-2 xl:grid-cols-[minmax(15rem,1.4fr)_minmax(11rem,.8fr)_8rem_8rem_8rem_7rem_auto_auto] xl:items-end">
+            <label className="grid gap-1 text-[10px] font-bold uppercase tracking-[.07em] text-slate-500">Search
+              <input name="q" defaultValue={query} placeholder="Product, item ID, seller…" className="min-h-10 rounded-xl border border-slate-300 bg-white px-3 text-sm font-normal normal-case tracking-normal text-slate-800 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/15" />
+            </label>
+            <label className="grid gap-1 text-[10px] font-bold uppercase tracking-[.07em] text-slate-500">Category
+              <select name="category" defaultValue={categoryId} className="min-h-10 rounded-xl border border-slate-300 bg-white px-3 text-sm font-medium normal-case tracking-normal text-slate-700 outline-none focus:border-indigo-500">
+                <option value="">All categories</option>
+                {EBAY_BESTSELLER_CATEGORIES.map((category) => <option key={category.id} value={category.id}>{category.label}</option>)}
+              </select>
+            </label>
+            <label className="grid gap-1 text-[10px] font-bold uppercase tracking-[.07em] text-slate-500">Min price
+              <input type="number" min="0" step="0.01" name="minPrice" defaultValue={minPrice ?? ""} placeholder="$0" className="min-h-10 rounded-xl border border-slate-300 bg-white px-3 text-sm font-normal normal-case tracking-normal outline-none focus:border-indigo-500" />
+            </label>
+            <label className="grid gap-1 text-[10px] font-bold uppercase tracking-[.07em] text-slate-500">Max price
+              <input type="number" min="0" step="0.01" name="maxPrice" defaultValue={maxPrice ?? ""} placeholder="Any" className="min-h-10 rounded-xl border border-slate-300 bg-white px-3 text-sm font-normal normal-case tracking-normal outline-none focus:border-indigo-500" />
+            </label>
+            <label className="grid gap-1 text-[10px] font-bold uppercase tracking-[.07em] text-slate-500">Min sales
+              <input type="number" min="0" step="1" name="minSales" defaultValue={minSales ?? ""} placeholder="Any" className="min-h-10 rounded-xl border border-slate-300 bg-white px-3 text-sm font-normal normal-case tracking-normal outline-none focus:border-indigo-500" />
+            </label>
+            <label className="grid gap-1 text-[10px] font-bold uppercase tracking-[.07em] text-slate-500">Rows
+              <select name="pageSize" defaultValue={pageSize} className="min-h-10 rounded-xl border border-slate-300 bg-white px-3 text-sm font-medium normal-case tracking-normal text-slate-700"><option value="25">25</option><option value="50">50</option><option value="100">100</option></select>
+            </label>
+            <button className="min-h-10 rounded-xl bg-slate-900 px-4 text-sm font-bold text-white transition hover:bg-indigo-600">Apply</button>
+            <Link href="/admin/ebay-bestsellers" className="inline-flex min-h-10 items-center justify-center rounded-xl border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-600 transition hover:bg-slate-100">Clear</Link>
             <input type="hidden" name="sort" value={sort}/><input type="hidden" name="dir" value={descending ? "desc" : "asc"}/>
           </form>
           <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-slate-500">
-            <Badge tone="indigo">{data.allResults ? "All categories" : data.snapshot.categoryLabel || data.snapshot.researchTerm || "All eBay"}</Badge>
-            {data.snapshot.categoryLabel && data.snapshot.researchTerm !== categorySearchTerm && <span>Keyword: {data.snapshot.researchTerm}</span>}
+            <Badge tone="indigo">{categoryId ? ebayBestSellerCategory(categoryId).label : "All categories"}</Badge>
             <span>Captured {captured?.toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short" })}</span>
             <span>·</span><span>{data.allResults ? `${data.combinedSnapshots} snapshots combined` : `${data.snapshot.requestedResults ?? 240}-result request${data.snapshot.fallbackUsed ? " · lighter fallback used" : ""}`}</span>
             <span>·</span><span>Stored filters use 0 credits</span>
@@ -110,7 +138,7 @@ export default async function EbayBestSellersPage({
               <td className="px-4 py-3 align-top font-semibold tabular-nums text-slate-400">{(data.page - 1) * data.pageSize + index + 1}</td>
               <td className="px-4 py-3"><div className="flex min-w-[22rem] items-center gap-3">
                 {item.imageUrl ? <Image src={item.imageUrl} alt="" width={48} height={48} unoptimized className="h-12 w-12 shrink-0 rounded-lg border border-slate-200 object-contain"/> : <div className="h-12 w-12 shrink-0 rounded-lg bg-slate-100"/>}
-                <div className="min-w-0"><a href={item.url} target="_blank" rel="noreferrer" className="line-clamp-2 font-semibold leading-5 text-slate-900 hover:text-indigo-600">{item.title}</a><p className="mt-0.5 text-[11px] text-slate-400">Item {item.itemId}{item.sponsored ? " · Sponsored" : ""}{item.hotness ? ` · ${item.hotness}` : ""}</p></div>
+                <div className="min-w-0"><a href={item.url} target="_blank" rel="noreferrer" className="line-clamp-2 font-semibold leading-5 text-slate-900 hover:text-indigo-600">{item.title}</a><p className="mt-0.5 text-[11px] text-slate-400">{item.categoryLabel ?? "Uncategorized"} · Item {item.itemId}{item.sponsored ? " · Sponsored" : ""}{item.hotness ? ` · ${item.hotness}` : ""}</p></div>
               </div></td>
               <td className="px-4 py-3 text-right align-top font-bold tabular-nums text-emerald-600" title={item.sales7d == null ? "Requires stored observations approximately 7 days apart" : "Reported sold-count increase over approximately 7 days"}>{item.sales7d == null ? "—" : item.sales7d.toLocaleString()}</td>
               <td className="px-4 py-3 text-right align-top font-bold tabular-nums text-emerald-600" title={item.sales30d == null ? "Requires stored observations approximately 30 days apart" : "Reported sold-count increase over approximately 30 days"}>{item.sales30d == null ? "—" : item.sales30d.toLocaleString()}</td>

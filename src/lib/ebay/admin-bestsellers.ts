@@ -26,6 +26,8 @@ export type BestSellerSort =
 export type BestSellerRow = CountdownBestSeller & {
   sales7d: number | null;
   sales30d: number | null;
+  categoryId: string | null;
+  categoryLabel: string | null;
 };
 
 export type BestSellerPage = {
@@ -142,6 +144,10 @@ export async function listAdminBestSellers(options: {
   descending?: boolean;
   page?: number;
   pageSize?: number;
+  categoryId?: string;
+  minPriceCents?: number;
+  maxPriceCents?: number;
+  minSales?: number;
 }): Promise<BestSellerPage> {
   const caches = await db.scanCache.findMany({
     where: { cacheKey: { startsWith: CACHE_PREFIX } },
@@ -158,13 +164,27 @@ export async function listAdminBestSellers(options: {
     : undefined;
   const allResults = !selected;
   const combinedItems = new Map<string, CountdownBestSeller>();
+  const itemCategories = new Map<string, { id: string | null; label: string | null }>();
   if (allResults) {
     // Caches are newest first, so retain the newest stored version of each
     // listing while combining every category and keyword snapshot.
     for (const { snapshot: item } of parsed) {
       for (const product of item.items) {
-        if (!combinedItems.has(product.itemId)) combinedItems.set(product.itemId, product);
+        if (!combinedItems.has(product.itemId)) {
+          combinedItems.set(product.itemId, product);
+          itemCategories.set(product.itemId, {
+            id: item.categoryId ?? null,
+            label: item.categoryLabel ?? null,
+          });
+        }
       }
+    }
+  } else if (selected) {
+    for (const product of selected.snapshot.items) {
+      itemCategories.set(product.itemId, {
+        id: selected.snapshot.categoryId ?? null,
+        label: selected.snapshot.categoryLabel ?? null,
+      });
     }
   }
   const newest = parsed[0]?.snapshot;
@@ -205,10 +225,18 @@ export async function listAdminBestSellers(options: {
         ...item,
         sales7d: recentBestSellerSales(history, referenceAt, 7),
         sales30d: recentBestSellerSales(history, referenceAt, 30),
+        categoryId: itemCategories.get(item.itemId)?.id ?? null,
+        categoryLabel: itemCategories.get(item.itemId)?.label ?? null,
       };
     });
-  const filtered = proven.filter((item) => !query ||
-    `${item.title} ${item.itemId} ${item.sellerName} ${item.condition}`.toLowerCase().includes(query));
+  const filtered = proven.filter((item) => {
+    if (query && !`${item.title} ${item.itemId} ${item.sellerName} ${item.condition} ${item.categoryLabel ?? ""}`.toLowerCase().includes(query)) return false;
+    if (options.categoryId && item.categoryId !== options.categoryId) return false;
+    if (options.minPriceCents != null && item.totalPriceCents < options.minPriceCents) return false;
+    if (options.maxPriceCents != null && item.totalPriceCents > options.maxPriceCents) return false;
+    if (options.minSales != null && item.quantitySold < options.minSales) return false;
+    return true;
+  });
   filtered.sort((a, b) => {
     const recentField = sort === "weekSales" ? "sales7d" : sort === "monthSales" ? "sales30d" : null;
     if (recentField && (a[recentField] == null || b[recentField] == null)) {
