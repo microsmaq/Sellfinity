@@ -9,6 +9,7 @@ import {
   BROWSE_BESTSELLER_PAGE_SIZE,
   fetchEbayBrowseBestSellers,
 } from "./browse-bestsellers";
+import { recentBestSellerSales } from "./bestseller-sales-trends";
 
 const CACHE_PREFIX = "countdown:ebay-bestsellers:";
 
@@ -17,20 +18,31 @@ export type BestSellerSort =
   | "price"
   | "title"
   | "seller"
-  | "position";
+  | "position"
+  | "weekSales"
+  | "monthSales";
+
+export type BestSellerRow = CountdownBestSeller & {
+  sales7d: number | null;
+  sales30d: number | null;
+};
 
 export type BestSellerPage = {
   snapshot: CountdownBestSellerSnapshot | null;
   availableDates: { key: string; label: string; capturedAt: string; researchTerm: string }[];
   allResults: boolean;
   combinedSnapshots: number;
-  rows: CountdownBestSeller[];
+  rows: BestSellerRow[];
   page: number;
   pageSize: number;
   totalRows: number;
   totalPages: number;
   totalReportedSales: number;
   averagePriceCents: number;
+  totalSales7d: number;
+  totalSales30d: number;
+  productsWithSales7d: number;
+  productsWithSales30d: number;
 };
 
 function cacheKey(snapshot: CountdownBestSellerSnapshot): string {
@@ -168,15 +180,46 @@ export async function listAdminBestSellers(options: {
   const direction = options.descending === false ? 1 : -1;
   // Enforce the proven-demand rule while reading too, so snapshots created by
   // older releases immediately stop showing unknown/zero-sales rows.
-  const proven = (snapshot?.items ?? []).filter((item) => Number(item.quantitySold) > 0);
+  const referenceAt = Date.parse(snapshot?.capturedAt ?? "") || Date.now();
+  const observations = new Map<string, Map<string, { capturedAt: number; quantitySold: number }>>();
+  for (const { snapshot: historical } of parsed) {
+    const capturedAt = Date.parse(historical.capturedAt);
+    if (!Number.isFinite(capturedAt)) continue;
+    const day = historical.capturedAt.slice(0, 10);
+    for (const product of historical.items) {
+      const byDay = observations.get(product.itemId) ?? new Map();
+      const current = byDay.get(day);
+      if (!current || capturedAt > current.capturedAt) {
+        byDay.set(day, { capturedAt, quantitySold: Number(product.quantitySold) });
+      }
+      observations.set(product.itemId, byDay);
+    }
+  }
+  const proven: BestSellerRow[] = (snapshot?.items ?? [])
+    .filter((item) => Number(item.quantitySold) > 0)
+    .map((item) => {
+      const history = [...(observations.get(item.itemId)?.values() ?? [])];
+      return {
+        ...item,
+        sales7d: recentBestSellerSales(history, referenceAt, 7),
+        sales30d: recentBestSellerSales(history, referenceAt, 30),
+      };
+    });
   const filtered = proven.filter((item) => !query ||
     `${item.title} ${item.itemId} ${item.sellerName} ${item.condition}`.toLowerCase().includes(query));
   filtered.sort((a, b) => {
+    const recentField = sort === "weekSales" ? "sales7d" : sort === "monthSales" ? "sales30d" : null;
+    if (recentField && (a[recentField] == null || b[recentField] == null)) {
+      if (a[recentField] == null && b[recentField] == null) return a.sourcePosition - b.sourcePosition;
+      return a[recentField] == null ? 1 : -1;
+    }
     let compared = 0;
     if (sort === "price") compared = a.totalPriceCents - b.totalPriceCents;
     else if (sort === "title") compared = a.title.localeCompare(b.title);
     else if (sort === "seller") compared = a.sellerName.localeCompare(b.sellerName);
     else if (sort === "position") compared = a.sourcePosition - b.sourcePosition;
+    else if (sort === "weekSales") compared = (a.sales7d ?? 0) - (b.sales7d ?? 0);
+    else if (sort === "monthSales") compared = (a.sales30d ?? 0) - (b.sales30d ?? 0);
     else compared = a.quantitySold - b.quantitySold;
     return compared * direction || a.sourcePosition - b.sourcePosition;
   });
@@ -187,6 +230,8 @@ export async function listAdminBestSellers(options: {
   const averagePriceCents = filtered.length
     ? Math.round(filtered.reduce((sum, item) => sum + item.totalPriceCents, 0) / filtered.length)
     : 0;
+  const knownSales7d = filtered.filter((item) => item.sales7d != null);
+  const knownSales30d = filtered.filter((item) => item.sales30d != null);
   return {
     snapshot,
     allResults,
@@ -204,5 +249,9 @@ export async function listAdminBestSellers(options: {
     totalPages,
     totalReportedSales,
     averagePriceCents,
+    totalSales7d: knownSales7d.reduce((sum, item) => sum + item.sales7d!, 0),
+    totalSales30d: knownSales30d.reduce((sum, item) => sum + item.sales30d!, 0),
+    productsWithSales7d: knownSales7d.length,
+    productsWithSales30d: knownSales30d.length,
   };
 }

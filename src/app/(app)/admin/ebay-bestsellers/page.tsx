@@ -23,7 +23,7 @@ export default async function EbayBestSellersPage({
   const params = await searchParams;
   const query = typeof params.q === "string" ? params.q : "";
   const snapshotKey = typeof params.snapshot === "string" ? params.snapshot : undefined;
-  const allowedSorts: BestSellerSort[] = ["sales", "price", "title", "seller", "position"];
+  const allowedSorts: BestSellerSort[] = ["sales", "weekSales", "monthSales", "price", "title", "seller", "position"];
   const requestedSort = typeof params.sort === "string" ? params.sort : "sales";
   const sort = allowedSorts.includes(requestedSort as BestSellerSort) ? requestedSort as BestSellerSort : "sales";
   const descending = params.dir !== "asc";
@@ -63,9 +63,11 @@ export default async function EbayBestSellersPage({
     />
 
     {data.snapshot ? <>
-      <section className="grid grid-cols-2 gap-3 xl:grid-cols-4">
+      <section className="grid grid-cols-2 gap-3 xl:grid-cols-6">
         <StatCard label="Proven sellers" value={data.totalRows.toLocaleString()} sub={data.allResults ? `${data.combinedSnapshots.toLocaleString()} saved research snapshots combined` : `${(data.snapshot.sampledListings ?? data.snapshot.items.length).toLocaleString()} listings sampled`} tone="positive" />
-        <StatCard label="Reported sales" value={data.totalReportedSales.toLocaleString()} sub="Cumulative quantity sold" tone="positive" />
+        <StatCard label="Sales · 7 days" value={data.productsWithSales7d ? data.totalSales7d.toLocaleString() : "—"} sub={data.productsWithSales7d ? `${data.productsWithSales7d.toLocaleString()} products with history` : "Collecting weekly history"} tone="positive" />
+        <StatCard label="Sales · 30 days" value={data.productsWithSales30d ? data.totalSales30d.toLocaleString() : "—"} sub={data.productsWithSales30d ? `${data.productsWithSales30d.toLocaleString()} products with history` : "Collecting monthly history"} tone="positive" />
+        <StatCard label="Lifetime sales" value={data.totalReportedSales.toLocaleString()} sub="Current cumulative sold counts" tone="positive" />
         <StatCard label="Average landed price" value={money(data.averagePriceCents)} sub="Item price plus buyer shipping" />
         <StatCard label="Data provider" value={data.allResults ? "Stored data" : data.snapshot.provider === "EBAY_BROWSE" ? "eBay" : "Countdown"} sub={data.allResults ? "Newest version of every unique item · 0 API calls" : data.snapshot.provider === "EBAY_BROWSE" ? `Official ${data.snapshot.providerDetailMode === "INDIVIDUAL" ? "limited-detail" : "batch"} fallback · 0 Countdown credits` : `${data.snapshot.creditsUsed ?? "—"} credits used · ${data.snapshot.creditsRemaining ?? "—"} remaining`} />
       </section>
@@ -92,11 +94,13 @@ export default async function EbayBestSellersPage({
         </div>
 
         <div className="overflow-x-auto">
-          <table className="min-w-[980px] w-full text-left text-sm">
+          <table className="min-w-[1160px] w-full text-left text-sm">
             <thead className="border-b border-slate-200 bg-white text-[11px] uppercase tracking-[.06em] text-slate-500"><tr>
               <th className="px-4 py-3 font-semibold">#</th>
               <th className="px-4 py-3 font-semibold"><Link href={sortHref("title")} className="hover:text-indigo-600">Product ↕</Link></th>
-              <th className="px-4 py-3 text-right font-semibold"><Link href={sortHref("sales")} className="hover:text-indigo-600">Proven sales ↕</Link></th>
+              <th className="px-4 py-3 text-right font-semibold"><Link href={sortHref("weekSales")} className="hover:text-indigo-600">Last 7d ↕</Link></th>
+              <th className="px-4 py-3 text-right font-semibold"><Link href={sortHref("monthSales")} className="hover:text-indigo-600">Last 30d ↕</Link></th>
+              <th className="px-4 py-3 text-right font-semibold"><Link href={sortHref("sales")} className="hover:text-indigo-600">Lifetime ↕</Link></th>
               <th className="px-4 py-3 text-right font-semibold"><Link href={sortHref("price")} className="hover:text-indigo-600">Price ↕</Link></th>
               <th className="px-4 py-3 text-right font-semibold">Shipping</th>
               <th className="px-4 py-3 font-semibold"><Link href={sortHref("seller")} className="hover:text-indigo-600">Seller ↕</Link></th>
@@ -108,7 +112,9 @@ export default async function EbayBestSellersPage({
                 {item.imageUrl ? <Image src={item.imageUrl} alt="" width={48} height={48} unoptimized className="h-12 w-12 shrink-0 rounded-lg border border-slate-200 object-contain"/> : <div className="h-12 w-12 shrink-0 rounded-lg bg-slate-100"/>}
                 <div className="min-w-0"><a href={item.url} target="_blank" rel="noreferrer" className="line-clamp-2 font-semibold leading-5 text-slate-900 hover:text-indigo-600">{item.title}</a><p className="mt-0.5 text-[11px] text-slate-400">Item {item.itemId}{item.sponsored ? " · Sponsored" : ""}{item.hotness ? ` · ${item.hotness}` : ""}</p></div>
               </div></td>
-              <td className="px-4 py-3 text-right align-top"><span className="text-base font-bold tabular-nums text-emerald-600">{item.quantitySold.toLocaleString()}</span></td>
+              <td className="px-4 py-3 text-right align-top font-bold tabular-nums text-emerald-600" title={item.sales7d == null ? "Requires stored observations approximately 7 days apart" : "Reported sold-count increase over approximately 7 days"}>{item.sales7d == null ? "—" : item.sales7d.toLocaleString()}</td>
+              <td className="px-4 py-3 text-right align-top font-bold tabular-nums text-emerald-600" title={item.sales30d == null ? "Requires stored observations approximately 30 days apart" : "Reported sold-count increase over approximately 30 days"}>{item.sales30d == null ? "—" : item.sales30d.toLocaleString()}</td>
+              <td className="px-4 py-3 text-right align-top"><span className="text-base font-bold tabular-nums text-slate-800">{item.quantitySold.toLocaleString()}</span></td>
               <td className="px-4 py-3 text-right align-top font-semibold tabular-nums text-slate-900">{money(item.priceCents)}<p className="text-[11px] font-normal text-slate-400">{money(item.totalPriceCents)} landed</p></td>
               <td className="px-4 py-3 text-right align-top tabular-nums text-slate-600">{item.shippingCents ? money(item.shippingCents) : "Free"}</td>
               <td className="px-4 py-3 align-top"><p className="max-w-40 truncate font-medium text-slate-700">{item.sellerName}</p><p className="text-[11px] text-slate-400">{item.sellerFeedbackPct != null ? `${item.sellerFeedbackPct}% positive` : "Feedback unavailable"}</p></td>
@@ -123,7 +129,7 @@ export default async function EbayBestSellersPage({
           <div className="flex gap-2"><Link aria-disabled={data.page <= 1} href={data.page <= 1 ? href({ page: 1 }) : href({ page: data.page - 1 })} className={`rounded-lg border px-3 py-2 font-semibold ${data.page <= 1 ? "pointer-events-none text-slate-300" : "text-slate-700 hover:bg-slate-50"}`}>Previous</Link><Link aria-disabled={data.page >= data.totalPages} href={data.page >= data.totalPages ? href({ page: data.totalPages }) : href({ page: data.page + 1 })} className={`rounded-lg border px-3 py-2 font-semibold ${data.page >= data.totalPages ? "pointer-events-none text-slate-300" : "text-slate-700 hover:bg-slate-50"}`}>Next</Link></div>
         </div>
       </Card>
-      <p className="px-1 text-xs leading-5 text-slate-500">“Proven sales” is eBay’s explicit cumulative quantity-sold value for the active listing. Listings where eBay does not publish this figure are excluded—not treated as zero. The snapshot date shows when Sellfinity collected the evidence.</p>
+      <p className="px-1 text-xs leading-5 text-slate-500">Lifetime sales is eBay’s reported cumulative sold quantity. Last 7d and Last 30d are the increase between locally stored observations near those dates. A dash means Sellfinity does not yet have enough history; it is not treated as zero.</p>
     </> : <Card className="px-6 py-16 text-center"><div className="mx-auto max-w-xl"><p className="text-lg font-bold text-slate-900">No bestseller snapshot yet</p><p className="mt-2 text-sm leading-6 text-slate-500">Run one refresh to collect up to 240 listings in a single broad request. Sellfinity will save and reuse that data without spending more trial credits when you search, sort, paginate, or revisit the page.</p></div></Card>}
   </div>;
 }
