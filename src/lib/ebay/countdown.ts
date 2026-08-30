@@ -87,6 +87,7 @@ export type CountdownBestSellerSnapshot = {
   hasMoreResults?: boolean;
   categoryId?: string;
   categoryLabel?: string;
+  totalUniqueStored?: number;
 };
 
 export function countdownConfigured(): boolean {

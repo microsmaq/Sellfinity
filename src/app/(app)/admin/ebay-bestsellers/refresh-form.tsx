@@ -90,9 +90,9 @@ export function BestSellerRefreshForm({
       });
     }
 
-    let message = `Added ${added} new proven seller${added === 1 ? "" : "s"}. ${totalStored} stored for this category.`;
+    let message = `Added ${added} system-wide new proven seller${added === 1 ? "" : "s"}. ${totalStored} unique products stored.`;
     if (failure) message = failure;
-    else if (added >= target) message = `Complete — added ${added} new proven sellers. ${totalStored} stored for this category.`;
+    else if (added >= target) message = `Complete — added ${added} system-wide new proven sellers. ${totalStored} unique products stored.`;
     else if (!hasMore) message += " Reached the end of available eBay results.";
     else if (emptyPages >= MAX_EMPTY_PAGES) message += " Stopped after 5 pages had no additional products with reported sales.";
     else if (pages >= MAX_PAGES_PER_RUN) message += " Paused at the 25-page API safety limit; run it again to continue.";

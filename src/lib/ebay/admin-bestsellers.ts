@@ -10,6 +10,7 @@ import {
   fetchEbayBrowseBestSellers,
 } from "./browse-bestsellers";
 import { recentBestSellerSales } from "./bestseller-sales-trends";
+import { countGloballyNewBestSellers } from "./bestseller-dedupe";
 
 const CACHE_PREFIX = "countdown:ebay-bestsellers:";
 
@@ -72,11 +73,15 @@ export async function refreshAdminBestSellers(
 ) {
   const term = researchTerm.trim().slice(0, 120) || "electronics";
   const todayKey = cacheKeyFor(term, new Date().toISOString().slice(0, 10), categoryId);
-  const existingCache = await db.scanCache.findUnique({
-    where: { cacheKey: todayKey },
-    select: { dataJson: true },
+  const storedCaches = await db.scanCache.findMany({
+    where: { cacheKey: { startsWith: CACHE_PREFIX } },
+    select: { cacheKey: true, dataJson: true },
   });
+  const existingCache = storedCaches.find((cache) => cache.cacheKey === todayKey);
   const existing = existingCache ? parseSnapshot(existingCache.dataJson) : null;
+  const globallyStoredIds = new Set(
+    storedCaches.flatMap((cache) => parseSnapshot(cache.dataJson)?.items.map((item) => item.itemId) ?? []),
+  );
   const previousOffset = existing?.provider === "EBAY_BROWSE"
     ? Math.max(0, Number(existing.searchOffset ?? 0))
     : 0;
@@ -104,11 +109,8 @@ export async function refreshAdminBestSellers(
 
   const lastBatchSampledListings = Number(snapshot.lastBatchSampledListings ?? snapshot.sampledListings ?? 0);
   const priorItems = existing?.items ?? [];
-  const priorIds = new Set(priorItems.map((item) => item.itemId));
-  const newItemsAdded = snapshot.items.reduce(
-    (count, item) => count + (priorIds.has(item.itemId) ? 0 : 1),
-    0,
-  );
+  const newItemsAdded = countGloballyNewBestSellers(snapshot.items, globallyStoredIds);
+  snapshot.totalUniqueStored = globallyStoredIds.size + newItemsAdded;
   if (existing) {
     const merged = new Map(priorItems.map((item) => [item.itemId, item]));
     for (const item of snapshot.items) merged.set(item.itemId, item);
@@ -122,7 +124,7 @@ export async function refreshAdminBestSellers(
       lastBatchSampledListings,
     };
   } else {
-    snapshot.newItemsAdded = snapshot.items.length;
+    snapshot.newItemsAdded = newItemsAdded;
     snapshot.lastBatchSampledListings = lastBatchSampledListings;
   }
   await db.scanCache.upsert({
