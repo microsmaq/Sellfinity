@@ -234,6 +234,12 @@ export function OrdersView({ orders, fetchError, profitProtectionEnabled, autoRe
   const [amazonOrderNumbers, setAmazonOrderNumbers] = useState<Record<string, string>>({});
   const [linkingOrderId, setLinkingOrderId] = useState<string | null>(null);
   const displayOrders = useMemo(() => orders.map((order) => ({ ...order, ...orderOverrides[order.id] })), [orderOverrides, orders]);
+  const trackingHelperOrders = useMemo(() => displayOrders.filter((order) =>
+    !order.trackingNumber
+    && !!order.amazonTrackingUrl
+    && order.stage !== "CANCELLED"
+    && order.stage !== "REFUNDED"
+  ), [displayOrders]);
 
   function duplicateAwaitingOrders(order: FulfillmentOrderRow) {
     return displayOrders.filter((candidate) =>
@@ -444,13 +450,7 @@ export function OrdersView({ orders, fetchError, profitProtectionEnabled, autoRe
   }
 
   function refreshFulfillment() {
-    const helperCandidates = displayOrders.filter((order) =>
-      !order.trackingNumber
-      && !!order.amazonTrackingUrl
-      && order.stage !== "DELIVERED"
-      && order.stage !== "CANCELLED"
-      && order.stage !== "REFUNDED"
-    ).length;
+    const helperCandidates = trackingHelperOrders.length;
     const startedAt = Date.now();
     setRefreshElapsed(0);
     setRefreshRun({
@@ -512,6 +512,34 @@ export function OrdersView({ orders, fetchError, profitProtectionEnabled, autoRe
         if (result.restock.restocked) details.push(`${result.restock.restocked} listing${result.restock.restocked === 1 ? "" : "s"} refilled to 5`);
         if (result.restock.failed) details.push(`${result.restock.failed} stock refill${result.restock.failed === 1 ? "" : "s"} failed`);
         if (result.restockError) details.push("stock check unavailable");
+        const helperRequests = result.trackingHelperRequests ?? [];
+        if (helperRequests.length) {
+          // The email scan may have discovered these URLs moments ago, after
+          // the pre-refresh helper scan. Mirror them into the current rows so
+          // both current and older helper versions can process them now.
+          setOrderOverrides((current) => {
+            const next = { ...current };
+            for (const request of helperRequests) {
+              next[request.orderId] = { ...next[request.orderId], amazonTrackingUrl: request.amazonUrl };
+            }
+            return next;
+          });
+          setTab("NEEDS_ACTION");
+          setQuery("");
+          setRefreshRun((current) => current ? {
+            ...current,
+            helper: "starting",
+            trackingTotal: 0,
+            trackingProcessed: 0,
+            trackingFound: 0,
+          } : current);
+          window.requestAnimationFrame(() => window.requestAnimationFrame(() => {
+            document.dispatchEvent(new CustomEvent("sellfinity:bulk-tracking-refresh", {
+              detail: { requests: helperRequests },
+            }));
+          }));
+          details.push(`${helperRequests.length} signed-in Amazon tracking check${helperRequests.length === 1 ? "" : "s"} started`);
+        }
         setRefreshMessage(`Refresh complete: ${details.join(" · ")}.`);
         setRefreshRun((current) => current ? {
           ...current,
@@ -710,6 +738,28 @@ export function OrdersView({ orders, fetchError, profitProtectionEnabled, autoRe
             Shipped or delivered orders appear here only when you can still resolve tracking or the listing&apos;s future price needs attention. Temporary eBay errors on delivered orders retry automatically under Exceptions.
           </p>
         )}
+
+        {/* Keep this before the visual mobile/desktop rows. Installed helper
+         * versions use the first matching field when they auto-save, so this
+         * stable hidden row also works when an order is outside the filter. */}
+        <table className="hidden" aria-hidden="true">
+          <tbody>
+            {trackingHelperOrders.map((order) => (
+              <tr key={`tracking-helper-${order.id}`}>
+                <td><a href={order.amazonTrackingUrl!}>Open Amazon tracking</a></td>
+                <td>
+                  <input
+                    data-order-id={order.id}
+                    value={manualTracking[order.id] ?? ""}
+                    onChange={(event) => setManualTracking((current) => ({ ...current, [order.id]: event.target.value }))}
+                    aria-label={`Tracking number for ${order.ebayOrderId}`}
+                  />
+                  <button type="button" onClick={() => submitTracking(order)}>Save tracking</button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
 
         <div className="space-y-3 bg-slate-50/60 p-3 md:hidden">
           {filtered.map((order) => {

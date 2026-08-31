@@ -65,8 +65,8 @@
     saveQueuedTracking();
   }
 
-  function bulkTrackingRequests() {
-    return [...document.querySelectorAll("a")]
+  function bulkTrackingRequests(suppliedRequests = []) {
+    const discovered = [...document.querySelectorAll("a")]
       .filter((anchor) => /open amazon tracking/i.test(anchor.textContent || ""))
       .flatMap((anchor) => {
         const input = anchor.closest("tr")?.querySelector('input[aria-label^="Tracking number for "]');
@@ -77,6 +77,16 @@
           amazonUrl: anchor.href
         }];
       });
+    const supplied = suppliedRequests.flatMap((request) => {
+      if (!request?.orderId || !request.amazonUrl) return [];
+      const input = document.querySelector(`input[data-order-id="${CSS.escape(request.orderId)}"]`);
+      return [{
+        orderId: request.orderId,
+        inputLabel: input?.getAttribute("aria-label") || null,
+        amazonUrl: request.amazonUrl
+      }];
+    });
+    return [...new Map([...supplied, ...discovered].map((request) => [request.orderId, request])).values()];
   }
 
   function reportBulkProgress(status = "running") {
@@ -96,8 +106,8 @@
     reportBulkProgress(bulkProgress.processed >= bulkProgress.total ? "complete" : "running");
   }
 
-  document.addEventListener("sellfinity:bulk-tracking-refresh", () => {
-    const requests = bulkTrackingRequests();
+  document.addEventListener("sellfinity:bulk-tracking-refresh", (event) => {
+    const requests = bulkTrackingRequests(event.detail?.requests || []);
     if (!requests.length) return;
     chrome.runtime.sendMessage({ type: "BEGIN_BULK_TRACKING_REQUEST", requests })
       .then((result) => {
@@ -135,7 +145,9 @@
   chrome.runtime.onMessage.addListener((message) => {
     if (message?.type === "FILL_TRACKING") {
       const inputs = [...document.querySelectorAll('input[aria-label^="Tracking number for "]')];
-      const input = inputs.find((candidate) => candidate.getAttribute("aria-label") === message.inputLabel);
+      const input = message.orderId
+        ? document.querySelector(`input[data-order-id="${CSS.escape(message.orderId)}"]`)
+        : inputs.find((candidate) => candidate.getAttribute("aria-label") === message.inputLabel);
       if (!(input instanceof HTMLInputElement)) {
         if (message.autoSave) finishBulkItem(false);
         else toast("Tracking was found, but the original fulfillment row is no longer visible.", "error");

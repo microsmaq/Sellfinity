@@ -28,8 +28,40 @@ export async function syncAmazonEmailsNow() {
     let restockError: string | null = null;
     try { restock = await restockLowFulfillmentInventory(user.id); }
     catch (error) { restockError = error instanceof Error ? error.message.slice(0, 300) : "eBay stock refill failed"; }
+    // Amazon frequently exposes the shipment link in email before its public
+    // page reveals a carrier number. Return every still-unresolved link after
+    // the email scan so the signed-in Chrome helper can finish the job during
+    // this same Refresh run (rather than waiting for a second click).
+    const unresolvedTrackingItems = await db.amazonPurchaseItem.findMany({
+      where: {
+        purchase: {
+          userId: user.id,
+          trackingNumber: null,
+          trackingUrl: { not: null },
+        },
+        matchedOrder: {
+          is: {
+            userId: user.id,
+            ebayTrackingNumber: null,
+            status: { not: "REFUNDED" },
+            sourcingStatus: { not: "CANCELLED" },
+          },
+        },
+      },
+      select: {
+        matchedOrderId: true,
+        purchase: { select: { trackingUrl: true } },
+      },
+      orderBy: { createdAt: "desc" },
+      take: 200,
+    });
+    const trackingHelperRequests = unresolvedTrackingItems.flatMap((item) =>
+      item.matchedOrderId && item.purchase.trackingUrl
+        ? [{ orderId: item.matchedOrderId, amazonUrl: item.purchase.trackingUrl }]
+        : []
+    );
     revalidatePath("/dashboard"); revalidatePath("/settings"); revalidatePath("/orders"); revalidatePath("/listings");
-    return { ...result, ebayImport, tracking, trackingError, protection, restock, restockError };
+    return { ...result, ebayImport, tracking, trackingError, protection, restock, restockError, trackingHelperRequests };
   } catch (error) {
     const message = error instanceof Error ? error.message.slice(0, 300) : "Amazon email sync failed";
     await db.amazonEmailConnection.updateMany({ where: { userId: user.id }, data: { lastSyncError: message } });

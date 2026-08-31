@@ -15,10 +15,11 @@
 4. When a supported tracking number appears, the extension returns to Sellfinity and fills that order's tracking field.
 5. Review the number and click **Save & mark shipped**.
 
-You can also click **Refresh Amazon & eBay** in Sellfinity. Version 1.1.2 checks
-all visible unresolved Amazon tracking links in the background and saves every
-tracking ID it finds. Its progress is shown inside the animated Fulfillment
-refresh panel. Keep Amazon signed in while the check runs.
+You can also click **Refresh Amazon & eBay** in Sellfinity. Version 1.1.3 checks
+all unresolved Amazon tracking links in the background, including links found
+by the email scan during that same refresh, and saves every tracking ID it
+finds. Its progress is shown inside the animated Fulfillment refresh panel.
+Keep Amazon signed in while the check runs.
 
 After updating the extension files, click the extension's **Reload** button on
 `chrome://extensions` before trying it again.
