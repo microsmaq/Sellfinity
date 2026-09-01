@@ -709,7 +709,7 @@ export function EbayListingsTable({
       if (healthFilter === "attention") return listingNeedsAttention(row);
       if (healthFilter === "healthy") return Boolean(row.match && !row.match.unavailable && (profit?.profitCents ?? 0) > 0 && !listingNeedsAttention(row));
       if (healthFilter === "protected") return Boolean(row.verifiedWinner || row.priceLocked);
-      if (healthFilter === "unmatched") return !row.match;
+      if (healthFilter === "unmatched") return !row.match && row.sourceAssessment?.method !== "MANUAL";
       if (healthFilter === "highConfidence") return isHighConfidenceReview(row);
       if (healthFilter === "unprofitable") return Boolean(row.match && (profit?.profitCents ?? 0) <= 0);
       if (healthFilter === "needsPricing") return !row.verifiedWinner && !row.priceLocked && canApplySuggestedPrice(row, sitewideDiscountBps, adRateBps);
@@ -1635,7 +1635,7 @@ export function EbayListingsTable({
     });
   }
 
-  const unmatched = rows.filter((r) => !r.match).length;
+  const unmatched = rows.filter((r) => !r.match && r.sourceAssessment?.method !== "MANUAL").length;
   const highConfidenceCandidates = rows.filter(isHighConfidenceReview).length;
   const latestMarketUpdate = rows.reduce<string | null>((latest, row) => {
     if (!row.marketUpdatedAt) return latest;

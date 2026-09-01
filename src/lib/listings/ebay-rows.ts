@@ -68,7 +68,11 @@ export function buildEbayRows(
   // letting an older duplicate overwrite it in the Map constructor.
   const byEbayId = new Map<string, LocalListingFacts>();
   for (const listing of local) {
-    if (listing.ebayListingId && !byEbayId.has(listing.ebayListingId)) {
+    if (!listing.ebayListingId) continue;
+    const retained = byEbayId.get(listing.ebayListingId);
+    // A seller decision is authoritative even if a later automatic job left
+    // an older duplicate row with a newer timestamp or stale verdict.
+    if (!retained || (listing.sourceMatchMethod === "MANUAL" && retained.sourceMatchMethod !== "MANUAL")) {
       byEbayId.set(listing.ebayListingId, listing);
     }
   }
@@ -108,7 +112,8 @@ export function buildEbayRows(
       });
       continue;
     }
-    if (!["MATCH", "LIKELY"].includes(localListing.sourceMatchVerdict)) {
+    const manuallyVerified = localListing.sourceMatchMethod === "MANUAL";
+    if (!manuallyVerified && !["MATCH", "LIKELY"].includes(localListing.sourceMatchVerdict)) {
       const market =
         marketMetrics.get(r.ebayListingId) ??
         marketMetrics.get(localListing.product.sku) ??

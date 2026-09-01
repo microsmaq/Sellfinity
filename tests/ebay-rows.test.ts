@@ -103,6 +103,23 @@ describe("buildEbayRows", () => {
     expect(row.sourceAssessment?.method).toBe("MANUAL");
   });
 
+  it("treats a manual decision as authoritative even when its verdict is stale", () => {
+    const automatic = local("9");
+    automatic.sourceMatchVerdict = "REVIEW";
+    automatic.sourceMatchMethod = "RULES";
+    automatic.product.sku = "AUTOMATIC-CANDIDATE";
+    const manual = local("9");
+    manual.sourceMatchVerdict = "UNVERIFIED";
+    manual.sourceMatchMethod = "MANUAL";
+    manual.sourceMatchConfidence = 100;
+    manual.product.sku = "SELLER-APPROVED-ASIN";
+
+    const row = buildEbayRows([remote("9")], [automatic, manual])[0];
+
+    expect(row.match?.sku).toBe("SELLER-APPROVED-ASIN");
+    expect(row.sourceAssessment?.method).toBe("MANUAL");
+  });
+
   it("deduplicates listings repeated across eBay pagination boundaries", () => {
     const rows = buildEbayRows(
       [remote("1"), remote("2"), remote("1")],
