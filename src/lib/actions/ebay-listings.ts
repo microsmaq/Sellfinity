@@ -297,7 +297,7 @@ export async function approveAmazonCandidatesBulk(
     where: {
       userId: user.id,
       ebayListingId: { in: unique.map((item) => item.ebayListingId) },
-      sourceMatchVerdict: { in: ["MATCH", "LIKELY", "REVIEW"] },
+      sourceMatchVerdict: { in: ["MATCH", "LIKELY", "REVIEW", "UNVERIFIED", "PROCESSING"] },
       sourceMatchMethod: { not: "MANUAL" },
       sourceMatchConfidence: { gte: 95, lte: 100 },
     },

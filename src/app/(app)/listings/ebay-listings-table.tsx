@@ -238,7 +238,7 @@ function isHighConfidenceReview(row: EbayRow): boolean {
   return Boolean(
     row.source &&
     row.sourceAssessment &&
-    ["MATCH", "LIKELY", "REVIEW"].includes(row.sourceAssessment.verdict) &&
+    ["MATCH", "LIKELY", "REVIEW", "UNVERIFIED", "PROCESSING"].includes(row.sourceAssessment.verdict) &&
     row.sourceAssessment.method !== "MANUAL" &&
     confidence !== null &&
     confidence !== undefined &&
@@ -775,10 +775,11 @@ export function EbayListingsTable({
   const smartSyncTargetRows = smartSyncScope === "SELECTED"
     ? rows.filter((row) => selected.has(row.ebayListingId))
     : rows;
-  const selectedHighConfidenceRows = filteredRows.filter(
+  const highConfidenceRowsInView = filteredRows.filter(isHighConfidenceReview);
+  const selectedHighConfidenceRows = highConfidenceRowsInView.filter(
     (row) => selected.has(row.ebayListingId) && isHighConfidenceReview(row),
   );
-  const allHighConfidenceSelected = filteredRows.length > 0 && filteredRows.every((row) => selected.has(row.ebayListingId));
+  const allHighConfidenceSelected = highConfidenceRowsInView.length > 0 && highConfidenceRowsInView.every((row) => selected.has(row.ebayListingId));
 
   useEffect(() => {
     function receiveAmazonPrice(event: Event) {
@@ -1890,10 +1891,10 @@ export function EbayListingsTable({
               <div><h2 className="font-semibold text-slate-950">{healthFilter === "highConfidence" ? "High-confidence candidate review" : "Unmatched source review"}</h2><p className="mt-1 text-xs leading-5 text-slate-600">{healthFilter === "highConfidence" ? "Every non-verified Amazon candidate with 95–100% confidence is shown, including automatically matched items. Select the matches you agree with, then approve them together." : "Compare the eBay item with its Amazon candidate. Approval permanently records this pairing as manually verified with 100% confidence."}</p></div>
               <div className="flex flex-wrap items-center gap-2">
                 <Badge tone="indigo">{filteredRows.length.toLocaleString()} {healthFilter === "highConfidence" ? "high confidence" : "unmatched"}</Badge>
-                {healthFilter === "highConfidence" && <>
+                {(healthFilter === "highConfidence" || highConfidenceRowsInView.length > 0) && <>
                   <label className="flex cursor-pointer items-center gap-2 rounded-lg border border-indigo-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700">
                     <input type="checkbox" checked={allHighConfidenceSelected} onChange={toggleAllHighConfidenceCandidates} className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500" />
-                    Select all {filteredRows.length.toLocaleString()}
+                    Select all {highConfidenceRowsInView.length.toLocaleString()} at 95–100%
                   </label>
                   <Button size="sm" disabled={pending || selectedHighConfidenceRows.length === 0} onClick={approveSelectedHighConfidenceCandidates}>
                     {bulkApprovalProgress ? `Approving ${bulkApprovalProgress.completed}/${bulkApprovalProgress.total}` : `Approve selected (${selectedHighConfidenceRows.length})`}
@@ -1910,7 +1911,7 @@ export function EbayListingsTable({
                 <article key={`review-${row.ebayListingId}`} className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
                   <div className="grid gap-0 sm:grid-cols-2">
                     <div className="border-b border-slate-100 p-4 sm:border-b-0 sm:border-r">
-                      <div className="flex items-center justify-between gap-2"><p className="text-[10px] font-semibold uppercase tracking-[.1em] text-slate-400">eBay listing</p>{healthFilter === "highConfidence" && <input type="checkbox" checked={selected.has(row.ebayListingId)} onChange={() => toggleSelected(row.ebayListingId)} aria-label={`Select ${row.title}`} className="h-5 w-5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500" />}</div>
+                      <div className="flex items-center justify-between gap-2"><p className="text-[10px] font-semibold uppercase tracking-[.1em] text-slate-400">eBay listing</p>{isHighConfidenceReview(row) && <input type="checkbox" checked={selected.has(row.ebayListingId)} onChange={() => toggleSelected(row.ebayListingId)} aria-label={`Select ${row.title}`} className="h-5 w-5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500" />}</div>
                       <div className="mt-3 flex gap-3">
                         {row.imageUrl ? <>
                           {/* eslint-disable-next-line @next/next/no-img-element -- External marketplace image hosts are dynamic. */}
@@ -1939,7 +1940,7 @@ export function EbayListingsTable({
                     </div>
                   )}
                   <div className="flex flex-wrap items-center gap-2 border-t border-slate-100 px-4 py-3">
-                    {!review || rejected ? <Button size="sm" variant="secondary" disabled={pending || busyId === row.ebayListingId} onClick={() => findReviewCandidate(row)}>{busyId === row.ebayListingId ? "Searching Amazon…" : rejected ? "Find another candidate" : "Find Amazon candidate"}</Button> : <><Button size="sm" disabled={pending || busyId === row.ebayListingId} onClick={() => approveReviewCandidate(row)}>{busyId === row.ebayListingId ? "Saving…" : "Approve match"}</Button>{healthFilter === "unmatched" && <Button size="sm" variant="secondary" disabled={pending || busyId === row.ebayListingId} onClick={() => rejectReviewCandidate(row)}>Reject candidate</Button>}</>}
+                    {!review || rejected ? <Button size="sm" variant="secondary" disabled={pending || busyId === row.ebayListingId} onClick={() => findReviewCandidate(row)}>{busyId === row.ebayListingId ? "Searching Amazon…" : rejected ? "Find another candidate" : "Find Amazon candidate"}</Button> : <><Button size="sm" disabled={pending || busyId === row.ebayListingId} onClick={() => approveReviewCandidate(row)}>{busyId === row.ebayListingId ? "Saving…" : "Approve match"}</Button>{healthFilter === "unmatched" && review.verdict === "REVIEW" && <Button size="sm" variant="secondary" disabled={pending || busyId === row.ebayListingId} onClick={() => rejectReviewCandidate(row)}>Reject candidate</Button>}</>}
                     {row.source?.url && <a href={row.source.url} target="_blank" rel="noreferrer" className="ml-auto text-xs font-semibold text-indigo-700 hover:underline">Open Amazon ↗</a>}
                   </div>
                 </article>
