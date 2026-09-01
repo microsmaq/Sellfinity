@@ -43,6 +43,7 @@ import { hasSelectedSmartSyncOption, type SmartSyncOptions } from "@/lib/listing
 import { getAdminAmazonSourceWithFallback, NoUsableAmazonSourceError } from "@/lib/listings/admin-amazon-source";
 import { applyShippingStrategyToDescription, applyShippingStrategyToTitle } from "@/lib/ebay/description";
 import { resolveTargetProfitCents } from "@/lib/listings/target-profit";
+import { LISTING_QUANTITY_CAP } from "@/lib/listings/generate";
 
 export type EbayListingResult = { error?: string };
 
@@ -81,6 +82,202 @@ export async function matchEbayListing(input: TrackInput): Promise<TrackResult> 
   const result = await matchAndTrackListing(user.id, input);
   revalidate();
   return result;
+}
+
+export type AmazonReviewCandidateResult =
+  | {
+      ok: true;
+      ebayListingId: string;
+      candidate: {
+        sku: string;
+        title: string;
+        imageUrl: string | null;
+        amazonPriceCents: number;
+        amazonShippingCents: number;
+        amazonUrl: string;
+      };
+      assessment: { verdict: string; confidence: number; reason: string; method: string };
+    }
+  | { ok: false; ebayListingId: string; error: string };
+
+/** Save the strongest Amazon search result as a reviewable pairing without
+ * treating it as trusted inventory. This spends one search lookup only when
+ * the listing has no retained candidate (or the seller rejected the prior
+ * candidate and asks for another). */
+export async function findAmazonCandidateForReview(input: TrackInput): Promise<AmazonReviewCandidateResult> {
+  const user = await requireUser();
+  const existing = await db.listing.findFirst({
+    where: { userId: user.id, ebayListingId: input.ebayListingId },
+    include: { product: true },
+  });
+  if (existing && ["MATCH", "LIKELY"].includes(existing.sourceMatchVerdict)) {
+    return { ok: false, ebayListingId: input.ebayListingId, error: "This listing already has an approved Amazon source." };
+  }
+  if (existing && existing.sourceMatchVerdict === "REVIEW") {
+    return {
+      ok: true,
+      ebayListingId: input.ebayListingId,
+      candidate: {
+        sku: existing.product.sku,
+        title: existing.product.title,
+        imageUrl: firstImage(existing.product.imageUrlsJson),
+        amazonPriceCents: existing.product.costCents,
+        amazonShippingCents: existing.product.shippingCostCents,
+        amazonUrl: existing.product.supplierUrl,
+      },
+      assessment: {
+        verdict: "REVIEW",
+        confidence: existing.sourceMatchConfidence ?? 0,
+        reason: existing.sourceMatchReason ?? "Candidate is waiting for manual review.",
+        method: existing.sourceMatchMethod ?? "RULES",
+      },
+    };
+  }
+
+  let candidates;
+  try {
+    candidates = await findAmazonMatches(input.title, 5, {
+      throwOnError: true,
+      workflow: "listing_manual_review_search",
+    });
+  } catch (error) {
+    return { ok: false, ebayListingId: input.ebayListingId, error: error instanceof Error ? error.message : "Amazon candidate search failed." };
+  }
+  const priorAsin = existing?.product.sku.toUpperCase();
+  const candidate = candidates.find((item) => item.asin.toUpperCase() !== priorAsin) ?? null;
+  if (!candidate) return { ok: false, ebayListingId: input.ebayListingId, error: "No new Amazon candidate was found for manual review." };
+  const assessment = await assessProductMatch(
+    { title: input.title, imageUrl: input.imageUrl },
+    { title: candidate.title, imageUrl: candidate.imageUrl },
+  );
+  const reviewConfidence = assessment.verdict === "REJECTED"
+    ? Math.max(1, 100 - assessment.confidence)
+    : assessment.confidence;
+  await db.$transaction(async (transaction) => {
+    const product = await transaction.product.upsert({
+      where: { userId_sku: { userId: user.id, sku: candidate.asin } },
+      create: {
+        userId: user.id,
+        sku: candidate.asin,
+        title: candidate.title,
+        description: candidate.title,
+        imageUrlsJson: serializeImageUrls(candidate.imageUrl ? [candidate.imageUrl] : []),
+        category: "Imported",
+        supplierName: "Amazon",
+        supplierProductId: candidate.asin,
+        supplierUrl: candidate.url,
+        costCents: candidate.priceCents,
+        supplierStock: 50,
+        shippingCostCents: candidate.shippingCostCents,
+        suggestedPriceCents: input.priceCents,
+        sourceScore: reviewConfidence,
+      },
+      update: {
+        title: candidate.title,
+        supplierUrl: candidate.url,
+        costCents: candidate.priceCents,
+        shippingCostCents: candidate.shippingCostCents,
+      },
+    });
+    if (existing) {
+      await transaction.listing.update({
+        where: { id: existing.id },
+        data: {
+          productId: product.id,
+          sourceMatchVerdict: "REVIEW",
+          sourceMatchConfidence: reviewConfidence,
+          sourceMatchReason: `Candidate for manual review: ${assessment.reason}`.slice(0, 240),
+          sourceMatchMethod: assessment.method,
+          sourceMatchCheckedAt: new Date(),
+        },
+      });
+      if (existing.productId !== product.id) {
+        const remaining = await transaction.listing.count({ where: { productId: existing.productId } });
+        if (remaining === 0) await transaction.product.delete({ where: { id: existing.productId } });
+      }
+    } else {
+      await transaction.listing.create({
+        data: {
+          userId: user.id,
+          productId: product.id,
+          title: input.title,
+          description: input.title,
+          priceCents: input.priceCents,
+          quantity: Math.min(LISTING_QUANTITY_CAP, input.quantity ?? 1),
+          imageUrlsJson: serializeImageUrls(input.imageUrl ? [input.imageUrl] : []),
+          status: "ACTIVE",
+          ebayListingId: input.ebayListingId,
+          publishedAt: new Date(),
+          sourceMatchVerdict: "REVIEW",
+          sourceMatchConfidence: reviewConfidence,
+          sourceMatchReason: `Candidate for manual review: ${assessment.reason}`.slice(0, 240),
+          sourceMatchMethod: assessment.method,
+          sourceMatchCheckedAt: new Date(),
+        },
+      });
+    }
+  });
+  revalidate();
+  return {
+    ok: true,
+    ebayListingId: input.ebayListingId,
+    candidate: {
+      sku: candidate.asin,
+      title: candidate.title,
+      imageUrl: candidate.imageUrl ?? null,
+      amazonPriceCents: candidate.priceCents,
+      amazonShippingCents: candidate.shippingCostCents,
+      amazonUrl: candidate.url,
+    },
+    assessment: { ...assessment, verdict: "REVIEW", confidence: reviewConfidence, reason: `Candidate for manual review: ${assessment.reason}` },
+  };
+}
+
+export async function approveAmazonCandidate(ebayListingId: string) {
+  const user = await requireUser();
+  const listing = await db.listing.findFirst({
+    where: { userId: user.id, ebayListingId, sourceMatchVerdict: { in: ["REVIEW", "REJECTED"] } },
+    include: { product: true },
+  });
+  if (!listing) return { error: "The review candidate is no longer available." };
+  await db.listing.update({
+    where: { id: listing.id },
+    data: {
+      sourceMatchVerdict: "MATCH",
+      sourceMatchConfidence: 100,
+      sourceMatchReason: "Manually verified by the seller as the correct Amazon product.",
+      sourceMatchMethod: "MANUAL",
+      sourceMatchCheckedAt: new Date(),
+    },
+  });
+  revalidate();
+  return {
+    approved: true as const,
+    assessment: { verdict: "MATCH", confidence: 100, reason: "Manually verified by the seller as the correct Amazon product.", method: "MANUAL" },
+    match: {
+      sku: listing.product.sku,
+      amazonPriceCents: listing.product.costCents,
+      amazonShippingCents: listing.product.shippingCostCents,
+      amazonUrl: listing.product.supplierUrl,
+      unavailable: listing.product.supplierStock === 0,
+    },
+  };
+}
+
+export async function rejectAmazonCandidate(ebayListingId: string) {
+  const user = await requireUser();
+  const updated = await db.listing.updateMany({
+    where: { userId: user.id, ebayListingId, sourceMatchVerdict: { in: ["REVIEW", "REJECTED"] } },
+    data: {
+      sourceMatchVerdict: "REJECTED",
+      sourceMatchReason: "This Amazon candidate was rejected by the seller.",
+      sourceMatchMethod: "MANUAL_REJECTED",
+      sourceMatchCheckedAt: new Date(),
+    },
+  });
+  if (!updated.count) return { error: "The review candidate is no longer available." };
+  revalidate();
+  return { rejected: true as const };
 }
 
 /** How many listings one batch call processes (stays well under the
@@ -1375,6 +1572,12 @@ export async function startListingHealthSync(): Promise<{
     status: "ACTIVE" as const,
     ebayListingId: { not: null },
     sourceMatchVerdict: { not: "PROCESSING" },
+    AND: [{
+      OR: [
+        { sourceMatchMethod: null },
+        { sourceMatchMethod: { notIn: ["MANUAL", "MANUAL_REJECTED"] } },
+      ],
+    }],
   };
   const activeTotal = await db.listing.count({ where: eligibleActive });
   const active = await db.listing.updateMany({

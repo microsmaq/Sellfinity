@@ -5,14 +5,17 @@ import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import {
   cleanupEbayListings,
   applyTargetProfitPrice,
+  approveAmazonCandidate,
   enhanceEbayListing,
   endEbayListing,
   exportEbayListings,
+  findAmazonCandidateForReview,
   matchEbayListing,
   matchEbayListingsBatch,
   repriceEbayListing,
   recordSuggestedPriceActivity,
   recordSmartSyncActivity,
+  rejectAmazonCandidate,
   unmatchEbayListing,
   prepareConfigurableSmartSync,
   processConfigurableSmartSyncItem,
@@ -219,6 +222,14 @@ function formatFreshness(value: string | null | undefined): string {
   const timestamp = new Date(value).getTime();
   if (!Number.isFinite(timestamp)) return "Not available";
   return `Updated ${new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", timeZone: "UTC" }).format(timestamp)}`;
+}
+
+function matchAssessmentLabel(assessment: EbayRow["sourceAssessment"]): string {
+  if (!assessment) return "Untracked";
+  if (assessment.method === "MANUAL") return "Manually verified · 100%";
+  if (assessment.method === "MANUAL_REJECTED") return "Seller rejected";
+  if (assessment.verdict === "UNVERIFIED") return "Not checked";
+  return `${assessment.verdict.toLowerCase()} ${assessment.confidence ?? "—"}%`;
 }
 
 type ListingSyncProgress = {
@@ -942,6 +953,117 @@ export function EbayListingsTable({
     );
   }
 
+  function findReviewCandidate(row: EbayRow) {
+    setNotice(null);
+    setBusyId(row.ebayListingId);
+    startTransition(async () => {
+      try {
+        const result = await findAmazonCandidateForReview({
+          ebayListingId: row.ebayListingId,
+          title: row.title,
+          priceCents: row.priceCents,
+          imageUrl: row.imageUrl,
+          quantity: row.quantity,
+        });
+        if (!result.ok) {
+          setNotice({ text: result.error, error: true });
+          return;
+        }
+        setRows((current) => current.map((candidate) => candidate.ebayListingId === row.ebayListingId
+          ? {
+              ...candidate,
+              source: {
+                title: result.candidate.title,
+                sku: result.candidate.sku,
+                imageUrl: result.candidate.imageUrl,
+                category: "Imported",
+                priceCents: result.candidate.amazonPriceCents,
+                shippingCostCents: result.candidate.amazonShippingCents,
+                url: result.candidate.amazonUrl,
+                stock: 50,
+              },
+              match: null,
+              sourceAssessment: { ...result.assessment, amazonUrl: result.candidate.amazonUrl },
+            }
+          : candidate));
+        setNotice({ text: "Amazon candidate found. Compare the products, then approve or reject the pairing.", error: false });
+      } finally {
+        setBusyId(null);
+      }
+    });
+  }
+
+  function approveReviewCandidate(row: EbayRow) {
+    setNotice(null);
+    setBusyId(row.ebayListingId);
+    startTransition(async () => {
+      try {
+        const result = await approveAmazonCandidate(row.ebayListingId);
+        if ("error" in result) {
+          setNotice({ text: result.error ?? "Could not approve this candidate.", error: true });
+          return;
+        }
+        const profitCents = trueProfitWithBuyerShippingCents(
+          row.priceCents,
+          row.buyerShippingCents ?? 0,
+          result.match.amazonPriceCents,
+          result.match.amazonShippingCents,
+          sitewideDiscountBps,
+          adRateBps,
+        );
+        const buyerTotal = discountedEbayPriceCents(row.priceCents, sitewideDiscountBps) + (row.buyerShippingCents ?? 0);
+        setRows((current) => current.map((candidate) => candidate.ebayListingId === row.ebayListingId
+          ? {
+              ...candidate,
+              match: {
+                sku: result.match.sku,
+                amazonPriceCents: result.match.amazonPriceCents,
+                shippingCostCents: result.match.amazonShippingCents,
+                amazonUrl: result.match.amazonUrl,
+                profitCents,
+                marginPct: buyerTotal > 0 ? Math.round(profitCents / buyerTotal * 100) : 0,
+                unavailable: result.match.unavailable,
+              },
+              sourceAssessment: { ...result.assessment, amazonUrl: result.match.amazonUrl },
+            }
+          : candidate));
+        setNotice({ text: "Amazon pairing approved and saved as Manually verified (100% confidence).", error: false });
+      } finally {
+        setBusyId(null);
+      }
+    });
+  }
+
+  function rejectReviewCandidate(row: EbayRow) {
+    setNotice(null);
+    setBusyId(row.ebayListingId);
+    startTransition(async () => {
+      try {
+        const result = await rejectAmazonCandidate(row.ebayListingId);
+        if ("error" in result) {
+          setNotice({ text: result.error ?? "Could not reject this candidate.", error: true });
+          return;
+        }
+        setRows((current) => current.map((candidate) => candidate.ebayListingId === row.ebayListingId
+          ? {
+              ...candidate,
+              match: null,
+              sourceAssessment: {
+                verdict: "REJECTED",
+                confidence: candidate.sourceAssessment?.confidence ?? null,
+                reason: "This Amazon candidate was rejected by the seller.",
+                method: "MANUAL_REJECTED",
+                amazonUrl: candidate.sourceAssessment?.amazonUrl ?? candidate.source?.url ?? null,
+              },
+            }
+          : candidate));
+        setNotice({ text: "Candidate rejected. You can search for another Amazon candidate.", error: false });
+      } finally {
+        setBusyId(null);
+      }
+    });
+  }
+
   function matchAll() {
     const unmatchedRows = rows.filter((r) => !r.match && !r.sourceAssessment);
     setNotice(null);
@@ -1415,7 +1537,7 @@ export function EbayListingsTable({
     });
   }
 
-  const unmatched = rows.filter((r) => !r.match && !r.sourceAssessment).length;
+  const unmatched = rows.filter((r) => !r.match).length;
   const latestMarketUpdate = rows.reduce<string | null>((latest, row) => {
     if (!row.marketUpdatedAt) return latest;
     return !latest || new Date(row.marketUpdatedAt) > new Date(latest) ? row.marketUpdatedAt : latest;
@@ -1439,7 +1561,7 @@ export function EbayListingsTable({
           { id: "all" as const, label: "Active listings", value: rows.length, tone: "text-slate-950" },
           { id: "attention" as const, label: "Need attention", value: problems, tone: "text-red-600" },
           { id: "protected" as const, label: "Price protected", value: rows.filter((row) => row.verifiedWinner || row.priceLocked).length, tone: "text-amber-600" },
-          { id: "unmatched" as const, label: "Unmatched", value: unmatched, tone: "text-indigo-600" },
+          { id: "unmatched" as const, label: "Unmatched review", value: unmatched, tone: "text-indigo-600" },
         ].map((metric) => (
           <button
             key={metric.id}
@@ -1486,7 +1608,7 @@ export function EbayListingsTable({
               <option value="attention">Needs attention</option>
               <option value="healthy">Healthy & profitable</option>
               <option value="protected">Price protected</option>
-              <option value="unmatched">Unmatched</option>
+              <option value="unmatched">Unmatched review</option>
               <option value="unprofitable">Unprofitable</option>
               <option value="needsPricing">Needs pricing</option>
               <option value="recentSales">Sold in last 7 days</option>
@@ -1660,12 +1782,70 @@ export function EbayListingsTable({
         </p>
       )}
 
+      {healthFilter === "unmatched" && (
+        <Card className="overflow-hidden border-indigo-200">
+          <div className="border-b border-indigo-100 bg-gradient-to-r from-indigo-50 via-white to-violet-50 px-4 py-4 sm:px-5">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div><h2 className="font-semibold text-slate-950">Unmatched source review</h2><p className="mt-1 text-xs leading-5 text-slate-600">Compare the eBay item with its Amazon candidate. Approval permanently records this pairing as manually verified with 100% confidence.</p></div>
+              <Badge tone="indigo">{filteredRows.length.toLocaleString()} unmatched</Badge>
+            </div>
+          </div>
+          <div className="grid gap-3 bg-slate-50/60 p-3 lg:grid-cols-2 lg:p-4">
+            {visibleRows.map((row) => {
+              const review = row.sourceAssessment;
+              const rejected = review?.verdict === "REJECTED";
+              return (
+                <article key={`review-${row.ebayListingId}`} className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+                  <div className="grid gap-0 sm:grid-cols-2">
+                    <div className="border-b border-slate-100 p-4 sm:border-b-0 sm:border-r">
+                      <p className="text-[10px] font-semibold uppercase tracking-[.1em] text-slate-400">eBay listing</p>
+                      <div className="mt-3 flex gap-3">
+                        {row.imageUrl ? <>
+                          {/* eslint-disable-next-line @next/next/no-img-element -- External marketplace image hosts are dynamic. */}
+                          <img src={row.imageUrl} alt="" className="h-20 w-20 shrink-0 rounded-xl border border-slate-200 object-contain" />
+                        </> : <div className="h-20 w-20 shrink-0 rounded-xl bg-slate-100" />}
+                        <div className="min-w-0"><a href={row.url} target="_blank" rel="noreferrer" className="line-clamp-4 text-sm font-semibold leading-5 text-slate-900 hover:text-indigo-700">{row.title}</a><p className="mt-2 text-xs font-medium text-slate-500">{formatCents(row.priceCents)} · #{row.ebayListingId}</p></div>
+                      </div>
+                    </div>
+                    <div className="p-4">
+                      <p className="text-[10px] font-semibold uppercase tracking-[.1em] text-slate-400">Amazon candidate</p>
+                      {row.source && review ? (
+                        <div className="mt-3 flex gap-3">
+                          {row.source.imageUrl ? <>
+                            {/* eslint-disable-next-line @next/next/no-img-element -- External marketplace image hosts are dynamic. */}
+                            <img src={row.source.imageUrl} alt="" className="h-20 w-20 shrink-0 rounded-xl border border-slate-200 object-contain" />
+                          </> : <div className="h-20 w-20 shrink-0 rounded-xl bg-slate-100" />}
+                          <div className="min-w-0"><a href={row.source.url} target="_blank" rel="noreferrer" className="line-clamp-4 text-sm font-semibold leading-5 text-slate-900 hover:text-indigo-700">{row.source.title}</a><p className="mt-2 text-xs font-medium text-slate-500">{formatCents(row.source.priceCents + row.source.shippingCostCents)} · {row.source.sku}</p></div>
+                        </div>
+                      ) : <div className="mt-3 grid min-h-20 place-items-center rounded-xl border border-dashed border-slate-300 bg-slate-50 px-3 text-center text-xs text-slate-500">No candidate researched yet</div>}
+                    </div>
+                  </div>
+                  {review && (
+                    <div className={cx("border-t px-4 py-3", rejected ? "border-red-100 bg-red-50/70" : "border-amber-100 bg-amber-50/70")}>
+                      <div className="flex flex-wrap items-center gap-2"><Badge tone={rejected ? "red" : "amber"}>{rejected ? "Seller rejected" : `${review.confidence ?? 0}% candidate confidence`}</Badge>{review.method && !review.method.startsWith("MANUAL") && <Badge tone="slate">{review.method === "AI" ? "AI assessed" : "Rules assessed"}</Badge>}</div>
+                      <p className="mt-2 text-xs leading-5 text-slate-600">{review.reason}</p>
+                    </div>
+                  )}
+                  <div className="flex flex-wrap items-center gap-2 border-t border-slate-100 px-4 py-3">
+                    {!review || rejected ? <Button size="sm" variant="secondary" disabled={pending || busyId === row.ebayListingId} onClick={() => findReviewCandidate(row)}>{busyId === row.ebayListingId ? "Searching Amazon…" : rejected ? "Find another candidate" : "Find Amazon candidate"}</Button> : <><Button size="sm" disabled={pending || busyId === row.ebayListingId} onClick={() => approveReviewCandidate(row)}>{busyId === row.ebayListingId ? "Saving…" : "Approve match"}</Button><Button size="sm" variant="secondary" disabled={pending || busyId === row.ebayListingId} onClick={() => rejectReviewCandidate(row)}>Reject candidate</Button></>}
+                    {row.source?.url && <a href={row.source.url} target="_blank" rel="noreferrer" className="ml-auto text-xs font-semibold text-indigo-700 hover:underline">Open Amazon ↗</a>}
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+          {visibleRows.length === 0 && <div className="px-5 py-14 text-center"><p className="font-semibold text-slate-900">No unmatched listings in this view</p><p className="mt-1 text-sm text-slate-500">Clear the search or return to All listings.</p></div>}
+          {pageCount > 1 && <div className="flex items-center justify-between border-t border-slate-200 bg-white px-4 py-3"><Button size="sm" variant="secondary" disabled={currentPage <= 1} onClick={() => setPage((value) => Math.max(1, value - 1))}>Previous</Button><span className="text-xs font-medium text-slate-500">Page {currentPage} of {pageCount}</span><Button size="sm" variant="secondary" disabled={currentPage >= pageCount} onClick={() => setPage((value) => Math.min(pageCount, value + 1))}>Next</Button></div>}
+        </Card>
+      )}
+
       {expandedTable && (
         <div className="fixed inset-0 z-40 bg-slate-950/35 backdrop-blur-sm" />
       )}
       <Card
         className={cx(
           "min-w-0 overflow-hidden",
+          healthFilter === "unmatched" && "hidden",
           expandedTable &&
             "fixed inset-3 z-50 flex flex-col rounded-2xl border-slate-300 shadow-2xl",
         )}
@@ -2176,7 +2356,7 @@ export function EbayListingsTable({
                           {r.verifiedWinner && <Badge tone="amber">🏆 Verified winner · price locked</Badge>}
                           {!r.verifiedWinner && r.priceLocked && <Badge tone="indigo">🔒 Price locked · profitable sale</Badge>}
                           {r.source && <Badge tone={r.source.stock > 0 ? "green" : "red"}>{r.source.stock > 0 ? `${r.source.stock} in stock` : "Unavailable"}</Badge>}
-                          {r.sourceAssessment && <Badge tone={r.sourceAssessment.confidence !== null && r.sourceAssessment.confidence >= 95 ? "green" : "amber"}>{r.sourceAssessment.verdict} {r.sourceAssessment.confidence ?? "—"}%</Badge>}
+                          {r.sourceAssessment && <Badge tone={r.sourceAssessment.method === "MANUAL" || (r.sourceAssessment.confidence !== null && r.sourceAssessment.confidence >= 95) ? "green" : "amber"}>{matchAssessmentLabel(r.sourceAssessment)}</Badge>}
                           <Badge tone={(r.buyerShippingCents ?? 0) > 0 ? "indigo" : "slate"}>{(r.buyerShippingCents ?? 0) > 0 ? `${formatCents(r.buyerShippingCents ?? 0)} shipping` : r.shippingStrategy ? "Free shipping" : "Shipping unknown"}</Badge>
                         </div>
                       </div>
@@ -2274,9 +2454,7 @@ export function EbayListingsTable({
                                 : "amber"
                           }
                         >
-                          {r.sourceAssessment.verdict === "UNVERIFIED"
-                            ? "Not checked"
-                            : `${r.sourceAssessment.verdict.toLowerCase()} ${r.sourceAssessment.confidence ?? "—"}%`}
+                          {matchAssessmentLabel(r.sourceAssessment)}
                         </Badge>
                         {r.sourceAssessment.amazonUrl && (
                           <a
