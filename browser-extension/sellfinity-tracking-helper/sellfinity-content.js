@@ -33,6 +33,7 @@
   const saveQueue = [];
   let savingQueue = false;
   let bulkProgress = null;
+  let amazonPriceProgress = null;
 
   function wait(milliseconds) {
     return new Promise((resolve) => setTimeout(resolve, milliseconds));
@@ -106,6 +107,37 @@
     reportBulkProgress(bulkProgress.processed >= bulkProgress.total ? "complete" : "running");
   }
 
+  function reportAmazonPriceProgress(status = "running") {
+    if (!amazonPriceProgress) return;
+    document.dispatchEvent(new CustomEvent("sellfinity:amazon-price-helper-progress", { detail: {
+      status,
+      total: amazonPriceProgress.total,
+      processed: amazonPriceProgress.processed,
+      found: amazonPriceProgress.found
+    } }));
+  }
+
+  function finishAmazonPriceItem(found) {
+    if (!amazonPriceProgress) return;
+    amazonPriceProgress.processed = Math.min(amazonPriceProgress.total, amazonPriceProgress.processed + 1);
+    if (found) amazonPriceProgress.found += 1;
+    reportAmazonPriceProgress(amazonPriceProgress.processed >= amazonPriceProgress.total ? "complete" : "running");
+  }
+
+  function amazonPriceRequests(suppliedRequests = []) {
+    if (Array.isArray(suppliedRequests) && suppliedRequests.length) return suppliedRequests;
+    const grouped = new Map();
+    for (const anchor of document.querySelectorAll('a[data-amazon-price-check="true"]')) {
+      const orderId = anchor.dataset.orderId;
+      const requestKey = anchor.dataset.requestKey;
+      if (!orderId || !requestKey || !anchor.href) continue;
+      const current = grouped.get(requestKey);
+      if (current) current.orderIds.push(orderId);
+      else grouped.set(requestKey, { requestKey, amazonUrl: anchor.href, orderIds: [orderId] });
+    }
+    return [...grouped.values()];
+  }
+
   document.addEventListener("sellfinity:bulk-tracking-refresh", (event) => {
     const requests = bulkTrackingRequests(event.detail?.requests || []);
     if (!requests.length) return;
@@ -118,6 +150,20 @@
         }
       })
       .catch(() => toast("The tracking helper could not start the automatic check.", "error"));
+  });
+
+  document.addEventListener("sellfinity:bulk-amazon-price-check", (event) => {
+    const requests = amazonPriceRequests(event.detail?.requests);
+    if (!requests.length) return;
+    chrome.runtime.sendMessage({ type: "BEGIN_BULK_AMAZON_PRICE_CHECK", requests })
+      .then((result) => {
+        if (result?.queued) {
+          amazonPriceProgress = { total: result.queued, processed: 0, found: 0 };
+          reportAmazonPriceProgress();
+          toast(`Checking ${result.queued} unique Amazon product${result.queued === 1 ? "" : "s"} for current price and shipping…`);
+        }
+      })
+      .catch(() => toast("The Amazon price checker could not start.", "error"));
   });
 
   document.addEventListener("click", (event) => {
@@ -172,6 +218,22 @@
     if (message?.type === "TRACKING_LOOKUP_FAILED") {
       if (message.autoSave) finishBulkItem(false);
       else toast(message.reason || "No supported tracking number was found.", "error");
+    }
+    if (message?.type === "FILL_AMAZON_PRICE") {
+      document.dispatchEvent(new CustomEvent("sellfinity:amazon-price-found", { detail: {
+        orderIds: message.orderIds,
+        unitPriceCents: message.unitPriceCents,
+        shippingCents: message.shippingCents
+      } }));
+      finishAmazonPriceItem(true);
+      const shipping = message.shippingCents === null || message.shippingCents === undefined
+        ? "shipping was not shown and was left unchanged"
+        : message.shippingCents === 0 ? "free shipping" : `$${(message.shippingCents / 100).toFixed(2)} shipping`;
+      toast(`Amazon price $${(message.unitPriceCents / 100).toFixed(2)} found · ${shipping}.`, "success");
+    }
+    if (message?.type === "AMAZON_PRICE_LOOKUP_FAILED") {
+      finishAmazonPriceItem(false);
+      toast(message.reason || "Amazon did not show a current price for this product.", "error");
     }
   });
 })();

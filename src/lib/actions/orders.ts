@@ -156,6 +156,54 @@ export async function markOrderCancelled(orderId: string) {
   return { cancelled: true as const };
 }
 
+export async function updateFulfillmentAmazonCosts(
+  orderId: string,
+  amazonItemCostCents: number,
+  amazonShippingCents: number,
+) {
+  const user = await requireUser();
+  const itemCost = Math.round(amazonItemCostCents);
+  const shipping = Math.round(amazonShippingCents);
+  if (!Number.isFinite(itemCost) || !Number.isFinite(shipping)
+    || itemCost < 0 || shipping < 0 || itemCost > 1_000_000 || shipping > 100_000) {
+    return { error: "Enter valid Amazon item and shipping amounts." };
+  }
+
+  const order = await db.order.findFirst({
+    where: { id: orderId, userId: user.id },
+    include: { amazonPurchaseItem: true },
+  });
+  if (!order) return { error: "Fulfillment order not found. Refresh the page and try again." };
+  if (order.status === "REFUNDED" || order.sourcingStatus === "CANCELLED") {
+    return { error: "Amazon costs cannot be changed on a cancelled or refunded order." };
+  }
+
+  await db.$transaction(async (transaction) => {
+    await transaction.order.update({
+      where: { id: order.id },
+      data: { cogsCents: itemCost, shippingCostCents: shipping },
+    });
+    if (order.amazonPurchaseItem) {
+      await transaction.amazonPurchaseItem.update({
+        where: { id: order.amazonPurchaseItem.id },
+        data: {
+          lineTotalCents: itemCost,
+          unitPriceCents: Math.round(itemCost / Math.max(1, order.quantity)),
+          allocatedShippingCents: shipping,
+        },
+      });
+    }
+  });
+  revalidatePath("/orders");
+  revalidatePath("/dashboard");
+  return {
+    updated: true as const,
+    amazonItemCostCents: itemCost,
+    amazonShippingCents: shipping,
+    costVerified: Boolean(order.amazonPurchaseItem),
+  };
+}
+
 export async function submitManualOrderTracking(orderId: string, rawTrackingNumber: string) {
   const user = await requireUser();
   const trackingNumber = normalizeTrackingNumber(rawTrackingNumber);

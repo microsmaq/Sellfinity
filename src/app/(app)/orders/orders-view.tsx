@@ -9,7 +9,7 @@ import { PremiumProgress } from "@/components/premium-progress";
 import { formatCents } from "@/lib/money";
 import { protectOrderMargin, setAutoProfitProtection } from "@/lib/actions/profit-protection";
 import { syncAmazonEmailsNow } from "@/lib/actions/amazon-email";
-import { linkAmazonPurchase, markOrderCancelled, reassignAmazonPurchase, setAutoRestockFulfilledListings, submitManualOrderTracking } from "@/lib/actions/orders";
+import { linkAmazonPurchase, markOrderCancelled, reassignAmazonPurchase, setAutoRestockFulfilledListings, submitManualOrderTracking, updateFulfillmentAmazonCosts } from "@/lib/actions/orders";
 import { fulfillmentActionReason, type FulfillmentActionReason, type FulfillmentStage } from "@/lib/orders/fulfillment-stage";
 import { trackingUploadErrorDisposition } from "@/lib/amazon-email/tracking-utils";
 
@@ -76,6 +76,13 @@ type RefreshRun = {
   trackingProcessed: number;
   trackingFound: number;
   result: string | null;
+};
+
+type AmazonPriceCheckRun = {
+  status: "starting" | "running" | "complete" | "unavailable";
+  total: number;
+  processed: number;
+  found: number;
 };
 
 function elapsedLabel(seconds: number): string {
@@ -233,12 +240,18 @@ export function OrdersView({ orders, fetchError, profitProtectionEnabled, autoRe
   const [reassigningOrderId, setReassigningOrderId] = useState<string | null>(null);
   const [amazonOrderNumbers, setAmazonOrderNumbers] = useState<Record<string, string>>({});
   const [linkingOrderId, setLinkingOrderId] = useState<string | null>(null);
+  const [amazonCostInputs, setAmazonCostInputs] = useState<Record<string, { item: string; shipping: string }>>({});
+  const [savingAmazonCostOrderId, setSavingAmazonCostOrderId] = useState<string | null>(null);
+  const [amazonPriceCheck, setAmazonPriceCheck] = useState<AmazonPriceCheckRun | null>(null);
   const displayOrders = useMemo(() => orders.map((order) => ({ ...order, ...orderOverrides[order.id] })), [orderOverrides, orders]);
   const trackingHelperOrders = useMemo(() => displayOrders.filter((order) =>
     !order.trackingNumber
     && !!order.amazonTrackingUrl
     && order.stage !== "CANCELLED"
     && order.stage !== "REFUNDED"
+  ), [displayOrders]);
+  const amazonPriceCheckOrders = useMemo(() => displayOrders.filter((order) =>
+    order.stage === "AWAITING" && !!order.amazonUrl
   ), [displayOrders]);
 
   function duplicateAwaitingOrders(order: FulfillmentOrderRow) {
@@ -306,13 +319,52 @@ export function OrdersView({ orders, fetchError, profitProtectionEnabled, autoRe
         trackingFound: detail.found ?? current.trackingFound,
       } : current);
     }
+    function receiveAmazonPrice(event: Event) {
+      const detail = (event as CustomEvent<{ orderIds?: string[]; unitPriceCents?: number; shippingCents?: number | null }>).detail;
+      if (!detail?.orderIds?.length || !Number.isFinite(detail.unitPriceCents)) return;
+      for (const orderId of detail.orderIds) {
+        const order = displayOrders.find((candidate) => candidate.id === orderId);
+        if (!order) continue;
+        const itemCost = Math.round(detail.unitPriceCents! * Math.max(1, order.quantity));
+        const shipping = detail.shippingCents === null || detail.shippingCents === undefined
+          ? order.amazonShippingCents
+          : Math.max(0, Math.round(detail.shippingCents));
+        void persistAmazonCosts(order, itemCost, shipping, true);
+      }
+    }
+    function receiveAmazonPriceProgress(event: Event) {
+      const detail = (event as CustomEvent<{ status?: "running" | "complete"; total?: number; processed?: number; found?: number }>).detail;
+      if (!detail?.status) return;
+      setAmazonPriceCheck({
+        status: detail.status,
+        total: detail.total ?? 0,
+        processed: detail.processed ?? 0,
+        found: detail.found ?? 0,
+      });
+      if (detail.status === "complete") {
+        setRefreshMessage(`Amazon price check complete: ${detail.found ?? 0} of ${detail.total ?? 0} unique product${detail.total === 1 ? "" : "s"} updated. Profit has been recalculated.`);
+      }
+    }
     document.addEventListener("sellfinity:tracking-filled", receiveExtensionTracking);
     document.addEventListener("sellfinity:tracking-helper-progress", receiveHelperProgress);
+    document.addEventListener("sellfinity:amazon-price-found", receiveAmazonPrice);
+    document.addEventListener("sellfinity:amazon-price-helper-progress", receiveAmazonPriceProgress);
     return () => {
       document.removeEventListener("sellfinity:tracking-filled", receiveExtensionTracking);
       document.removeEventListener("sellfinity:tracking-helper-progress", receiveHelperProgress);
+      document.removeEventListener("sellfinity:amazon-price-found", receiveAmazonPrice);
+      document.removeEventListener("sellfinity:amazon-price-helper-progress", receiveAmazonPriceProgress);
     };
-  }, []);
+  }, [displayOrders]);
+
+  useEffect(() => {
+    if (amazonPriceCheck?.status !== "starting") return;
+    const timer = window.setTimeout(() => {
+      setAmazonPriceCheck((current) => current?.status === "starting" ? { ...current, status: "unavailable" } : current);
+      setRefreshMessage("The Amazon price checker needs Chrome helper version 1.2.0. Download or reload the helper, then try again.");
+    }, 8_000);
+    return () => window.clearTimeout(timer);
+  }, [amazonPriceCheck?.status]);
 
   useEffect(() => {
     if (refreshRun?.helper !== "starting") return;
@@ -416,6 +468,88 @@ export function OrdersView({ orders, fetchError, profitProtectionEnabled, autoRe
         setRestockMessage("Could not update automatic stock refill. Please try again.");
       }
     });
+  }
+
+  function amazonCostInput(order: FulfillmentOrderRow) {
+    return amazonCostInputs[order.id] ?? {
+      item: ((order.amazonItemCostCents ?? 0) / 100).toFixed(2),
+      shipping: (order.amazonShippingCents / 100).toFixed(2),
+    };
+  }
+
+  function changeAmazonCost(order: FulfillmentOrderRow, field: "item" | "shipping", value: string) {
+    setAmazonCostInputs((current) => ({
+      ...current,
+      [order.id]: { ...amazonCostInput(order), ...current[order.id], [field]: value },
+    }));
+  }
+
+  async function persistAmazonCosts(order: FulfillmentOrderRow, itemCost: number, shipping: number, checkedFromAmazon = false) {
+    setSavingAmazonCostOrderId(order.id);
+    try {
+      const result = await updateFulfillmentAmazonCosts(order.id, itemCost, shipping);
+      if ("error" in result) {
+        setRefreshMessage(result.error ?? "Could not save the Amazon costs.");
+        return;
+      }
+      const landedCost = result.amazonItemCostCents + result.amazonShippingCents
+        + order.amazonTaxCents - order.amazonDiscountCents;
+      setAmazonCostInputs((current) => ({
+        ...current,
+        [order.id]: {
+          item: (result.amazonItemCostCents / 100).toFixed(2),
+          shipping: (result.amazonShippingCents / 100).toFixed(2),
+        },
+      }));
+      setOrderOverrides((current) => ({
+        ...current,
+        [order.id]: {
+          ...current[order.id],
+          amazonItemCostCents: result.amazonItemCostCents,
+          amazonShippingCents: result.amazonShippingCents,
+          costCents: landedCost,
+          costVerified: result.costVerified,
+          profitCents: order.revenueCents - order.ebayFeeCents - landedCost,
+        },
+      }));
+      if (!checkedFromAmazon) setRefreshMessage("Amazon item price and shipping saved. Profit was recalculated.");
+    } catch {
+      setRefreshMessage("Could not save the Amazon costs. Please try again.");
+    } finally {
+      setSavingAmazonCostOrderId((current) => current === order.id ? null : current);
+    }
+  }
+
+  function saveAmazonCosts(order: FulfillmentOrderRow) {
+    const values = amazonCostInput(order);
+    const itemCost = Math.round(Number(values.item) * 100);
+    const shipping = Math.round(Number(values.shipping) * 100);
+    if (!Number.isFinite(itemCost) || !Number.isFinite(shipping) || itemCost < 0 || shipping < 0) {
+      setRefreshMessage("Enter valid Amazon item and shipping amounts.");
+      return;
+    }
+    void persistAmazonCosts(order, itemCost, shipping);
+  }
+
+  function checkAmazonPrices() {
+    const grouped = new Map<string, { amazonUrl: string; orderIds: string[] }>();
+    for (const order of amazonPriceCheckOrders) {
+      const key = /^[A-Z0-9]{10}$/i.test(order.sku) ? order.sku.toUpperCase() : order.amazonUrl!;
+      const current = grouped.get(key);
+      if (current) current.orderIds.push(order.id);
+      else grouped.set(key, {
+        amazonUrl: /^[A-Z0-9]{10}$/i.test(order.sku) ? `https://www.amazon.com/dp/${order.sku}` : order.amazonUrl!,
+        orderIds: [order.id],
+      });
+    }
+    const requests = [...grouped.entries()].map(([requestKey, value]) => ({ requestKey, ...value }));
+    if (!requests.length) {
+      setRefreshMessage("There are no awaiting-purchase Amazon products to check.");
+      return;
+    }
+    setAmazonPriceCheck({ status: "starting", total: requests.length, processed: 0, found: 0 });
+    setRefreshMessage(`Opening ${requests.length} unique Amazon product${requests.length === 1 ? "" : "s"} in the signed-in price checker…`);
+    document.dispatchEvent(new CustomEvent("sellfinity:bulk-amazon-price-check", { detail: { requests } }));
   }
 
   function submitTracking(order: FulfillmentOrderRow, visibleValue?: string) {
@@ -575,6 +709,7 @@ export function OrdersView({ orders, fetchError, profitProtectionEnabled, autoRe
   const refreshWorking = !!refreshRun && (
     refreshRun.server === "running" || refreshRun.helper === "running" || (refreshRun.helper === "starting" && !helperStartingTimedOut)
   );
+  const amazonPriceCheckWorking = amazonPriceCheck?.status === "starting" || amazonPriceCheck?.status === "running";
   const refreshComplete = !!refreshRun && !refreshWorking && refreshRun.server === "complete";
   const refreshStatus = refreshWorking ? "running" : refreshComplete ? "complete" : "error";
   const helperRatio = refreshRun?.trackingTotal
@@ -697,8 +832,21 @@ export function OrdersView({ orders, fetchError, profitProtectionEnabled, autoRe
             <option value="NEWEST">Newest first</option><option value="SHIP_BY">Ship-by date</option><option value="PROFIT">Highest profit</option>
           </select>
           <Button data-sellfinity-refresh="true" variant="secondary" disabled={refreshWorking} onClick={refreshFulfillment}>{refreshWorking ? "Refresh in progress…" : "↻ Refresh Amazon & eBay"}</Button>
-          <a href="/downloads/sellfinity-tracking-helper.zip" download className="inline-flex min-h-10 items-center justify-center rounded-lg border border-slate-300 bg-white px-3 text-sm font-medium text-slate-700 hover:bg-slate-50">Download Chrome tracking helper</a>
+          <Button variant="secondary" disabled={amazonPriceCheckWorking || refreshWorking} onClick={checkAmazonPrices}>{amazonPriceCheckWorking ? `Checking ${amazonPriceCheck?.processed ?? 0}/${amazonPriceCheck?.total ?? 0}…` : "Check Amazon prices"}</Button>
+          <a href="/downloads/sellfinity-tracking-helper.zip?v=1.2.0" download className="inline-flex min-h-10 items-center justify-center rounded-lg border border-slate-300 bg-white px-3 text-sm font-medium text-slate-700 hover:bg-slate-50">Download Chrome helper v1.2</a>
         </div>
+
+        {amazonPriceCheck && amazonPriceCheck.status !== "unavailable" && (
+          <div className="border-b border-violet-100 bg-violet-50/70 px-4 py-3" role="status" aria-live="polite">
+            <div className="flex items-center justify-between gap-3 text-xs font-medium text-violet-900">
+              <span>{amazonPriceCheck.status === "complete" ? "Amazon prices checked" : "Checking signed-in Amazon prices and shipping…"}</span>
+              <span>{amazonPriceCheck.processed}/{amazonPriceCheck.total} · {amazonPriceCheck.found} updated</span>
+            </div>
+            <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-violet-100">
+              <div className="h-full rounded-full bg-violet-600 transition-all duration-500" style={{ width: `${amazonPriceCheck.total ? Math.max(5, amazonPriceCheck.processed / amazonPriceCheck.total * 100) : 5}%` }} />
+            </div>
+          </div>
+        )}
 
         {refreshRun ? (
           <div className="border-b border-slate-200 bg-slate-50/70 p-4" role="status" aria-live="polite">
@@ -760,6 +908,17 @@ export function OrdersView({ orders, fetchError, profitProtectionEnabled, autoRe
             ))}
           </tbody>
         </table>
+        <div className="hidden" aria-hidden="true">
+          {amazonPriceCheckOrders.map((order) => (
+            <a
+              key={`amazon-price-helper-${order.id}`}
+              data-amazon-price-check="true"
+              data-order-id={order.id}
+              data-request-key={/^[A-Z0-9]{10}$/i.test(order.sku) ? order.sku.toUpperCase() : order.amazonUrl!}
+              href={/^[A-Z0-9]{10}$/i.test(order.sku) ? `https://www.amazon.com/dp/${order.sku}` : order.amazonUrl!}
+            >Check Amazon price</a>
+          ))}
+        </div>
 
         <div className="space-y-3 bg-slate-50/60 p-3 md:hidden">
           {filtered.map((order) => {
@@ -794,6 +953,17 @@ export function OrdersView({ orders, fetchError, profitProtectionEnabled, autoRe
                   <div><p className="text-[10px] uppercase text-slate-400">Revenue</p><p className="mt-1 text-sm font-bold">{formatCents(order.revenueCents)}</p></div>
                   <div className="border-x border-slate-200"><p className="text-[10px] uppercase text-slate-400">Cost</p><p className="mt-1 text-sm"><CostBreakdown order={order} mobile /></p></div>
                   <div><p className="text-[10px] uppercase text-slate-400">Profit</p><p className={cx("mt-1 text-sm font-bold", order.profitCents === null ? "text-slate-400" : order.profitCents >= 0 ? "text-emerald-700" : "text-red-600")}>{order.profitCents === null ? "—" : formatCents(order.profitCents)}</p></div>
+                </div>
+                <div className="mt-3 grid grid-cols-2 gap-2 rounded-xl border border-slate-200 bg-white p-3">
+                  <label className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+                    Amazon price
+                    <span className="mt-1 flex items-center rounded-lg border border-slate-300 bg-white px-2 text-sm font-medium text-slate-900 focus-within:border-indigo-500"><span className="text-slate-400">$</span><input inputMode="decimal" value={amazonCostInput(order).item} onChange={(event) => changeAmazonCost(order, "item", event.target.value)} className="min-w-0 flex-1 bg-transparent px-1 py-2 outline-none" aria-label={`Amazon item price for ${order.ebayOrderId}`} /></span>
+                  </label>
+                  <label className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+                    Amazon shipping
+                    <span className="mt-1 flex items-center rounded-lg border border-slate-300 bg-white px-2 text-sm font-medium text-slate-900 focus-within:border-indigo-500"><span className="text-slate-400">$</span><input inputMode="decimal" value={amazonCostInput(order).shipping} onChange={(event) => changeAmazonCost(order, "shipping", event.target.value)} className="min-w-0 flex-1 bg-transparent px-1 py-2 outline-none" aria-label={`Amazon shipping for ${order.ebayOrderId}`} /></span>
+                  </label>
+                  <Button size="sm" variant="secondary" className="col-span-2" disabled={savingAmazonCostOrderId === order.id} onClick={() => saveAmazonCosts(order)}>{savingAmazonCostOrderId === order.id ? "Saving costs…" : "Save Amazon costs"}</Button>
                 </div>
                 {awaitingVerifiedCost && (
                   <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5">
@@ -857,9 +1027,9 @@ export function OrdersView({ orders, fetchError, profitProtectionEnabled, autoRe
           })}
         </div>
         <div className="hidden overflow-x-auto md:block">
-          <table className="w-full min-w-[1240px] text-sm">
+          <table className="w-full min-w-[1540px] text-sm">
             <thead className="bg-white text-left text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-              <tr><th className="px-5 py-3">Order</th><th className="px-4 py-3">Item &amp; buyer</th><th className="px-4 py-3">Fulfillment</th><th className="px-4 py-3">Tracking</th><th className="px-4 py-3 text-right">Revenue</th><th className="px-4 py-3 text-right">Costs</th><th className="px-4 py-3 text-right">Profit</th><th className="px-4 py-3">Next step</th></tr>
+              <tr><th className="px-5 py-3">Order</th><th className="px-4 py-3">Item &amp; buyer</th><th className="px-4 py-3">Fulfillment</th><th className="px-4 py-3">Tracking</th><th className="px-4 py-3 text-right">Revenue</th><th className="px-4 py-3">Amazon price</th><th className="px-4 py-3">Amazon shipping</th><th className="px-4 py-3 text-right">Total costs</th><th className="px-4 py-3 text-right">Profit</th><th className="px-4 py-3">Next step</th></tr>
             </thead>
             <tbody>
               {filtered.map((order) => {
@@ -882,6 +1052,8 @@ export function OrdersView({ orders, fetchError, profitProtectionEnabled, autoRe
                     <td className="px-4 py-4"><Badge tone={meta.tone}>{meta.label}</Badge>{tab === "NEEDS_ACTION" && actionReasonLabel(order) && <div className="mt-1.5"><Badge tone="slate">{actionReasonLabel(order)}</Badge></div>}{order.amazonOrderId && <p className="mt-2 text-xs text-slate-500">Amazon #{order.amazonOrderId}</p>}{order.matchConfidence !== null && <p className="mt-0.5 text-[11px] text-slate-400">{order.matchConfidence}% source match</p>}{order.amazonOrderId && duplicateAwaitingOrders(order).length > 0 && <details className="mt-2"><summary className="cursor-pointer text-[11px] font-semibold text-amber-700">Correct match</summary><div className="mt-1.5 grid gap-1">{duplicateAwaitingOrders(order).map((target) => <button key={target.id} type="button" disabled={pending || reassigningOrderId === order.id} onClick={() => moveAmazonMatch(order, target)} className="rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-left text-[11px] font-medium text-amber-900 hover:bg-amber-100 disabled:opacity-50">{reassigningOrderId === order.id ? "Moving…" : `Move to ${target.buyerUsername}`}</button>)}</div></details>}{order.stage === "AWAITING" && !order.amazonOrderId && <details className="mt-2"><summary className="cursor-pointer text-[11px] font-semibold text-slate-600">Already purchased?</summary><div className="mt-1.5 grid gap-1.5"><input value={amazonOrderNumbers[order.id] ?? ""} onChange={(event) => setAmazonOrderNumbers((current) => ({ ...current, [order.id]: event.target.value }))} placeholder="Amazon order number" aria-label={`Amazon order number for ${order.ebayOrderId}`} className="w-44 rounded-md border border-slate-300 bg-white px-2 py-1.5 text-xs text-slate-900 placeholder-slate-400 focus:border-indigo-500 focus:outline-none" /><Button size="sm" variant="secondary" disabled={pending || linkingOrderId === order.id} onClick={() => linkKnownAmazonOrder(order)}>{linkingOrderId === order.id ? "Validating…" : "Link purchase"}</Button></div></details>}</td>
                     <td className="max-w-[240px] px-4 py-4">{order.trackingNumber ? <><a href={trackingUrl(order.carrier, order.trackingNumber)} target="_blank" rel="noreferrer" className="break-all font-medium text-indigo-700 hover:underline">{order.trackingNumber}</a><p className="mt-1 text-xs text-slate-500">{order.carrier ?? "Carrier pending"}{order.trackingSynced ? " · sent to eBay" : order.stage === "DELIVERED" ? " · saved" : " · waiting for eBay"}</p></> : <>{order.amazonTrackingUrl ? <><a href={order.amazonTrackingUrl} target="_blank" rel="noreferrer" className="font-medium text-indigo-700 hover:underline">Open Amazon tracking ↗</a><p className="mt-1 text-xs text-amber-700">Tracking number pending</p></> : <span className="text-slate-400">Not available yet</span>}{order.stage !== "CANCELLED" && order.stage !== "REFUNDED" && <div className="mt-2 space-y-1.5"><input data-order-id={order.id} value={manualTracking[order.id] ?? ""} onChange={(event) => setManualTracking((current) => ({ ...current, [order.id]: event.target.value }))} onKeyDown={(event) => { if (event.key === "Enter") submitTracking(order, event.currentTarget.value); }} placeholder="Enter tracking number" aria-label={`Tracking number for ${order.ebayOrderId}`} className="w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-xs text-slate-900 placeholder-slate-400 focus:border-indigo-500 focus:outline-none" /><Button size="sm" variant="secondary" disabled={pending || savingTrackingOrderId === order.id} onClick={() => submitTracking(order)} className="w-full">{savingTrackingOrderId === order.id ? "Saving…" : order.stage === "DELIVERED" ? "Save tracking" : "Save & mark shipped"}</Button></div>}</>}</td>
                     <td className="whitespace-nowrap px-4 py-4 text-right"><p className="font-semibold tabular-nums text-slate-900">{formatCents(order.revenueCents)}</p><p className="mt-1 text-[11px] text-slate-400">eBay sale</p></td>
+                    <td className="w-32 px-4 py-4"><span className="flex items-center rounded-md border border-slate-300 bg-white px-2 text-sm focus-within:border-indigo-500"><span className="text-slate-400">$</span><input inputMode="decimal" value={amazonCostInput(order).item} onChange={(event) => changeAmazonCost(order, "item", event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") saveAmazonCosts(order); }} className="w-20 bg-transparent px-1 py-1.5 tabular-nums outline-none" aria-label={`Amazon item price for ${order.ebayOrderId}`} /></span>{order.quantity > 1 && <p className="mt-1 text-[10px] text-slate-400">Total for qty {order.quantity}</p>}</td>
+                    <td className="w-32 px-4 py-4"><span className="flex items-center rounded-md border border-slate-300 bg-white px-2 text-sm focus-within:border-indigo-500"><span className="text-slate-400">$</span><input inputMode="decimal" value={amazonCostInput(order).shipping} onChange={(event) => changeAmazonCost(order, "shipping", event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") saveAmazonCosts(order); }} className="w-20 bg-transparent px-1 py-1.5 tabular-nums outline-none" aria-label={`Amazon shipping for ${order.ebayOrderId}`} /></span><button type="button" disabled={savingAmazonCostOrderId === order.id} onClick={() => saveAmazonCosts(order)} className="mt-1 text-[11px] font-semibold text-indigo-700 disabled:text-slate-400">{savingAmazonCostOrderId === order.id ? "Saving…" : "Save costs"}</button></td>
                     <td className="whitespace-nowrap px-4 py-4 text-right"><CostBreakdown order={order} /><p className="mt-1 text-[11px] text-slate-400">{order.costVerified ? "Verified Amazon" : "Estimated Amazon"} · {order.financialsActual ? "actual eBay" : "estimated eBay"}</p></td>
                     <td className="whitespace-nowrap px-4 py-4 text-right">
                       <p className={cx("font-semibold tabular-nums", order.profitCents === null ? "text-slate-400" : order.profitCents >= 0 ? "text-emerald-700" : "text-red-600")}>{order.profitCents === null ? "—" : formatCents(order.profitCents)}</p>

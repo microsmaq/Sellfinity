@@ -1,5 +1,5 @@
 const PENDING_KEY = "pendingTrackingRequests";
-const MAX_REQUEST_AGE_MS = 10 * 60 * 1000;
+const MAX_REQUEST_AGE_MS = 45 * 60 * 1000;
 const MAX_BULK_TABS = 4;
 
 async function pendingRequests() {
@@ -82,12 +82,41 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           amazonUrl: item.amazonUrl,
           destinationTabId: null,
           bulk: true,
+          mode: "TRACKING",
           createdAt: Date.now()
         });
       }
       await savePending(requests);
       await processBulkQueue(sender.tab.id);
-      sendResponse({ ok: true, queued: requests.filter((request) => request.bulk && request.sourceTabId === sender.tab.id).length });
+      sendResponse({ ok: true, queued: requests.filter((request) => request.bulk && request.mode !== "PRICE" && request.sourceTabId === sender.tab.id).length });
+    })();
+    return true;
+  }
+
+  if (message?.type === "BEGIN_BULK_AMAZON_PRICE_CHECK" && sender.tab?.id) {
+    (async () => {
+      const requests = await pendingRequests();
+      const existingKeys = new Set(requests.filter((request) => request.mode === "PRICE").map((request) => request.requestKey));
+      for (const item of message.requests || []) {
+        let url;
+        try { url = new URL(item.amazonUrl); } catch { continue; }
+        const isAmazon = url.protocol === "https:" && (url.hostname === "amazon.com" || url.hostname.endsWith(".amazon.com"));
+        if (!isAmazon || !item.requestKey || !item.orderIds?.length || existingKeys.has(item.requestKey)) continue;
+        requests.push({
+          requestId: crypto.randomUUID(),
+          requestKey: item.requestKey,
+          sourceTabId: sender.tab.id,
+          orderIds: item.orderIds,
+          amazonUrl: item.amazonUrl,
+          destinationTabId: null,
+          bulk: true,
+          mode: "PRICE",
+          createdAt: Date.now()
+        });
+      }
+      await savePending(requests);
+      await processBulkQueue(sender.tab.id);
+      sendResponse({ ok: true, queued: requests.filter((request) => request.bulk && request.mode === "PRICE" && request.sourceTabId === sender.tab.id).length });
     })();
     return true;
   }
@@ -100,6 +129,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         .filter((request) => request.destinationTabId === sender.tab.id || (openerId && request.sourceTabId === openerId))
         .sort((left, right) => right.createdAt - left.createdAt)[0];
       if (!matching) return sendResponse({ ok: false });
+      if (matching.mode === "PRICE") return sendResponse({ ok: false });
 
       await notifySource(matching, message.type === "TRACKING_FOUND"
         ? { type: "FILL_TRACKING", trackingNumber: message.trackingNumber, carrier: message.carrier, autoSave: !!matching.bulk }
@@ -113,6 +143,54 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     })();
     return true;
   }
+
+  if ((message?.type === "AMAZON_PRICE_FOUND" || message?.type === "AMAZON_PRICE_NOT_FOUND") && sender.tab?.id) {
+    (async () => {
+      const requests = await pendingRequests();
+      const matching = requests
+        .filter((request) => request.mode === "PRICE" && request.destinationTabId === sender.tab.id)
+        .sort((left, right) => right.createdAt - left.createdAt)[0];
+      if (!matching) return sendResponse({ ok: false });
+      await notifySource(matching, message.type === "AMAZON_PRICE_FOUND"
+        ? { type: "FILL_AMAZON_PRICE", unitPriceCents: message.unitPriceCents, shippingCents: message.shippingCents, orderIds: matching.orderIds }
+        : { type: "AMAZON_PRICE_LOOKUP_FAILED", reason: message.reason, orderIds: matching.orderIds });
+      await savePending(requests.filter((request) => request.requestId !== matching.requestId));
+      try { await chrome.tabs.remove(sender.tab.id); } catch { /* The product tab may already be closed. */ }
+      await processBulkQueue(matching.sourceTabId);
+      sendResponse({ ok: true });
+    })();
+    return true;
+  }
+});
+
+chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
+  if (changeInfo.status !== "complete") return;
+  (async () => {
+    const requests = await pendingRequests();
+    const request = requests.find((candidate) => candidate.mode === "PRICE" && candidate.destinationTabId === tabId);
+    if (!request) return;
+    for (let attempt = 0; attempt < 5; attempt++) {
+      try {
+        await chrome.tabs.sendMessage(tabId, { type: "INSPECT_AMAZON_PRICE" });
+        return;
+      } catch {
+        // document_idle content scripts can start just after the completed
+        // navigation event. Retry briefly instead of dropping the check.
+        await new Promise((resolve) => setTimeout(resolve, 500));
+      }
+    }
+    const latest = await pendingRequests();
+    const failed = latest.find((candidate) => candidate.mode === "PRICE" && candidate.destinationTabId === tabId);
+    if (!failed) return;
+    await notifySource(failed, {
+      type: "AMAZON_PRICE_LOOKUP_FAILED",
+      reason: "The Amazon price page opened, but the helper could not read it. Reload the extension and try again.",
+      orderIds: failed.orderIds
+    });
+    await savePending(latest.filter((candidate) => candidate.requestId !== failed.requestId));
+    try { await chrome.tabs.remove(tabId); } catch { /* The product tab may already be closed. */ }
+    await processBulkQueue(failed.sourceTabId);
+  })();
 });
 
 chrome.tabs.onCreated.addListener((tab) => {
