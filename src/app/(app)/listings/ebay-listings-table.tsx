@@ -236,9 +236,10 @@ function matchAssessmentLabel(assessment: EbayRow["sourceAssessment"]): string {
 function isHighConfidenceReview(row: EbayRow): boolean {
   const confidence = row.sourceAssessment?.confidence;
   return Boolean(
-    !row.match &&
     row.source &&
-    row.sourceAssessment?.verdict === "REVIEW" &&
+    row.sourceAssessment &&
+    ["MATCH", "LIKELY", "REVIEW"].includes(row.sourceAssessment.verdict) &&
+    row.sourceAssessment.method !== "MANUAL" &&
     confidence !== null &&
     confidence !== undefined &&
     confidence >= 95 &&
@@ -1886,7 +1887,7 @@ export function EbayListingsTable({
         <Card className="overflow-hidden border-indigo-200">
           <div className="border-b border-indigo-100 bg-gradient-to-r from-indigo-50 via-white to-violet-50 px-4 py-4 sm:px-5">
             <div className="flex flex-wrap items-center justify-between gap-3">
-              <div><h2 className="font-semibold text-slate-950">{healthFilter === "highConfidence" ? "High-confidence candidate review" : "Unmatched source review"}</h2><p className="mt-1 text-xs leading-5 text-slate-600">{healthFilter === "highConfidence" ? "Only researched Amazon candidates with 95–100% confidence are shown. Select the matches you agree with, then approve them together." : "Compare the eBay item with its Amazon candidate. Approval permanently records this pairing as manually verified with 100% confidence."}</p></div>
+              <div><h2 className="font-semibold text-slate-950">{healthFilter === "highConfidence" ? "High-confidence candidate review" : "Unmatched source review"}</h2><p className="mt-1 text-xs leading-5 text-slate-600">{healthFilter === "highConfidence" ? "Every non-verified Amazon candidate with 95–100% confidence is shown, including automatically matched items. Select the matches you agree with, then approve them together." : "Compare the eBay item with its Amazon candidate. Approval permanently records this pairing as manually verified with 100% confidence."}</p></div>
               <div className="flex flex-wrap items-center gap-2">
                 <Badge tone="indigo">{filteredRows.length.toLocaleString()} {healthFilter === "highConfidence" ? "high confidence" : "unmatched"}</Badge>
                 {healthFilter === "highConfidence" && <>
@@ -1938,14 +1939,14 @@ export function EbayListingsTable({
                     </div>
                   )}
                   <div className="flex flex-wrap items-center gap-2 border-t border-slate-100 px-4 py-3">
-                    {!review || rejected ? <Button size="sm" variant="secondary" disabled={pending || busyId === row.ebayListingId} onClick={() => findReviewCandidate(row)}>{busyId === row.ebayListingId ? "Searching Amazon…" : rejected ? "Find another candidate" : "Find Amazon candidate"}</Button> : <><Button size="sm" disabled={pending || busyId === row.ebayListingId} onClick={() => approveReviewCandidate(row)}>{busyId === row.ebayListingId ? "Saving…" : "Approve match"}</Button><Button size="sm" variant="secondary" disabled={pending || busyId === row.ebayListingId} onClick={() => rejectReviewCandidate(row)}>Reject candidate</Button></>}
+                    {!review || rejected ? <Button size="sm" variant="secondary" disabled={pending || busyId === row.ebayListingId} onClick={() => findReviewCandidate(row)}>{busyId === row.ebayListingId ? "Searching Amazon…" : rejected ? "Find another candidate" : "Find Amazon candidate"}</Button> : <><Button size="sm" disabled={pending || busyId === row.ebayListingId} onClick={() => approveReviewCandidate(row)}>{busyId === row.ebayListingId ? "Saving…" : "Approve match"}</Button>{healthFilter === "unmatched" && <Button size="sm" variant="secondary" disabled={pending || busyId === row.ebayListingId} onClick={() => rejectReviewCandidate(row)}>Reject candidate</Button>}</>}
                     {row.source?.url && <a href={row.source.url} target="_blank" rel="noreferrer" className="ml-auto text-xs font-semibold text-indigo-700 hover:underline">Open Amazon ↗</a>}
                   </div>
                 </article>
               );
             })}
           </div>
-          {visibleRows.length === 0 && <div className="px-5 py-14 text-center"><p className="font-semibold text-slate-900">{healthFilter === "highConfidence" ? "No 95–100% candidates waiting for approval" : "No unmatched listings in this view"}</p><p className="mt-1 text-sm text-slate-500">Clear the search or return to All listings.</p></div>}
+          {visibleRows.length === 0 && <div className="px-5 py-14 text-center"><p className="font-semibold text-slate-900">{healthFilter === "highConfidence" ? "No unverified 95–100% candidates found" : "No unmatched listings in this view"}</p><p className="mt-1 text-sm text-slate-500">Clear the search or return to All listings.</p></div>}
           {pageCount > 1 && <div className="flex items-center justify-between border-t border-slate-200 bg-white px-4 py-3"><Button size="sm" variant="secondary" disabled={currentPage <= 1} onClick={() => setPage((value) => Math.max(1, value - 1))}>Previous</Button><span className="text-xs font-medium text-slate-500">Page {currentPage} of {pageCount}</span><Button size="sm" variant="secondary" disabled={currentPage >= pageCount} onClick={() => setPage((value) => Math.min(pageCount, value + 1))}>Next</Button></div>}
         </Card>
       )}
