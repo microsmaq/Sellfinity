@@ -11,6 +11,7 @@ describe("configurable Smart Sync options", () => {
     expect(DEFAULT_SMART_SYNC_OPTIONS).toEqual({
       refreshEbayListings: true,
       refreshAmazonData: true,
+      checkLiveAmazonPrices: false,
       applySuggestedPrices: false,
       updateListingImages: false,
       endUnavailableListings: true,
@@ -23,6 +24,7 @@ describe("configurable Smart Sync options", () => {
     const none: SmartSyncOptions = {
       refreshEbayListings: false,
       refreshAmazonData: false,
+      checkLiveAmazonPrices: false,
       applySuggestedPrices: false,
       updateListingImages: false,
       endUnavailableListings: false,
@@ -37,6 +39,7 @@ describe("configurable Smart Sync options", () => {
       ...DEFAULT_SMART_SYNC_OPTIONS,
       refreshEbayListings: false,
       refreshAmazonData: false,
+      checkLiveAmazonPrices: false,
       endUnavailableListings: false,
       relistRecoveredProducts: false,
       applySuggestedPrices: true,

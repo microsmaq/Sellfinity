@@ -865,6 +865,7 @@ export type SourceCleanupBatchResult = {
 
 export type SmartSyncCandidate = {
   listingId: string;
+  ebayListingId: string | null;
   title: string;
 };
 
@@ -965,6 +966,7 @@ async function refreshEbayListingSnapshotsForUser(userId: string): Promise<EbayS
 export async function prepareConfigurableSmartSync(
   options: SmartSyncOptions,
   retryLastErrorsOnly = false,
+  selectedEbayListingIds?: string[],
 ): Promise<{ candidates: SmartSyncCandidate[]; ebayRefresh?: EbaySnapshotRefreshResult; error?: string }> {
   const user = await requireUser();
   if (!hasSelectedSmartSyncOption(options)) {
@@ -987,6 +989,7 @@ export async function prepareConfigurableSmartSync(
     }
   }
   const activeListingActionSelected = options.refreshAmazonData ||
+    options.checkLiveAmazonPrices ||
     options.applySuggestedPrices ||
     options.updateListingImages ||
     options.endUnavailableListings;
@@ -1019,15 +1022,50 @@ export async function prepareConfigurableSmartSync(
           userId: user.id,
           OR: listingScopes,
           ...(retryListingIds && { id: { in: retryListingIds } }),
+          ...(selectedEbayListingIds?.length && { ebayListingId: { in: [...new Set(selectedEbayListingIds)].slice(0, 1_000) } }),
         },
-        select: { id: true, title: true },
+        select: { id: true, ebayListingId: true, title: true },
         orderBy: [{ status: "asc" }, { publishedAt: "asc" }, { id: "asc" }],
         take: 1_000,
       })
     : [];
   return {
-    candidates: candidates.map((listing) => ({ listingId: listing.id, title: listing.title })),
+    candidates: candidates.map((listing) => ({ listingId: listing.id, ebayListingId: listing.ebayListingId, title: listing.title })),
     ebayRefresh,
+  };
+}
+
+export async function updateListingAmazonCostsFromBrowser(
+  rawEbayListingIds: string[],
+  rawUnitPriceCents: number,
+  rawShippingCents: number | null,
+) {
+  const user = await requireUser();
+  const ebayListingIds = [...new Set(rawEbayListingIds.map((id) => id.trim()).filter(Boolean))].slice(0, 1_000);
+  const unitPriceCents = Math.round(rawUnitPriceCents);
+  const shippingCents = rawShippingCents === null ? null : Math.round(rawShippingCents);
+  if (!ebayListingIds.length || !Number.isFinite(unitPriceCents) || unitPriceCents <= 0 || unitPriceCents > 1_000_000
+    || (shippingCents !== null && (!Number.isFinite(shippingCents) || shippingCents < 0 || shippingCents > 100_000))) {
+    return { error: "Amazon returned an invalid item price or shipping amount." };
+  }
+  const listings = await db.listing.findMany({
+    where: { userId: user.id, ebayListingId: { in: ebayListingIds } },
+    select: { ebayListingId: true, productId: true },
+  });
+  const productIds = [...new Set(listings.map((listing) => listing.productId))];
+  if (!productIds.length) return { error: "No matching Sellfinity listings were found." };
+  await db.product.updateMany({
+    where: { userId: user.id, id: { in: productIds } },
+    data: {
+      costCents: unitPriceCents,
+      ...(shippingCents !== null && { shippingCostCents: shippingCents }),
+    },
+  });
+  revalidatePath("/listings");
+  return {
+    updatedEbayListingIds: listings.flatMap((listing) => listing.ebayListingId ? [listing.ebayListingId] : []),
+    amazonPriceCents: unitPriceCents,
+    amazonShippingCents: shippingCents,
   };
 }
 
@@ -1044,6 +1082,7 @@ function adminListingImages(adminSource: {
 export async function processConfigurableSmartSyncItem(
   listingId: string,
   options: SmartSyncOptions,
+  liveAmazonPriceChecked = false,
 ): Promise<SmartSyncItemResult> {
   const user = await requireUser();
   if (!hasSelectedSmartSyncOption(options)) throw new Error("Select at least one Smart Sync action.");
@@ -1091,6 +1130,13 @@ export async function processConfigurableSmartSyncItem(
       throw error;
     }
     if (adminSource.sharedCatalogPopulated) actions.push("Amazon data retrieved once and saved to the admin catalog");
+    const effectiveAmazonPriceCents = liveAmazonPriceChecked
+      ? listing.product.costCents
+      : adminSource.amazonPriceCents;
+    const effectiveAmazonShippingCents = liveAmazonPriceChecked
+      ? listing.product.shippingCostCents
+      : adminSource.amazonShippingCents;
+    if (liveAmazonPriceChecked) actions.push("Signed-in Amazon price and shipping checked");
 
     if (options.refreshAmazonData) {
       await db.product.update({
@@ -1100,8 +1146,8 @@ export async function processConfigurableSmartSyncItem(
           brand: adminSource.amazonBrand || listing.product.brand,
           description: adminSource.amazonDescription || listing.product.description,
           supplierUrl: adminSource.amazonUrl,
-          costCents: adminSource.amazonPriceCents,
-          shippingCostCents: adminSource.amazonShippingCents,
+          costCents: effectiveAmazonPriceCents,
+          shippingCostCents: effectiveAmazonShippingCents,
           supplierStock: adminSource.amazonInStock ? 50 : 0,
         },
       });
@@ -1132,8 +1178,8 @@ export async function processConfigurableSmartSyncItem(
       : new Map();
     const priceLocked = winnerListings.has(listing.id);
     const plan = listingPricePlan({
-      amazonCostCents: adminSource.amazonPriceCents,
-      amazonShippingCents: adminSource.amazonShippingCents,
+      amazonCostCents: effectiveAmazonPriceCents,
+      amazonShippingCents: effectiveAmazonShippingCents,
       currentEbayPriceCents: listing.priceCents,
       ebayRecommendedPriceCents: adminSource.ebayRecommendedPriceCents,
       averageCompetitorPriceCents: adminSource.averageCompetitorPriceCents,

@@ -21,8 +21,9 @@ by the email scan during that same refresh, and saves every tracking ID it
 finds. Its progress is shown inside the animated Fulfillment refresh panel.
 Keep Amazon signed in while the check runs.
 
-Version 1.2.0 also supports **Check Amazon prices** in Fulfillment. It opens one
-signed-in Amazon page per unique awaiting-purchase product, reads the current
+Version 1.3.0 also supports **Check Amazon prices** in Fulfillment and the
+optional **Check live Amazon prices** step in Listings Smart Sync. It opens one
+signed-in Amazon page per unique product in the requested scope, reads the current
 item price and any clearly displayed shipping charge, then saves the costs and
 recalculates the order profit. If Amazon does not clearly show shipping, the
 existing shipping amount is preserved rather than incorrectly assuming it is
