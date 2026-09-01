@@ -109,6 +109,7 @@ export async function findAmazonCandidateForReview(input: TrackInput): Promise<A
   const existing = await db.listing.findFirst({
     where: { userId: user.id, ebayListingId: input.ebayListingId },
     include: { product: true },
+    orderBy: { updatedAt: "desc" },
   });
   if (existing && ["MATCH", "LIKELY"].includes(existing.sourceMatchVerdict)) {
     return { ok: false, ebayListingId: input.ebayListingId, error: "This listing already has an approved Amazon source." };
@@ -187,7 +188,10 @@ export async function findAmazonCandidateForReview(input: TrackInput): Promise<A
           sourceMatchVerdict: "REVIEW",
           sourceMatchConfidence: reviewConfidence,
           sourceMatchReason: `Candidate for manual review: ${assessment.reason}`.slice(0, 240),
-          sourceMatchMethod: assessment.method,
+          // Keep a seller-requested review out of the automatic health queue.
+          // Otherwise a long-running sync can turn REVIEW into PROCESSING just
+          // before the seller approves the candidate.
+          sourceMatchMethod: "MANUAL_REVIEW",
           sourceMatchCheckedAt: new Date(),
         },
       });
@@ -211,7 +215,7 @@ export async function findAmazonCandidateForReview(input: TrackInput): Promise<A
           sourceMatchVerdict: "REVIEW",
           sourceMatchConfidence: reviewConfidence,
           sourceMatchReason: `Candidate for manual review: ${assessment.reason}`.slice(0, 240),
-          sourceMatchMethod: assessment.method,
+          sourceMatchMethod: "MANUAL_REVIEW",
           sourceMatchCheckedAt: new Date(),
         },
       });
@@ -233,16 +237,26 @@ export async function findAmazonCandidateForReview(input: TrackInput): Promise<A
   };
 }
 
-export async function approveAmazonCandidate(ebayListingId: string) {
+export async function approveAmazonCandidate(ebayListingId: string, expectedAsin?: string) {
   const user = await requireUser();
+  const normalizedAsin = expectedAsin?.trim().toUpperCase() || null;
   const listing = await db.listing.findFirst({
-    where: { userId: user.id, ebayListingId, sourceMatchVerdict: { in: ["REVIEW", "REJECTED"] } },
+    where: {
+      userId: user.id,
+      ebayListingId,
+      ...(normalizedAsin ? { product: { sku: normalizedAsin } } : {}),
+    },
     include: { product: true },
+    orderBy: { updatedAt: "desc" },
   });
   if (!listing) return { error: "The review candidate is no longer available." };
-  await db.listing.update({
-    where: { id: listing.id },
+  // An eBay item can have duplicate retained rows from older imports. Apply
+  // the seller's authoritative decision to every copy so an older unmatched
+  // row cannot reappear on the next page load.
+  await db.listing.updateMany({
+    where: { userId: user.id, ebayListingId },
     data: {
+      productId: listing.productId,
       sourceMatchVerdict: "MATCH",
       sourceMatchConfidence: 100,
       sourceMatchReason: "Manually verified by the seller as the correct Amazon product.",
@@ -1575,7 +1589,7 @@ export async function startListingHealthSync(): Promise<{
     AND: [{
       OR: [
         { sourceMatchMethod: null },
-        { sourceMatchMethod: { notIn: ["MANUAL", "MANUAL_REJECTED"] } },
+        { sourceMatchMethod: { notIn: ["MANUAL", "MANUAL_REJECTED", "MANUAL_REVIEW"] } },
       ],
     }],
   };

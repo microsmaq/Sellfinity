@@ -998,7 +998,7 @@ export function EbayListingsTable({
     setBusyId(row.ebayListingId);
     startTransition(async () => {
       try {
-        const result = await approveAmazonCandidate(row.ebayListingId);
+        const result = await approveAmazonCandidate(row.ebayListingId, row.source?.sku);
         if ("error" in result) {
           setNotice({ text: result.error ?? "Could not approve this candidate.", error: true });
           return;

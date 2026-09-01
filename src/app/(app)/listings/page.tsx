@@ -150,9 +150,12 @@ export default async function ListingsPage() {
       : "https://sandbox.ebay.com";
   const suppressedEbayIds = new Set(suppressions.map((item) => item.ebayListingId));
   const cachedRemote = retainedEbayListings(listings, suppressedEbayIds, ebayItemHost, ebaySnapshots);
-  const localByEbayId = new Map(
-    listings.flatMap((listing) => listing.ebayListingId ? [[listing.ebayListingId, listing] as const] : []),
-  );
+  const localByEbayId = new Map<string, (typeof listings)[number]>();
+  for (const listing of listings) {
+    if (listing.ebayListingId && !localByEbayId.has(listing.ebayListingId)) {
+      localByEbayId.set(listing.ebayListingId, listing);
+    }
+  }
   const ebayRows: EbayRow[] = buildEbayRows(
     cachedRemote,
     listings,

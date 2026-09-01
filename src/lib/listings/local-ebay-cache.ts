@@ -26,9 +26,14 @@ export function retainedEbayListings(
   ebayItemHost: string,
   snapshots: RetainedEbaySnapshot[] = [],
 ): RemoteListing[] {
-  const localByEbayId = new Map(listings.flatMap((listing) =>
-    listing.ebayListingId ? [[listing.ebayListingId, listing] as const] : [],
-  ));
+  // The Listings page supplies newest rows first. Keep that newest retained
+  // copy when historical imports contain the same eBay item more than once.
+  const localByEbayId = new Map<string, RetainedEbayListing>();
+  for (const listing of listings) {
+    if (listing.ebayListingId && !localByEbayId.has(listing.ebayListingId)) {
+      localByEbayId.set(listing.ebayListingId, listing);
+    }
+  }
   const retained = new Map<string, { listing: RemoteListing; updatedAt: Date }>();
 
   for (const snapshot of snapshots) {

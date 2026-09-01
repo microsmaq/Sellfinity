@@ -64,9 +64,14 @@ export function buildEbayRows(
   targetProfitMode = "FIXED",
   targetProfitMinCents = 100,
 ): EbayRow[] {
-  const byEbayId = new Map(
-    local.filter((l) => l.ebayListingId).map((l) => [l.ebayListingId!, l]),
-  );
+  // Callers provide newest rows first. Preserve the first copy instead of
+  // letting an older duplicate overwrite it in the Map constructor.
+  const byEbayId = new Map<string, LocalListingFacts>();
+  for (const listing of local) {
+    if (listing.ebayListingId && !byEbayId.has(listing.ebayListingId)) {
+      byEbayId.set(listing.ebayListingId, listing);
+    }
+  }
 
   const rows: EbayRow[] = [];
   const seenEbayIds = new Set<string>();

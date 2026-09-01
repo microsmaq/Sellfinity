@@ -88,6 +88,21 @@ describe("buildEbayRows", () => {
     });
   });
 
+  it("keeps the newest retained match when an older duplicate has the same eBay ID", () => {
+    const newest = local("9");
+    newest.sourceMatchVerdict = "MATCH";
+    newest.sourceMatchMethod = "MANUAL";
+    newest.product.sku = "MANUALLY-APPROVED-ASIN";
+    const older = local("9");
+    older.sourceMatchVerdict = "REVIEW";
+    older.product.sku = "STALE-CANDIDATE";
+
+    const row = buildEbayRows([remote("9")], [newest, older])[0];
+
+    expect(row.match?.sku).toBe("MANUALLY-APPROVED-ASIN");
+    expect(row.sourceAssessment?.method).toBe("MANUAL");
+  });
+
   it("deduplicates listings repeated across eBay pagination boundaries", () => {
     const rows = buildEbayRows(
       [remote("1"), remote("2"), remote("1")],
