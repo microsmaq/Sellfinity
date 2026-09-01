@@ -278,6 +278,79 @@ export async function approveAmazonCandidate(ebayListingId: string, expectedAsin
   };
 }
 
+export async function approveAmazonCandidatesBulk(
+  requested: Array<{ ebayListingId: string; expectedAsin: string }>,
+) {
+  const user = await requireUser();
+  const unique = [...new Map(
+    requested
+      .map((item) => ({
+        ebayListingId: item.ebayListingId.trim(),
+        expectedAsin: item.expectedAsin.trim().toUpperCase(),
+      }))
+      .filter((item) => item.ebayListingId && item.expectedAsin)
+      .map((item) => [item.ebayListingId, item] as const),
+  ).values()].slice(0, 500);
+  if (!unique.length) return { approved: [], skipped: [] };
+
+  const candidates = await db.listing.findMany({
+    where: {
+      userId: user.id,
+      ebayListingId: { in: unique.map((item) => item.ebayListingId) },
+      sourceMatchVerdict: "REVIEW",
+      sourceMatchConfidence: { gte: 95, lte: 100 },
+    },
+    include: { product: true },
+    orderBy: { updatedAt: "desc" },
+  });
+  const candidateByPair = new Map<string, (typeof candidates)[number]>();
+  for (const candidate of candidates) {
+    if (!candidate.ebayListingId) continue;
+    const key = `${candidate.ebayListingId}:${candidate.product.sku.toUpperCase()}`;
+    if (!candidateByPair.has(key)) candidateByPair.set(key, candidate);
+  }
+
+  const approved = unique.flatMap((item) => {
+    const listing = candidateByPair.get(`${item.ebayListingId}:${item.expectedAsin}`);
+    return listing ? [{ item, listing }] : [];
+  });
+  const groups = new Map<string, string[]>();
+  for (const { item, listing } of approved) {
+    groups.set(listing.productId, [...(groups.get(listing.productId) ?? []), item.ebayListingId]);
+  }
+  if (groups.size) {
+    await db.$transaction([...groups.entries()].map(([productId, ebayListingIds]) =>
+      db.listing.updateMany({
+        where: { userId: user.id, ebayListingId: { in: ebayListingIds } },
+        data: {
+          productId,
+          sourceMatchVerdict: "MATCH",
+          sourceMatchConfidence: 100,
+          sourceMatchReason: "Manually verified by the seller as the correct Amazon product.",
+          sourceMatchMethod: "MANUAL",
+          sourceMatchCheckedAt: new Date(),
+        },
+      }),
+    ));
+  }
+  revalidate();
+  const approvedIds = new Set(approved.map(({ item }) => item.ebayListingId));
+  return {
+    approved: approved.map(({ item, listing }) => ({
+      ebayListingId: item.ebayListingId,
+      assessment: { verdict: "MATCH", confidence: 100, reason: "Manually verified by the seller as the correct Amazon product.", method: "MANUAL" },
+      match: {
+        sku: listing.product.sku,
+        amazonPriceCents: listing.product.costCents,
+        amazonShippingCents: listing.product.shippingCostCents,
+        amazonUrl: listing.product.supplierUrl,
+        unavailable: listing.product.supplierStock === 0,
+      },
+    })),
+    skipped: unique.filter((item) => !approvedIds.has(item.ebayListingId)).map((item) => item.ebayListingId),
+  };
+}
+
 export async function rejectAmazonCandidate(ebayListingId: string) {
   const user = await requireUser();
   const updated = await db.listing.updateMany({

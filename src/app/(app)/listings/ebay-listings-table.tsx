@@ -6,6 +6,7 @@ import {
   cleanupEbayListings,
   applyTargetProfitPrice,
   approveAmazonCandidate,
+  approveAmazonCandidatesBulk,
   enhanceEbayListing,
   endEbayListing,
   exportEbayListings,
@@ -230,6 +231,19 @@ function matchAssessmentLabel(assessment: EbayRow["sourceAssessment"]): string {
   if (assessment.method === "MANUAL_REJECTED") return "Seller rejected";
   if (assessment.verdict === "UNVERIFIED") return "Not checked";
   return `${assessment.verdict.toLowerCase()} ${assessment.confidence ?? "—"}%`;
+}
+
+function isHighConfidenceReview(row: EbayRow): boolean {
+  const confidence = row.sourceAssessment?.confidence;
+  return Boolean(
+    !row.match &&
+    row.source &&
+    row.sourceAssessment?.verdict === "REVIEW" &&
+    confidence !== null &&
+    confidence !== undefined &&
+    confidence >= 95 &&
+    confidence <= 100,
+  );
 }
 
 type ListingSyncProgress = {
@@ -658,8 +672,9 @@ export function EbayListingsTable({
   const [pageSize, setPageSize] = useState(25);
   const [page, setPage] = useState(1);
   const [searchQuery, setSearchQuery] = useState("");
-  const [healthFilter, setHealthFilter] = useState<"all" | "attention" | "healthy" | "protected" | "unmatched" | "unprofitable" | "needsPricing" | "recentSales">("all");
+  const [healthFilter, setHealthFilter] = useState<"all" | "attention" | "healthy" | "protected" | "unmatched" | "highConfidence" | "unprofitable" | "needsPricing" | "recentSales">("all");
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [bulkApprovalProgress, setBulkApprovalProgress] = useState<{ completed: number; total: number } | null>(null);
   const [targetProfitOpen, setTargetProfitOpen] = useState(false);
   const [targetProfitDollars, setTargetProfitDollars] = useState("7.00");
   const [expandedTable, setExpandedTable] = useState(false);
@@ -694,6 +709,7 @@ export function EbayListingsTable({
       if (healthFilter === "healthy") return Boolean(row.match && !row.match.unavailable && (profit?.profitCents ?? 0) > 0 && !listingNeedsAttention(row));
       if (healthFilter === "protected") return Boolean(row.verifiedWinner || row.priceLocked);
       if (healthFilter === "unmatched") return !row.match;
+      if (healthFilter === "highConfidence") return isHighConfidenceReview(row);
       if (healthFilter === "unprofitable") return Boolean(row.match && (profit?.profitCents ?? 0) <= 0);
       if (healthFilter === "needsPricing") return !row.verifiedWinner && !row.priceLocked && canApplySuggestedPrice(row, sitewideDiscountBps, adRateBps);
       if (healthFilter === "recentSales") return (row.performance?.units7d ?? 0) > 0;
@@ -758,6 +774,10 @@ export function EbayListingsTable({
   const smartSyncTargetRows = smartSyncScope === "SELECTED"
     ? rows.filter((row) => selected.has(row.ebayListingId))
     : rows;
+  const selectedHighConfidenceRows = filteredRows.filter(
+    (row) => selected.has(row.ebayListingId) && isHighConfidenceReview(row),
+  );
+  const allHighConfidenceSelected = filteredRows.length > 0 && filteredRows.every((row) => selected.has(row.ebayListingId));
 
   useEffect(() => {
     function receiveAmazonPrice(event: Event) {
@@ -1030,6 +1050,83 @@ export function EbayListingsTable({
         setNotice({ text: "Amazon pairing approved and saved as Manually verified (100% confidence).", error: false });
       } finally {
         setBusyId(null);
+      }
+    });
+  }
+
+  function toggleAllHighConfidenceCandidates() {
+    const ids = filteredRows.filter(isHighConfidenceReview).map((row) => row.ebayListingId);
+    setSelected((current) => {
+      const next = new Set(current);
+      const everySelected = ids.length > 0 && ids.every((id) => next.has(id));
+      for (const id of ids) {
+        if (everySelected) next.delete(id);
+        else next.add(id);
+      }
+      return next;
+    });
+  }
+
+  function approveSelectedHighConfidenceCandidates() {
+    const targets = selectedHighConfidenceRows;
+    if (!targets.length) return;
+    if (!window.confirm(`Approve ${targets.length} selected Amazon candidate${targets.length === 1 ? "" : "s"} as manually verified matches?`)) return;
+    setNotice(null);
+    setBulkApprovalProgress({ completed: 0, total: targets.length });
+    startTransition(async () => {
+      let approvedCount = 0;
+      let skippedCount = 0;
+      try {
+        for (let offset = 0; offset < targets.length; offset += 100) {
+          const batch = targets.slice(offset, offset + 100);
+          const result = await approveAmazonCandidatesBulk(batch.map((row) => ({
+            ebayListingId: row.ebayListingId,
+            expectedAsin: row.source!.sku,
+          })));
+          const approvedById = new Map(result.approved.map((item) => [item.ebayListingId, item]));
+          approvedCount += result.approved.length;
+          skippedCount += result.skipped.length;
+          setRows((current) => current.map((row) => {
+            const approved = approvedById.get(row.ebayListingId);
+            if (!approved) return row;
+            const profitCents = trueProfitWithBuyerShippingCents(
+              row.priceCents,
+              row.buyerShippingCents ?? 0,
+              approved.match.amazonPriceCents,
+              approved.match.amazonShippingCents,
+              sitewideDiscountBps,
+              adRateBps,
+            );
+            const buyerTotal = discountedEbayPriceCents(row.priceCents, sitewideDiscountBps) + (row.buyerShippingCents ?? 0);
+            return {
+              ...row,
+              match: {
+                sku: approved.match.sku,
+                amazonPriceCents: approved.match.amazonPriceCents,
+                shippingCostCents: approved.match.amazonShippingCents,
+                amazonUrl: approved.match.amazonUrl,
+                profitCents,
+                marginPct: buyerTotal > 0 ? Math.round(profitCents / buyerTotal * 100) : 0,
+                unavailable: approved.match.unavailable,
+              },
+              sourceAssessment: { ...approved.assessment, amazonUrl: approved.match.amazonUrl },
+            };
+          }));
+          setSelected((current) => {
+            const next = new Set(current);
+            for (const item of result.approved) next.delete(item.ebayListingId);
+            return next;
+          });
+          setBulkApprovalProgress({ completed: Math.min(offset + batch.length, targets.length), total: targets.length });
+        }
+        setNotice({
+          text: `${approvedCount} candidate${approvedCount === 1 ? "" : "s"} approved as manually verified.${skippedCount ? ` ${skippedCount} changed before approval and were safely skipped.` : ""}`,
+          error: approvedCount === 0,
+        });
+      } catch (error) {
+        setNotice({ text: error instanceof Error ? error.message : "Bulk candidate approval did not finish.", error: true });
+      } finally {
+        setBulkApprovalProgress(null);
       }
     });
   }
@@ -1538,6 +1635,7 @@ export function EbayListingsTable({
   }
 
   const unmatched = rows.filter((r) => !r.match).length;
+  const highConfidenceCandidates = rows.filter(isHighConfidenceReview).length;
   const latestMarketUpdate = rows.reduce<string | null>((latest, row) => {
     if (!row.marketUpdatedAt) return latest;
     return !latest || new Date(row.marketUpdatedAt) > new Date(latest) ? row.marketUpdatedAt : latest;
@@ -1609,6 +1707,7 @@ export function EbayListingsTable({
               <option value="healthy">Healthy & profitable</option>
               <option value="protected">Price protected</option>
               <option value="unmatched">Unmatched review</option>
+              <option value="highConfidence">95–100% candidates</option>
               <option value="unprofitable">Unprofitable</option>
               <option value="needsPricing">Needs pricing</option>
               <option value="recentSales">Sold in last 7 days</option>
@@ -1645,6 +1744,7 @@ export function EbayListingsTable({
             ["needsPricing", "Needs pricing"],
             ["recentSales", "Recent sellers"],
             ["protected", "Protected winners"],
+            ["highConfidence", `95–100% candidates (${highConfidenceCandidates})`],
           ].map(([id, label]) => (
             <button key={id} type="button" onClick={() => { setHealthFilter(id as typeof healthFilter); setPage(1); }} className={cx("shrink-0 rounded-full border px-3 py-1 text-xs font-semibold transition", healthFilter === id ? "border-indigo-300 bg-indigo-50 text-indigo-700" : "border-slate-200 bg-white text-slate-600 hover:border-indigo-200 hover:text-indigo-700")}>{label}</button>
           ))}
@@ -1782,12 +1882,23 @@ export function EbayListingsTable({
         </p>
       )}
 
-      {healthFilter === "unmatched" && (
+      {(healthFilter === "unmatched" || healthFilter === "highConfidence") && (
         <Card className="overflow-hidden border-indigo-200">
           <div className="border-b border-indigo-100 bg-gradient-to-r from-indigo-50 via-white to-violet-50 px-4 py-4 sm:px-5">
             <div className="flex flex-wrap items-center justify-between gap-3">
-              <div><h2 className="font-semibold text-slate-950">Unmatched source review</h2><p className="mt-1 text-xs leading-5 text-slate-600">Compare the eBay item with its Amazon candidate. Approval permanently records this pairing as manually verified with 100% confidence.</p></div>
-              <Badge tone="indigo">{filteredRows.length.toLocaleString()} unmatched</Badge>
+              <div><h2 className="font-semibold text-slate-950">{healthFilter === "highConfidence" ? "High-confidence candidate review" : "Unmatched source review"}</h2><p className="mt-1 text-xs leading-5 text-slate-600">{healthFilter === "highConfidence" ? "Only researched Amazon candidates with 95–100% confidence are shown. Select the matches you agree with, then approve them together." : "Compare the eBay item with its Amazon candidate. Approval permanently records this pairing as manually verified with 100% confidence."}</p></div>
+              <div className="flex flex-wrap items-center gap-2">
+                <Badge tone="indigo">{filteredRows.length.toLocaleString()} {healthFilter === "highConfidence" ? "high confidence" : "unmatched"}</Badge>
+                {healthFilter === "highConfidence" && <>
+                  <label className="flex cursor-pointer items-center gap-2 rounded-lg border border-indigo-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700">
+                    <input type="checkbox" checked={allHighConfidenceSelected} onChange={toggleAllHighConfidenceCandidates} className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500" />
+                    Select all {filteredRows.length.toLocaleString()}
+                  </label>
+                  <Button size="sm" disabled={pending || selectedHighConfidenceRows.length === 0} onClick={approveSelectedHighConfidenceCandidates}>
+                    {bulkApprovalProgress ? `Approving ${bulkApprovalProgress.completed}/${bulkApprovalProgress.total}` : `Approve selected (${selectedHighConfidenceRows.length})`}
+                  </Button>
+                </>}
+              </div>
             </div>
           </div>
           <div className="grid gap-3 bg-slate-50/60 p-3 lg:grid-cols-2 lg:p-4">
@@ -1798,7 +1909,7 @@ export function EbayListingsTable({
                 <article key={`review-${row.ebayListingId}`} className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
                   <div className="grid gap-0 sm:grid-cols-2">
                     <div className="border-b border-slate-100 p-4 sm:border-b-0 sm:border-r">
-                      <p className="text-[10px] font-semibold uppercase tracking-[.1em] text-slate-400">eBay listing</p>
+                      <div className="flex items-center justify-between gap-2"><p className="text-[10px] font-semibold uppercase tracking-[.1em] text-slate-400">eBay listing</p>{healthFilter === "highConfidence" && <input type="checkbox" checked={selected.has(row.ebayListingId)} onChange={() => toggleSelected(row.ebayListingId)} aria-label={`Select ${row.title}`} className="h-5 w-5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500" />}</div>
                       <div className="mt-3 flex gap-3">
                         {row.imageUrl ? <>
                           {/* eslint-disable-next-line @next/next/no-img-element -- External marketplace image hosts are dynamic. */}
@@ -1834,7 +1945,7 @@ export function EbayListingsTable({
               );
             })}
           </div>
-          {visibleRows.length === 0 && <div className="px-5 py-14 text-center"><p className="font-semibold text-slate-900">No unmatched listings in this view</p><p className="mt-1 text-sm text-slate-500">Clear the search or return to All listings.</p></div>}
+          {visibleRows.length === 0 && <div className="px-5 py-14 text-center"><p className="font-semibold text-slate-900">{healthFilter === "highConfidence" ? "No 95–100% candidates waiting for approval" : "No unmatched listings in this view"}</p><p className="mt-1 text-sm text-slate-500">Clear the search or return to All listings.</p></div>}
           {pageCount > 1 && <div className="flex items-center justify-between border-t border-slate-200 bg-white px-4 py-3"><Button size="sm" variant="secondary" disabled={currentPage <= 1} onClick={() => setPage((value) => Math.max(1, value - 1))}>Previous</Button><span className="text-xs font-medium text-slate-500">Page {currentPage} of {pageCount}</span><Button size="sm" variant="secondary" disabled={currentPage >= pageCount} onClick={() => setPage((value) => Math.min(pageCount, value + 1))}>Next</Button></div>}
         </Card>
       )}
@@ -1845,7 +1956,7 @@ export function EbayListingsTable({
       <Card
         className={cx(
           "min-w-0 overflow-hidden",
-          healthFilter === "unmatched" && "hidden",
+          (healthFilter === "unmatched" || healthFilter === "highConfidence") && "hidden",
           expandedTable &&
             "fixed inset-3 z-50 flex flex-col rounded-2xl border-slate-300 shadow-2xl",
         )}
