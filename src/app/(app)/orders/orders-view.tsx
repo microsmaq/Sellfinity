@@ -361,7 +361,7 @@ export function OrdersView({ orders, fetchError, profitProtectionEnabled, autoRe
     if (amazonPriceCheck?.status !== "starting") return;
     const timer = window.setTimeout(() => {
       setAmazonPriceCheck((current) => current?.status === "starting" ? { ...current, status: "unavailable" } : current);
-      setRefreshMessage("The Amazon price checker needs Chrome helper version 1.3.0. Download or reload the helper, then try again.");
+      setRefreshMessage("The Amazon price checker needs Chrome helper version 1.3.1. Reload the helper, then refresh this Sellfinity tab and try again.");
     }, 8_000);
     return () => window.clearTimeout(timer);
   }, [amazonPriceCheck?.status]);
@@ -833,7 +833,7 @@ export function OrdersView({ orders, fetchError, profitProtectionEnabled, autoRe
           </select>
           <Button data-sellfinity-refresh="true" variant="secondary" disabled={refreshWorking} onClick={refreshFulfillment}>{refreshWorking ? "Refresh in progress…" : "↻ Refresh Amazon & eBay"}</Button>
           <Button variant="secondary" disabled={amazonPriceCheckWorking || refreshWorking} onClick={checkAmazonPrices}>{amazonPriceCheckWorking ? `Checking ${amazonPriceCheck?.processed ?? 0}/${amazonPriceCheck?.total ?? 0}…` : "Check Amazon prices"}</Button>
-          <a href="/downloads/sellfinity-tracking-helper.zip?v=1.3.0" download className="inline-flex min-h-10 items-center justify-center rounded-lg border border-slate-300 bg-white px-3 text-sm font-medium text-slate-700 hover:bg-slate-50">Download Chrome helper v1.3</a>
+          <a href="/downloads/sellfinity-tracking-helper.zip?v=1.3.1" download className="inline-flex min-h-10 items-center justify-center rounded-lg border border-slate-300 bg-white px-3 text-sm font-medium text-slate-700 hover:bg-slate-50">Download Chrome helper v1.3.1</a>
         </div>
 
         {amazonPriceCheck && amazonPriceCheck.status !== "unavailable" && (
