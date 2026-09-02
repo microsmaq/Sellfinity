@@ -1482,6 +1482,7 @@ export async function updateListingAmazonCostsFromBrowser(
     where: { userId: user.id, id: { in: productIds } },
     data: {
       costCents: unitPriceCents,
+      supplierStock: 50,
       ...(shippingCents !== null && { shippingCostCents: shippingCents }),
     },
   });
@@ -1491,6 +1492,24 @@ export async function updateListingAmazonCostsFromBrowser(
     amazonPriceCents: unitPriceCents,
     amazonShippingCents: shippingCents,
   };
+}
+
+export async function markListingAmazonUnavailableFromBrowser(rawEbayListingIds: string[]) {
+  const user = await requireUser();
+  const ebayListingIds = [...new Set(rawEbayListingIds.map((id) => id.trim()).filter(Boolean))].slice(0, 1_000);
+  if (!ebayListingIds.length) return { error: "No Sellfinity listings were supplied." };
+  const listings = await db.listing.findMany({
+    where: { userId: user.id, ebayListingId: { in: ebayListingIds } },
+    select: { ebayListingId: true, productId: true },
+  });
+  const productIds = [...new Set(listings.map((listing) => listing.productId))];
+  if (!productIds.length) return { error: "No matching Sellfinity listings were found." };
+  await db.product.updateMany({
+    where: { userId: user.id, id: { in: productIds } },
+    data: { supplierStock: 0 },
+  });
+  revalidatePath("/listings");
+  return { updatedEbayListingIds: listings.flatMap((listing) => listing.ebayListingId ? [listing.ebayListingId] : []) };
 }
 
 function adminListingImages(adminSource: {
@@ -1507,6 +1526,7 @@ export async function processConfigurableSmartSyncItem(
   listingId: string,
   options: SmartSyncOptions,
   liveAmazonPriceChecked = false,
+  liveAmazonUnavailableConfirmed = false,
 ): Promise<SmartSyncItemResult> {
   const user = await requireUser();
   if (!hasSelectedSmartSyncOption(options)) throw new Error("Select at least one Smart Sync action.");
@@ -1522,6 +1542,25 @@ export async function processConfigurableSmartSyncItem(
     originalPriceCents: listing.priceCents,
   };
   const actions: string[] = [];
+
+  if (liveAmazonUnavailableConfirmed) {
+    await db.product.update({ where: { id: listing.product.id }, data: { supplierStock: 0 } });
+    actions.push("Signed-in Amazon page confirmed the product is unavailable");
+    if (listing.status === "ACTIVE" && options.endUnavailableListings && listing.ebayListingId) {
+      const ended = await endEbayListingForUser(user.id, listing.ebayListingId, "SOURCE_UNAVAILABLE");
+      if (ended.error) throw new Error(ended.error);
+      actions.push("Listing ended on eBay to prevent an unfulfillable sale");
+      return { ...base, status: "success", outcome: "ended", actions, newPriceCents: listing.priceCents };
+    }
+    return {
+      ...base,
+      status: "needs_attention",
+      outcome: "unchanged",
+      actions,
+      newPriceCents: listing.priceCents,
+      error: "Amazon confirms this product is unavailable. Review it or select ‘End unavailable-source listings’ on the next Smart Sync run.",
+    };
+  }
 
   try {
     const asin = listing.product.supplierProductId.trim().toUpperCase();

@@ -260,6 +260,12 @@
       toast(`Amazon price $${(message.unitPriceCents / 100).toFixed(2)} found · ${shipping}.`, "success");
     }
     if (message?.type === "AMAZON_PRICE_LOOKUP_FAILED") {
+      if (message.unavailable && Array.isArray(message.orderIds) && message.orderIds.length) {
+        document.dispatchEvent(new CustomEvent("sellfinity:amazon-product-unavailable", { detail: {
+          orderIds: message.orderIds,
+          reason: message.reason
+        } }));
+      }
       finishAmazonPriceItem(false);
       toast(message.reason || "Amazon did not show a current price for this product.", "error");
     }

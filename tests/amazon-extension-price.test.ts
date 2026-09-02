@@ -5,13 +5,21 @@ import { runInThisContext } from "node:vm";
 
 type PriceResult = { unitPriceCents: number; shippingCents: number | null } | null;
 type PriceParser = (document: { querySelectorAll(selector: string): Array<{ textContent: string }> }) => PriceResult;
+type AvailabilityParser = (document: {
+  querySelectorAll(selector: string): Array<{ textContent: string }>;
+  body?: { innerText: string };
+  documentElement?: { innerText: string };
+  title?: string;
+}) => "UNAVAILABLE" | "BLOCKED" | "UNKNOWN";
 
 let parseAmazonPrice: PriceParser;
+let parseAmazonAvailability: AvailabilityParser;
 
 beforeAll(() => {
   const source = readFileSync(resolve(process.cwd(), "browser-extension/sellfinity-tracking-helper/amazon-price.js"), "utf8");
   runInThisContext(source);
   parseAmazonPrice = (globalThis as typeof globalThis & { sellfinityAmazonPriceFromPage: PriceParser }).sellfinityAmazonPriceFromPage;
+  parseAmazonAvailability = (globalThis as typeof globalThis & { sellfinityAmazonAvailabilityFromPage: AvailabilityParser }).sellfinityAmazonAvailabilityFromPage;
 });
 
 function page(price: string, shipping: string) {
@@ -44,5 +52,23 @@ describe("Amazon extension price extraction", () => {
       unitPriceCents: 999,
       shippingCents: null,
     });
+  });
+
+  it("confirms a product is unavailable only from strong Amazon availability text", () => {
+    expect(parseAmazonAvailability({
+      querySelectorAll(selector: string) {
+        return selector === "#availability" ? [{ textContent: "Currently unavailable. We don't know when or if this item will be back in stock." }] : [];
+      },
+      body: { innerText: "Product details" },
+      title: "Amazon product",
+    })).toBe("UNAVAILABLE");
+  });
+
+  it("does not mark sign-in or CAPTCHA pages unavailable", () => {
+    expect(parseAmazonAvailability({
+      querySelectorAll() { return []; },
+      body: { innerText: "Enter the characters you see below" },
+      title: "Amazon verification",
+    })).toBe("BLOCKED");
   });
 });

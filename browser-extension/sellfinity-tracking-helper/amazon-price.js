@@ -49,3 +49,22 @@ globalThis.sellfinityAmazonPriceFromPage = function amazonPriceFromPage(doc = do
 
   return { unitPriceCents, shippingCents };
 };
+
+globalThis.sellfinityAmazonAvailabilityFromPage = function amazonAvailabilityFromPage(doc = document) {
+  const textFor = (selectors) => selectors
+    .flatMap((selector) => [...doc.querySelectorAll(selector)].map((element) => element.textContent || ""))
+    .join(" ")
+    .replace(/\s+/g, " ")
+    .trim();
+  const availabilityText = textFor([
+    "#availability",
+    "#outOfStock"
+  ]);
+  const pageText = String(doc.body?.innerText || doc.documentElement?.innerText || "").replace(/\s+/g, " ").slice(0, 12_000);
+  const title = String(doc.title || "");
+
+  if (/enter the characters you see below|not a robot|captcha|sign[- ]?in/i.test(`${title} ${pageText}`)) return "BLOCKED";
+  if (/currently unavailable|temporarily out of stock|we don(?:'|’)t know when or if this item will be back in stock/i.test(availabilityText)) return "UNAVAILABLE";
+  if (/sorry! we couldn(?:'|’)t find that page|page not found/i.test(`${title} ${pageText}`)) return "UNAVAILABLE";
+  return "UNKNOWN";
+};

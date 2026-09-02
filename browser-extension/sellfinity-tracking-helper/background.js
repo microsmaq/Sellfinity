@@ -257,7 +257,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       if (!matching) return sendResponse({ ok: false });
       await notifySource(matching, message.type === "AMAZON_PRICE_FOUND"
         ? { type: "FILL_AMAZON_PRICE", unitPriceCents: message.unitPriceCents, shippingCents: message.shippingCents, orderIds: matching.orderIds }
-        : { type: "AMAZON_PRICE_LOOKUP_FAILED", reason: message.reason, orderIds: matching.orderIds });
+        : { type: "AMAZON_PRICE_LOOKUP_FAILED", reason: message.reason, unavailable: Boolean(message.unavailable), orderIds: matching.orderIds });
       await advanceRun(matching.sourceTabId, "PRICE", message.type === "AMAZON_PRICE_FOUND");
       await savePending(requests.filter((request) => request.requestId !== matching.requestId));
       try { await chrome.tabs.remove(sender.tab.id); } catch { /* The product tab may already be closed. */ }

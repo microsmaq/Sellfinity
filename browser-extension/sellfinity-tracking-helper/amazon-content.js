@@ -49,10 +49,18 @@
     if (!priceFinished) {
       priceObserver = new MutationObserver(inspectPrice);
       priceObserver.observe(document.documentElement, { subtree: true, childList: true, characterData: true });
-      priceTimer = setTimeout(() => finishPrice({
-        type: "AMAZON_PRICE_NOT_FOUND",
-        reason: "Amazon did not show a current purchasable price. Confirm the product is available and Amazon is signed in."
-      }), 30_000);
+      priceTimer = setTimeout(() => {
+        const availability = globalThis.sellfinityAmazonAvailabilityFromPage?.(document) || "UNKNOWN";
+        finishPrice({
+          type: "AMAZON_PRICE_NOT_FOUND",
+          unavailable: availability === "UNAVAILABLE",
+          reason: availability === "UNAVAILABLE"
+            ? "Amazon confirms that this product is unavailable or no longer has a product page."
+            : availability === "BLOCKED"
+              ? "Amazon requires sign-in or CAPTCHA verification, so availability was not changed."
+              : "Amazon did not show a current purchasable price. Availability could not be confirmed."
+        });
+      }, 30_000);
     }
     sendResponse({ ok: true });
     return true;

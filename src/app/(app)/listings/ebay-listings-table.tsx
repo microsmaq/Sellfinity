@@ -23,6 +23,7 @@ import {
   prepareConfigurableSmartSync,
   processConfigurableSmartSyncItem,
   updateListingAmazonCostsFromBrowser,
+  markListingAmazonUnavailableFromBrowser,
 } from "@/lib/actions/ebay-listings";
 import type { CleanupItemResult, SmartSyncItemResult } from "@/lib/actions/ebay-listings";
 import {
@@ -305,7 +306,7 @@ const SMART_SYNC_OPTION_META: Array<{
   {
     key: "endUnavailableListings",
     label: "End unavailable-source listings",
-    description: "Prevent new orders when the administrator catalog marks the Amazon source unavailable.",
+    description: "End items only when Amazon or the administrator catalog clearly confirms the source is unavailable. Sign-in, CAPTCHA, and temporary read failures are never ended.",
   },
   {
     key: "relistRecoveredProducts",
@@ -671,9 +672,10 @@ export function EbayListingsTable({
   const [smartSyncScope, setSmartSyncScope] = useState<"ALL" | "SELECTED">("ALL");
   const [amazonPriceBridgeIds, setAmazonPriceBridgeIds] = useState<string[]>([]);
   const [amazonPriceProgress, setAmazonPriceProgress] = useState<{ status: "starting" | "running" | "complete" | "cancelled" | "error"; total: number; processed: number; found: number } | null>(null);
-  const amazonPriceResolver = useRef<((listingIds: Set<string>) => void) | null>(null);
+  const amazonPriceResolver = useRef<((result: { availableIds: Set<string>; unavailableIds: Set<string> }) => void) | null>(null);
   const amazonPriceRejecter = useRef<((error: Error) => void) | null>(null);
   const amazonPriceSuccessfulIds = useRef(new Set<string>());
+  const amazonUnavailableIds = useRef(new Set<string>());
   const amazonPriceSavePromises = useRef<Promise<void>[]>([]);
   const amazonPriceStartupTimer = useRef<number | null>(null);
   const [syncResults, setSyncResults] = useState<SmartSyncItemResult[]>([]);
@@ -815,8 +817,22 @@ export function EbayListingsTable({
                 ...row.match,
                 amazonPriceCents: result.amazonPriceCents,
                 shippingCostCents: result.amazonShippingCents ?? row.match.shippingCostCents,
+                unavailable: false,
               },
             }
+          : row));
+      })();
+      amazonPriceSavePromises.current.push(save);
+    }
+    function receiveAmazonUnavailable(event: Event) {
+      const detail = (event as CustomEvent<{ orderIds?: string[] }>).detail;
+      if (!detail?.orderIds?.length) return;
+      const save = (async () => {
+        const result = await markListingAmazonUnavailableFromBrowser(detail.orderIds!);
+        if ("error" in result) return;
+        for (const id of result.updatedEbayListingIds) amazonUnavailableIds.current.add(id);
+        setRows((current) => current.map((row) => result.updatedEbayListingIds.includes(row.ebayListingId) && row.match
+          ? { ...row, match: { ...row.match, unavailable: true } }
           : row));
       })();
       amazonPriceSavePromises.current.push(save);
@@ -838,7 +854,10 @@ export function EbayListingsTable({
         const resolve = amazonPriceResolver.current;
         amazonPriceResolver.current = null;
         amazonPriceRejecter.current = null;
-        void Promise.all(amazonPriceSavePromises.current).then(() => resolve(new Set(amazonPriceSuccessfulIds.current)));
+        void Promise.all(amazonPriceSavePromises.current).then(() => resolve({
+          availableIds: new Set(amazonPriceSuccessfulIds.current),
+          unavailableIds: new Set(amazonUnavailableIds.current),
+        }));
       }
       if (detail.status === "cancelled" && amazonPriceRejecter.current) {
         const reject = amazonPriceRejecter.current;
@@ -854,14 +873,16 @@ export function EbayListingsTable({
       }
     }
     document.addEventListener("sellfinity:amazon-price-found", receiveAmazonPrice);
+    document.addEventListener("sellfinity:amazon-product-unavailable", receiveAmazonUnavailable);
     document.addEventListener("sellfinity:amazon-price-helper-progress", receiveAmazonPriceProgress);
     return () => {
       document.removeEventListener("sellfinity:amazon-price-found", receiveAmazonPrice);
+      document.removeEventListener("sellfinity:amazon-product-unavailable", receiveAmazonUnavailable);
       document.removeEventListener("sellfinity:amazon-price-helper-progress", receiveAmazonPriceProgress);
     };
   }, []);
 
-  async function checkLiveAmazonPrices(targetRows: EbayRow[]): Promise<Set<string>> {
+  async function checkLiveAmazonPrices(targetRows: EbayRow[]): Promise<{ availableIds: Set<string>; unavailableIds: Set<string> }> {
     const grouped = new Map<string, { requestKey: string; amazonUrl: string; orderIds: string[] }>();
     for (const row of targetRows) {
       if (!row.match?.amazonUrl || !row.match.sku) continue;
@@ -877,18 +898,19 @@ export function EbayListingsTable({
     const requests = [...grouped.values()];
     if (!requests.length) throw new Error("No matched Amazon products are available in this Smart Sync scope.");
     amazonPriceSuccessfulIds.current = new Set();
+    amazonUnavailableIds.current = new Set();
     amazonPriceSavePromises.current = [];
     setAmazonPriceBridgeIds(requests.flatMap((request) => request.orderIds));
     setAmazonPriceProgress({ status: "starting", total: requests.length, processed: 0, found: 0 });
     await new Promise<void>((resolve) => window.requestAnimationFrame(() => window.requestAnimationFrame(() => resolve())));
-    return new Promise<Set<string>>((resolve, reject) => {
+    return new Promise<{ availableIds: Set<string>; unavailableIds: Set<string> }>((resolve, reject) => {
       amazonPriceResolver.current = resolve;
       amazonPriceRejecter.current = reject;
       amazonPriceStartupTimer.current = window.setTimeout(() => {
         amazonPriceResolver.current = null;
         amazonPriceRejecter.current = null;
         setAmazonPriceProgress(null);
-        reject(new Error("The Chrome helper did not respond. Reload helper v1.3.3, refresh this Sellfinity tab, then try again."));
+        reject(new Error("The Chrome helper did not respond. Reload helper v1.3.4, refresh this Sellfinity tab, then try again."));
       }, 8_000);
       document.dispatchEvent(new CustomEvent("sellfinity:bulk-amazon-price-check", { detail: { requests } }));
     });
@@ -1352,9 +1374,9 @@ export function EbayListingsTable({
     });
     startTransition(async () => {
       try {
-        const liveAmazonPriceIds = smartSyncOptions.checkLiveAmazonPrices
+        const liveAmazonCheck = smartSyncOptions.checkLiveAmazonPrices
           ? await checkLiveAmazonPrices(smartSyncTargetRows)
-          : new Set<string>();
+          : { availableIds: new Set<string>(), unavailableIds: new Set<string>() };
         const scopeIds = smartSyncScope === "SELECTED" ? [...selected] : undefined;
         const started = await prepareConfigurableSmartSync(smartSyncOptions, retryLastSyncErrorsOnly, scopeIds);
         if (started.error) throw new Error(started.error);
@@ -1407,8 +1429,10 @@ export function EbayListingsTable({
 
             let result: SmartSyncItemResult;
             try {
+              const liveUnavailable = Boolean(candidate.ebayListingId && liveAmazonCheck.unavailableIds.has(candidate.ebayListingId));
               if (smartSyncOptions.checkLiveAmazonPrices
-                && (!candidate.ebayListingId || !liveAmazonPriceIds.has(candidate.ebayListingId))) {
+                && !liveUnavailable
+                && (!candidate.ebayListingId || !liveAmazonCheck.availableIds.has(candidate.ebayListingId))) {
                 result = {
                   listingId: candidate.listingId,
                   ebayListingId: candidate.ebayListingId,
@@ -1424,7 +1448,8 @@ export function EbayListingsTable({
                 result = await processConfigurableSmartSyncItem(
                   candidate.listingId,
                   smartSyncOptions,
-                  smartSyncOptions.checkLiveAmazonPrices,
+                  smartSyncOptions.checkLiveAmazonPrices && !liveUnavailable,
+                  liveUnavailable,
                 );
               }
             } catch (error) {
@@ -1483,7 +1508,7 @@ export function EbayListingsTable({
         setNotice({
           text: syncTotal === 0
             ? "Smart Sync found no eligible listings for the selected operations."
-            : `${retryLastSyncErrorsOnly ? "Smart Sync retry" : "Smart Sync"} complete: ${totals.successful} successful, ${totals.needsAttention} need attention, and ${totals.errors} errors. ${totals.updated} updated, ${totals.ended} ended, and ${totals.relisted} relisted.`,
+            : `${retryLastSyncErrorsOnly ? "Smart Sync retry" : "Smart Sync"} complete: ${totals.successful} successful, ${totals.needsAttention} need attention, and ${totals.errors} errors. ${totals.updated} updated, ${totals.ended} ended, and ${totals.relisted} relisted.${liveAmazonCheck.unavailableIds.size ? ` Amazon confirmed ${liveAmazonCheck.unavailableIds.size} unavailable listing${liveAmazonCheck.unavailableIds.size === 1 ? "" : "s"}; ${smartSyncOptions.endUnavailableListings ? "eligible listings were ended automatically" : "they were flagged for your review"}.` : ""}`,
           error: totals.errors > 0,
         });
         setSmartSyncOpen(false);
@@ -1893,7 +1918,7 @@ export function EbayListingsTable({
               </div>
               <p className="mt-3 max-w-3xl text-xs leading-5 text-slate-600">Administrator data remains the normal shared source. Enable live Amazon checking when you want the signed-in Chrome helper to verify current item price and shipping before Smart Sync calculates profit.</p>
             </div>
-            <div className="flex flex-wrap items-center gap-2"><a href="/downloads/sellfinity-tracking-helper.zip?v=1.3.3" download className="text-xs font-semibold text-indigo-700 hover:underline">Chrome helper v1.3.3</a><Badge tone="indigo">{selectedSmartSyncOptionCount(smartSyncOptions)} selected</Badge></div>
+            <div className="flex flex-wrap items-center gap-2"><a href="/downloads/sellfinity-tracking-helper.zip?v=1.3.4" download className="text-xs font-semibold text-indigo-700 hover:underline">Chrome helper v1.3.4</a><Badge tone="indigo">{selectedSmartSyncOptionCount(smartSyncOptions)} selected</Badge></div>
           </div>
           <div className="border-b border-slate-100 bg-white/70 px-4 py-3 sm:px-5">
             <p className="mb-2 text-[10px] font-semibold uppercase tracking-[.1em] text-slate-400">Run on</p>
