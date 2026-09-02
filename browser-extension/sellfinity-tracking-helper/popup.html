@@ -7,13 +7,22 @@
     <link rel="stylesheet" href="popup.css">
   </head>
   <body>
-    <h1>Sellfinity Tracking Helper</h1>
-    <p>On Fulfillment, use <strong>Refresh Amazon &amp; eBay</strong> for tracking or <strong>Check Amazon prices</strong> before purchasing. On Listings, enable <strong>Check live Amazon prices</strong> in Smart Sync. The helper reads the corresponding signed-in Amazon pages and returns the results to Sellfinity.</p>
-    <ol>
-      <li>Stay signed in to Amazon.</li>
-      <li>Keep the Fulfillment page open while a check runs.</li>
-      <li>Review the updated tracking, price, shipping, and profit.</li>
-    </ol>
+    <header><div><h1>Sellfinity Helper</h1><p id="version" class="version"></p></div><span class="live-dot" title="Extension is running"></span></header>
+    <p class="intro">Amazon price and tracking activity appears here while Sellfinity is open.</p>
+    <section class="run-card" data-mode="PRICE">
+      <div class="run-heading"><strong>Amazon prices</strong><span id="price-status" class="status">Idle</span></div>
+      <div class="progress"><span id="price-bar"></span></div>
+      <p id="price-detail" class="detail">No price check is running.</p>
+      <button id="stop-price" type="button" disabled>Stop price check</button>
+    </section>
+    <section class="run-card" data-mode="TRACKING">
+      <div class="run-heading"><strong>Amazon tracking</strong><span id="tracking-status" class="status">Idle</span></div>
+      <div class="progress"><span id="tracking-bar"></span></div>
+      <p id="tracking-detail" class="detail">No tracking check is running.</p>
+      <button id="stop-tracking" type="button" disabled>Stop tracking check</button>
+    </section>
+    <details><summary>Quick checks</summary><ol><li>Stay signed in to Amazon.</li><li>Complete any Amazon CAPTCHA.</li><li>Keep the Sellfinity tab open.</li></ol></details>
     <p class="privacy">The helper only opens Amazon links supplied by Sellfinity and returns tracking or price details to the matching fulfillment order.</p>
+    <script src="popup.js"></script>
   </body>
 </html>

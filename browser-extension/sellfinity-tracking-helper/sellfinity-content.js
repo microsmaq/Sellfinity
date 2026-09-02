@@ -166,6 +166,18 @@
       .catch(() => toast("The Amazon price checker could not start.", "error"));
   });
 
+  document.addEventListener("sellfinity:stop-amazon-price-check", () => {
+    chrome.runtime.sendMessage({ type: "CANCEL_BULK_REQUESTS", mode: "PRICE" })
+      .then((result) => toast(`Amazon price check stopped. ${result?.cancelled || 0} remaining request${result?.cancelled === 1 ? "" : "s"} cancelled.`))
+      .catch(() => toast("The Amazon price check could not be stopped.", "error"));
+  });
+
+  document.addEventListener("sellfinity:stop-tracking-check", () => {
+    chrome.runtime.sendMessage({ type: "CANCEL_BULK_REQUESTS", mode: "TRACKING" })
+      .then((result) => toast(`Tracking check stopped. ${result?.cancelled || 0} remaining request${result?.cancelled === 1 ? "" : "s"} cancelled.`))
+      .catch(() => toast("The tracking check could not be stopped.", "error"));
+  });
+
   document.addEventListener("click", (event) => {
     const anchor = event.target instanceof Element
       ? event.target.closest("a")
@@ -234,6 +246,16 @@
     if (message?.type === "AMAZON_PRICE_LOOKUP_FAILED") {
       finishAmazonPriceItem(false);
       toast(message.reason || "Amazon did not show a current price for this product.", "error");
+    }
+    if (message?.type === "BULK_RUN_CANCELLED") {
+      if (!message.mode || message.mode === "PRICE") {
+        reportAmazonPriceProgress("cancelled");
+        amazonPriceProgress = null;
+      }
+      if (!message.mode || message.mode === "TRACKING") {
+        reportBulkProgress("cancelled");
+        bulkProgress = null;
+      }
     }
   });
 })();

@@ -29,6 +29,12 @@ recalculates the order profit. If Amazon does not clearly show shipping, the
 existing shipping amount is preserved rather than incorrectly assuming it is
 free.
 
+Version 1.3.2 adds a live control center when you click the extension icon.
+It shows price and tracking progress, found/error counts, remaining work, and
+separate stop buttons. Sellfinity also shows a stop button during each active
+check. The Amazon reader now waits for the real product page instead of treating
+the temporary blank loading tab as a failed read.
+
 After updating the extension files, click the extension's **Reload** button on
 `chrome://extensions` before trying it again.
 

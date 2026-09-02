@@ -1,5 +1,22 @@
-body { width: 300px; margin: 0; padding: 18px; color: #1e293b; background: #f8fafc; font: 13px/1.5 system-ui, sans-serif; }
-h1 { margin: 0 0 10px; color: #312e81; font-size: 17px; }
+body { width: 340px; margin: 0; padding: 16px; color: #1e293b; background: linear-gradient(145deg, #f8fafc, #eef2ff); font: 13px/1.5 system-ui, sans-serif; }
+header, .run-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+h1 { margin: 0; color: #312e81; font-size: 17px; }
 p { margin: 8px 0; }
 ol { margin: 10px 0; padding-left: 20px; }
+.version { margin: 0; color: #64748b; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; }
+.live-dot { width: 9px; height: 9px; border-radius: 999px; background: #10b981; box-shadow: 0 0 0 4px #d1fae5; }
+.intro { color: #475569; }
+.run-card { margin-top: 10px; padding: 12px; border: 1px solid #dbeafe; border-radius: 12px; background: rgba(255,255,255,.92); box-shadow: 0 4px 14px rgba(30,41,59,.05); }
+.status { padding: 2px 7px; border-radius: 999px; color: #475569; background: #f1f5f9; font-size: 10px; font-weight: 700; text-transform: uppercase; }
+.status.running { color: #4338ca; background: #e0e7ff; }
+.status.complete { color: #047857; background: #d1fae5; }
+.status.cancelled { color: #b45309; background: #fef3c7; }
+.progress { height: 6px; margin-top: 10px; overflow: hidden; border-radius: 999px; background: #e2e8f0; }
+.progress span { display: block; width: 0; height: 100%; border-radius: inherit; background: linear-gradient(90deg, #4f46e5, #8b5cf6); transition: width .3s ease; }
+.detail { min-height: 20px; color: #64748b; font-size: 11px; }
+button { width: 100%; min-height: 34px; border: 1px solid #fecaca; border-radius: 9px; color: #b91c1c; background: #fff; font: 700 12px system-ui, sans-serif; cursor: pointer; }
+button:hover:not(:disabled) { background: #fef2f2; }
+button:disabled { cursor: default; opacity: .4; }
+details { margin-top: 12px; color: #475569; font-size: 11px; }
+summary { cursor: pointer; font-weight: 700; }
 .privacy { margin-top: 12px; padding-top: 10px; border-top: 1px solid #cbd5e1; color: #64748b; font-size: 11px; }

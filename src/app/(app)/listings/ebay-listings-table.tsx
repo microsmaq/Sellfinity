@@ -670,7 +670,7 @@ export function EbayListingsTable({
   const [smartSyncOptions, setSmartSyncOptions] = useState<SmartSyncOptions>({ ...DEFAULT_SMART_SYNC_OPTIONS });
   const [smartSyncScope, setSmartSyncScope] = useState<"ALL" | "SELECTED">("ALL");
   const [amazonPriceBridgeIds, setAmazonPriceBridgeIds] = useState<string[]>([]);
-  const [amazonPriceProgress, setAmazonPriceProgress] = useState<{ status: "starting" | "running" | "complete"; total: number; processed: number; found: number } | null>(null);
+  const [amazonPriceProgress, setAmazonPriceProgress] = useState<{ status: "starting" | "running" | "complete" | "cancelled"; total: number; processed: number; found: number } | null>(null);
   const amazonPriceResolver = useRef<((listingIds: Set<string>) => void) | null>(null);
   const amazonPriceRejecter = useRef<((error: Error) => void) | null>(null);
   const amazonPriceSuccessfulIds = useRef(new Set<string>());
@@ -822,7 +822,7 @@ export function EbayListingsTable({
       amazonPriceSavePromises.current.push(save);
     }
     function receiveAmazonPriceProgress(event: Event) {
-      const detail = (event as CustomEvent<{ status?: "running" | "complete"; total?: number; processed?: number; found?: number }>).detail;
+      const detail = (event as CustomEvent<{ status?: "running" | "complete" | "cancelled"; total?: number; processed?: number; found?: number }>).detail;
       if (!detail?.status) return;
       if (amazonPriceStartupTimer.current !== null) {
         window.clearTimeout(amazonPriceStartupTimer.current);
@@ -839,6 +839,12 @@ export function EbayListingsTable({
         amazonPriceResolver.current = null;
         amazonPriceRejecter.current = null;
         void Promise.all(amazonPriceSavePromises.current).then(() => resolve(new Set(amazonPriceSuccessfulIds.current)));
+      }
+      if (detail.status === "cancelled" && amazonPriceRejecter.current) {
+        const reject = amazonPriceRejecter.current;
+        amazonPriceResolver.current = null;
+        amazonPriceRejecter.current = null;
+        reject(new Error("Live Amazon price checking was stopped."));
       }
     }
     document.addEventListener("sellfinity:amazon-price-found", receiveAmazonPrice);
@@ -876,10 +882,14 @@ export function EbayListingsTable({
         amazonPriceResolver.current = null;
         amazonPriceRejecter.current = null;
         setAmazonPriceProgress(null);
-        reject(new Error("Live Amazon price checking needs Chrome helper version 1.3.1. Reload the helper, then refresh this Sellfinity tab and try again."));
+        reject(new Error("Live Amazon price checking needs Chrome helper version 1.3.2. Reload the helper, then refresh this Sellfinity tab and try again."));
       }, 8_000);
       document.dispatchEvent(new CustomEvent("sellfinity:bulk-amazon-price-check", { detail: { requests } }));
     });
+  }
+
+  function stopLiveAmazonPrices() {
+    document.dispatchEvent(new CustomEvent("sellfinity:stop-amazon-price-check"));
   }
 
   function toggleSelected(id: string) {
@@ -1877,7 +1887,7 @@ export function EbayListingsTable({
               </div>
               <p className="mt-3 max-w-3xl text-xs leading-5 text-slate-600">Administrator data remains the normal shared source. Enable live Amazon checking when you want the signed-in Chrome helper to verify current item price and shipping before Smart Sync calculates profit.</p>
             </div>
-            <div className="flex flex-wrap items-center gap-2"><a href="/downloads/sellfinity-tracking-helper.zip?v=1.3.1" download className="text-xs font-semibold text-indigo-700 hover:underline">Chrome helper v1.3.1</a><Badge tone="indigo">{selectedSmartSyncOptionCount(smartSyncOptions)} selected</Badge></div>
+            <div className="flex flex-wrap items-center gap-2"><a href="/downloads/sellfinity-tracking-helper.zip?v=1.3.2" download className="text-xs font-semibold text-indigo-700 hover:underline">Chrome helper v1.3.2</a><Badge tone="indigo">{selectedSmartSyncOptionCount(smartSyncOptions)} selected</Badge></div>
           </div>
           <div className="border-b border-slate-100 bg-white/70 px-4 py-3 sm:px-5">
             <p className="mb-2 text-[10px] font-semibold uppercase tracking-[.1em] text-slate-400">Run on</p>
@@ -1907,7 +1917,7 @@ export function EbayListingsTable({
           </div>
           {amazonPriceProgress && smartSyncOptions.checkLiveAmazonPrices && (
             <div className="border-t border-violet-100 bg-violet-50/70 px-4 py-3 sm:px-5" role="status" aria-live="polite">
-              <div className="flex items-center justify-between gap-3 text-xs font-medium text-violet-900"><span>{amazonPriceProgress.status === "complete" ? "Live Amazon prices checked" : "Checking signed-in Amazon prices and shipping…"}</span><span>{amazonPriceProgress.processed}/{amazonPriceProgress.total} · {amazonPriceProgress.found} found</span></div>
+              <div className="flex flex-wrap items-center justify-between gap-3 text-xs font-medium text-violet-900"><span>{amazonPriceProgress.status === "complete" ? "Live Amazon prices checked" : amazonPriceProgress.status === "cancelled" ? "Live Amazon price check stopped" : "Checking signed-in Amazon prices and shipping…"}</span><span className="flex items-center gap-2"><span>{amazonPriceProgress.processed}/{amazonPriceProgress.total} · {amazonPriceProgress.found} found</span>{(amazonPriceProgress.status === "starting" || amazonPriceProgress.status === "running") && <Button size="sm" variant="danger" onClick={stopLiveAmazonPrices}>Stop check</Button>}</span></div>
               <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-violet-100"><div className="h-full rounded-full bg-violet-600 transition-all duration-500" style={{ width: `${amazonPriceProgress.total ? Math.max(5, amazonPriceProgress.processed / amazonPriceProgress.total * 100) : 5}%` }} /></div>
             </div>
           )}

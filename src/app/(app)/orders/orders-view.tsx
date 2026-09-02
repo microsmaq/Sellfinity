@@ -71,7 +71,7 @@ type Tab = "ALL" | "NEEDS_ACTION" | "PURCHASED" | "IN_TRANSIT" | "DELIVERED" | "
 type RefreshRun = {
   startedAt: number;
   server: "running" | "complete" | "error";
-  helper: "starting" | "running" | "complete" | "unavailable";
+  helper: "starting" | "running" | "complete" | "cancelled" | "unavailable";
   trackingTotal: number;
   trackingProcessed: number;
   trackingFound: number;
@@ -79,7 +79,7 @@ type RefreshRun = {
 };
 
 type AmazonPriceCheckRun = {
-  status: "starting" | "running" | "complete" | "unavailable";
+  status: "starting" | "running" | "complete" | "cancelled" | "unavailable";
   total: number;
   processed: number;
   found: number;
@@ -308,7 +308,7 @@ export function OrdersView({ orders, fetchError, profitProtectionEnabled, autoRe
       } : current);
     }
     function receiveHelperProgress(event: Event) {
-      const detail = (event as CustomEvent<{ status?: "running" | "complete"; total?: number; processed?: number; found?: number }>).detail;
+      const detail = (event as CustomEvent<{ status?: "running" | "complete" | "cancelled"; total?: number; processed?: number; found?: number }>).detail;
       if (!detail?.status) return;
       const helperStatus = detail.status;
       setRefreshRun((current) => current ? {
@@ -333,7 +333,7 @@ export function OrdersView({ orders, fetchError, profitProtectionEnabled, autoRe
       }
     }
     function receiveAmazonPriceProgress(event: Event) {
-      const detail = (event as CustomEvent<{ status?: "running" | "complete"; total?: number; processed?: number; found?: number }>).detail;
+      const detail = (event as CustomEvent<{ status?: "running" | "complete" | "cancelled"; total?: number; processed?: number; found?: number }>).detail;
       if (!detail?.status) return;
       setAmazonPriceCheck({
         status: detail.status,
@@ -343,6 +343,8 @@ export function OrdersView({ orders, fetchError, profitProtectionEnabled, autoRe
       });
       if (detail.status === "complete") {
         setRefreshMessage(`Amazon price check complete: ${detail.found ?? 0} of ${detail.total ?? 0} unique product${detail.total === 1 ? "" : "s"} updated. Profit has been recalculated.`);
+      } else if (detail.status === "cancelled") {
+        setRefreshMessage(`Amazon price check stopped after ${detail.processed ?? 0} of ${detail.total ?? 0} products.`);
       }
     }
     document.addEventListener("sellfinity:tracking-filled", receiveExtensionTracking);
@@ -361,7 +363,7 @@ export function OrdersView({ orders, fetchError, profitProtectionEnabled, autoRe
     if (amazonPriceCheck?.status !== "starting") return;
     const timer = window.setTimeout(() => {
       setAmazonPriceCheck((current) => current?.status === "starting" ? { ...current, status: "unavailable" } : current);
-      setRefreshMessage("The Amazon price checker needs Chrome helper version 1.3.1. Reload the helper, then refresh this Sellfinity tab and try again.");
+      setRefreshMessage("The Amazon price checker needs Chrome helper version 1.3.2. Reload the helper, then refresh this Sellfinity tab and try again.");
     }, 8_000);
     return () => window.clearTimeout(timer);
   }, [amazonPriceCheck?.status]);
@@ -552,6 +554,14 @@ export function OrdersView({ orders, fetchError, profitProtectionEnabled, autoRe
     document.dispatchEvent(new CustomEvent("sellfinity:bulk-amazon-price-check", { detail: { requests } }));
   }
 
+  function stopAmazonPriceCheck() {
+    document.dispatchEvent(new CustomEvent("sellfinity:stop-amazon-price-check"));
+  }
+
+  function stopTrackingCheck() {
+    document.dispatchEvent(new CustomEvent("sellfinity:stop-tracking-check"));
+  }
+
   function submitTracking(order: FulfillmentOrderRow, visibleValue?: string) {
     const domValue = document.querySelector<HTMLInputElement>(`input[data-order-id="${CSS.escape(order.id)}"]`)?.value;
     const value = [visibleValue, manualTracking[order.id], domValue]
@@ -710,7 +720,7 @@ export function OrdersView({ orders, fetchError, profitProtectionEnabled, autoRe
     refreshRun.server === "running" || refreshRun.helper === "running" || (refreshRun.helper === "starting" && !helperStartingTimedOut)
   );
   const amazonPriceCheckWorking = amazonPriceCheck?.status === "starting" || amazonPriceCheck?.status === "running";
-  const refreshComplete = !!refreshRun && !refreshWorking && refreshRun.server === "complete";
+  const refreshComplete = !!refreshRun && !refreshWorking && refreshRun.server === "complete" && refreshRun.helper !== "cancelled";
   const refreshStatus = refreshWorking ? "running" : refreshComplete ? "complete" : "error";
   const helperRatio = refreshRun?.trackingTotal
     ? refreshRun.trackingProcessed / refreshRun.trackingTotal
@@ -732,6 +742,8 @@ export function OrdersView({ orders, fetchError, profitProtectionEnabled, autoRe
           : refreshElapsed < 90
             ? "Resolving tracking links and matching purchases to fulfillment rows…"
             : "Still working normally—large email histories and Amazon tracking pages can take several minutes."
+      : refreshRun.helper === "cancelled"
+        ? "The tracking page check was stopped. eBay and Amazon email refresh results already completed were kept."
       : refreshRun.helper === "running"
         ? "Email and eBay refresh finished. The signed-in browser helper is still checking tracking pages."
         : refreshRun.result ?? "Refresh finished.";
@@ -832,14 +844,16 @@ export function OrdersView({ orders, fetchError, profitProtectionEnabled, autoRe
             <option value="NEWEST">Newest first</option><option value="SHIP_BY">Ship-by date</option><option value="PROFIT">Highest profit</option>
           </select>
           <Button data-sellfinity-refresh="true" variant="secondary" disabled={refreshWorking} onClick={refreshFulfillment}>{refreshWorking ? "Refresh in progress…" : "↻ Refresh Amazon & eBay"}</Button>
+          {refreshRun?.helper === "running" && <Button variant="danger" onClick={stopTrackingCheck}>Stop tracking check</Button>}
           <Button variant="secondary" disabled={amazonPriceCheckWorking || refreshWorking} onClick={checkAmazonPrices}>{amazonPriceCheckWorking ? `Checking ${amazonPriceCheck?.processed ?? 0}/${amazonPriceCheck?.total ?? 0}…` : "Check Amazon prices"}</Button>
-          <a href="/downloads/sellfinity-tracking-helper.zip?v=1.3.1" download className="inline-flex min-h-10 items-center justify-center rounded-lg border border-slate-300 bg-white px-3 text-sm font-medium text-slate-700 hover:bg-slate-50">Download Chrome helper v1.3.1</a>
+          {amazonPriceCheckWorking && <Button variant="danger" onClick={stopAmazonPriceCheck}>Stop price check</Button>}
+          <a href="/downloads/sellfinity-tracking-helper.zip?v=1.3.2" download className="inline-flex min-h-10 items-center justify-center rounded-lg border border-slate-300 bg-white px-3 text-sm font-medium text-slate-700 hover:bg-slate-50">Download Chrome helper v1.3.2</a>
         </div>
 
         {amazonPriceCheck && amazonPriceCheck.status !== "unavailable" && (
           <div className="border-b border-violet-100 bg-violet-50/70 px-4 py-3" role="status" aria-live="polite">
             <div className="flex items-center justify-between gap-3 text-xs font-medium text-violet-900">
-              <span>{amazonPriceCheck.status === "complete" ? "Amazon prices checked" : "Checking signed-in Amazon prices and shipping…"}</span>
+              <span>{amazonPriceCheck.status === "complete" ? "Amazon prices checked" : amazonPriceCheck.status === "cancelled" ? "Amazon price check stopped" : "Checking signed-in Amazon prices and shipping…"}</span>
               <span>{amazonPriceCheck.processed}/{amazonPriceCheck.total} · {amazonPriceCheck.found} updated</span>
             </div>
             <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-violet-100">
