@@ -9,6 +9,7 @@ import {
   approveAmazonCandidatesBulk,
   enhanceEbayListing,
   endEbayListing,
+  endUnmatchedEbayListing,
   exportEbayListings,
   findAmazonCandidateForReview,
   matchEbayListing,
@@ -314,7 +315,7 @@ const SMART_SYNC_OPTION_META: Array<{
 ];
 
 type ListingOperationProgress = {
-  kind: "enhance" | "match" | "pricing" | "targetProfit";
+  kind: "delist" | "enhance" | "match" | "pricing" | "targetProfit";
   completed: number;
   total: number;
   succeeded: number;
@@ -430,6 +431,7 @@ function ListingOperationStatus({
     ? Math.round((progress.completed / progress.total) * 100)
     : progress.status === "complete" ? 100 : 4;
   const meta = {
+    delist: ["Delisting unmatched items", "Ending the selected items on eBay because no approved Amazon source is available."],
     enhance: ["AI-enhancing selected listings", "Generating premium imagery and optimizing enabled listing content."],
     match: ["Matching listings to Amazon sources", "Comparing product identity and exact variants for each listing."],
     pricing: ["Applying profitable suggested prices", "Using administrator-stored Amazon costs before updating each eBay listing."],
@@ -789,8 +791,10 @@ export function EbayListingsTable({
   const approvalRowsInView = healthFilter === "unmatched"
     ? filteredRows.filter(isApprovableCandidate)
     : filteredRows.filter(isHighConfidenceReview);
+  const selectionRowsInView = healthFilter === "unmatched" ? filteredRows : approvalRowsInView;
   const selectedApprovalRows = approvalRowsInView.filter((row) => selected.has(row.ebayListingId));
-  const allApprovalRowsSelected = approvalRowsInView.length > 0 && approvalRowsInView.every((row) => selected.has(row.ebayListingId));
+  const selectedUnmatchedRows = healthFilter === "unmatched" ? filteredRows.filter((row) => selected.has(row.ebayListingId)) : [];
+  const allApprovalRowsSelected = selectionRowsInView.length > 0 && selectionRowsInView.every((row) => selected.has(row.ebayListingId));
 
   useEffect(() => {
     function receiveAmazonPrice(event: Event) {
@@ -1115,7 +1119,7 @@ export function EbayListingsTable({
   }
 
   function toggleAllHighConfidenceCandidates() {
-    const ids = approvalRowsInView.map((row) => row.ebayListingId);
+    const ids = selectionRowsInView.map((row) => row.ebayListingId);
     setSelected((current) => {
       const next = new Set(current);
       const everySelected = ids.length > 0 && ids.every((id) => next.has(id));
@@ -1188,6 +1192,54 @@ export function EbayListingsTable({
       } finally {
         setBulkApprovalProgress(null);
       }
+    });
+  }
+
+  function delistSelectedUnmatched() {
+    const targets = selectedUnmatchedRows;
+    if (!targets.length) return;
+    if (!window.confirm(`Delist ${targets.length} selected unmatched item${targets.length === 1 ? "" : "s"} from eBay?\n\nThis ends the live eBay listings. Sellfinity can relist them later only if Smart Sync finds an available Amazon source and relisting is enabled.`)) return;
+    setNotice(null);
+    setBulkProgress({ kind: "delist", completed: 0, total: targets.length, succeeded: 0, failed: 0, status: "running" });
+    startTransition(async () => {
+      let succeeded = 0;
+      let failed = 0;
+      let firstError = "";
+      for (let index = 0; index < targets.length; index++) {
+        const target = targets[index];
+        try {
+          const result = await endUnmatchedEbayListing(target.ebayListingId);
+          if (result.error) {
+            failed++;
+            firstError ||= result.error;
+          } else {
+            succeeded++;
+            setRows((current) => current.filter((row) => row.ebayListingId !== target.ebayListingId));
+            setSelected((current) => {
+              const next = new Set(current);
+              next.delete(target.ebayListingId);
+              return next;
+            });
+          }
+        } catch (error) {
+          failed++;
+          firstError ||= error instanceof Error ? error.message : "eBay could not end this listing.";
+        }
+        setBulkProgress({
+          kind: "delist",
+          completed: index + 1,
+          total: targets.length,
+          succeeded,
+          failed,
+          detail: firstError || "Ending selected unmatched listings on eBay.",
+          status: index + 1 === targets.length ? "complete" : "running",
+        });
+      }
+      setNotice({
+        text: `${succeeded} unmatched listing${succeeded === 1 ? "" : "s"} delisted from eBay.${failed ? ` ${failed} could not be delisted. ${firstError}` : ""}`,
+        error: failed > 0,
+      });
+      router.refresh();
     });
   }
 
@@ -1949,14 +2001,13 @@ export function EbayListingsTable({
               <div><h2 className="font-semibold text-slate-950">{healthFilter === "highConfidence" ? "High-confidence candidate review" : "Unmatched source review"}</h2><p className="mt-1 text-xs leading-5 text-slate-600">{healthFilter === "highConfidence" ? "Every non-verified Amazon candidate with 95–100% confidence is shown, including automatically matched items. Select the matches you agree with, then approve them together." : "Compare the eBay item with its Amazon candidate. Approval permanently records this pairing as manually verified with 100% confidence."}</p></div>
               <div className="flex flex-wrap items-center gap-2">
                 <Badge tone="indigo">{filteredRows.length.toLocaleString()} {healthFilter === "highConfidence" ? "high confidence" : "unmatched"}</Badge>
-                {approvalRowsInView.length > 0 && <>
+                {selectionRowsInView.length > 0 && <>
                   <label className="flex cursor-pointer items-center gap-2 rounded-lg border border-indigo-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700">
                     <input type="checkbox" checked={allApprovalRowsSelected} onChange={toggleAllHighConfidenceCandidates} className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500" />
-                    {healthFilter === "highConfidence" ? `Select all ${approvalRowsInView.length.toLocaleString()} at 95–100%` : `Select all ${approvalRowsInView.length.toLocaleString()} candidates`}
+                    {healthFilter === "highConfidence" ? `Select all ${selectionRowsInView.length.toLocaleString()} at 95–100%` : `Select all ${selectionRowsInView.length.toLocaleString()} unmatched`}
                   </label>
-                  <Button size="sm" disabled={pending || selectedApprovalRows.length === 0} onClick={approveSelectedHighConfidenceCandidates}>
-                    {bulkApprovalProgress ? `Approving ${bulkApprovalProgress.completed}/${bulkApprovalProgress.total}` : `Approve selected (${selectedApprovalRows.length})`}
-                  </Button>
+                  {selectedApprovalRows.length > 0 && <Button size="sm" disabled={pending} onClick={approveSelectedHighConfidenceCandidates}>{bulkApprovalProgress ? `Approving ${bulkApprovalProgress.completed}/${bulkApprovalProgress.total}` : `Approve candidates (${selectedApprovalRows.length})`}</Button>}
+                  {healthFilter === "unmatched" && selectedUnmatchedRows.length > 0 && <Button size="sm" variant="danger" disabled={pending} onClick={delistSelectedUnmatched}>{bulkProgress?.kind === "delist" && bulkProgress.status === "running" ? `Delisting ${bulkProgress.completed}/${bulkProgress.total}` : `Delist selected (${selectedUnmatchedRows.length})`}</Button>}
                 </>}
               </div>
             </div>
@@ -1970,7 +2021,7 @@ export function EbayListingsTable({
                 <article key={`review-${row.ebayListingId}`} className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
                   <div className="grid gap-0 sm:grid-cols-2">
                     <div className="border-b border-slate-100 p-4 sm:border-b-0 sm:border-r">
-                      <div className="flex items-center justify-between gap-2"><p className="text-[10px] font-semibold uppercase tracking-[.1em] text-slate-400">eBay listing</p>{(healthFilter === "unmatched" ? isApprovableCandidate(row) : isHighConfidenceReview(row)) && <input type="checkbox" checked={selected.has(row.ebayListingId)} onChange={() => toggleSelected(row.ebayListingId)} aria-label={`Select ${row.title}`} className="h-5 w-5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500" />}</div>
+                      <div className="flex items-center justify-between gap-2"><p className="text-[10px] font-semibold uppercase tracking-[.1em] text-slate-400">eBay listing</p>{(healthFilter === "unmatched" || isHighConfidenceReview(row)) && <input type="checkbox" checked={selected.has(row.ebayListingId)} onChange={() => toggleSelected(row.ebayListingId)} aria-label={`Select ${row.title}`} className="h-5 w-5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500" />}</div>
                       <div className="mt-3 flex gap-3">
                         {row.imageUrl ? <>
                           {/* eslint-disable-next-line @next/next/no-img-element -- External marketplace image hosts are dynamic. */}
@@ -2000,6 +2051,7 @@ export function EbayListingsTable({
                   )}
                   <div className="flex flex-wrap items-center gap-2 border-t border-slate-100 px-4 py-3">
                     {!review ? <Button size="sm" variant="secondary" disabled={pending || busyId === row.ebayListingId} onClick={() => findReviewCandidate(row)}>{busyId === row.ebayListingId ? "Searching Amazon…" : "Find best candidate"}</Button> : <><Button size="sm" disabled={pending || busyId === row.ebayListingId} onClick={() => approveReviewCandidate(row)}>{busyId === row.ebayListingId ? "Saving…" : rejected ? "Approve anyway" : "Approve match"}</Button>{rejected && <Button size="sm" variant="secondary" disabled={pending || busyId === row.ebayListingId} onClick={() => findReviewCandidate(row)}>{busyId === row.ebayListingId ? "Searching…" : "Find best candidate"}</Button>}{healthFilter === "unmatched" && review.verdict === "REVIEW" && <Button size="sm" variant="secondary" disabled={pending || busyId === row.ebayListingId} onClick={() => rejectReviewCandidate(row)}>Reject candidate</Button>}</>}
+                    {healthFilter === "unmatched" && <Button size="sm" variant="danger" disabled={pending || busyId === row.ebayListingId} onClick={() => { if (!window.confirm(`Delist "${row.title.slice(0, 60)}" from eBay because it has no approved Amazon source?`)) return; run(row.ebayListingId, () => endUnmatchedEbayListing(row.ebayListingId), () => { setRows((current) => current.filter((item) => item.ebayListingId !== row.ebayListingId)); setSelected((current) => { const next = new Set(current); next.delete(row.ebayListingId); return next; }); }, "Unmatched listing delisted from eBay."); }}>{busyId === row.ebayListingId ? "Delisting…" : "Delist"}</Button>}
                     {row.source?.url && <a href={row.source.url} target="_blank" rel="noreferrer" className="ml-auto text-xs font-semibold text-indigo-700 hover:underline">Open Amazon ↗</a>}
                     <details className="w-full rounded-xl border border-slate-200 bg-slate-50/70 px-3 py-2">
                       <summary className="cursor-pointer text-xs font-semibold text-indigo-700">Use an Amazon link or ASIN instead</summary>

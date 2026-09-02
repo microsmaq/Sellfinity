@@ -1010,6 +1010,23 @@ export async function endEbayListing(
   return result;
 }
 
+export async function endUnmatchedEbayListing(
+  ebayListingId: string,
+): Promise<EbayListingResult> {
+  const user = await requireUser();
+  const listing = await db.listing.findFirst({
+    where: { userId: user.id, ebayListingId },
+    orderBy: { updatedAt: "desc" },
+    select: { sourceMatchVerdict: true, sourceMatchMethod: true },
+  });
+  if (listing && (listing.sourceMatchMethod === "MANUAL" || ["MATCH", "LIKELY"].includes(listing.sourceMatchVerdict))) {
+    return { error: "This listing now has an approved Amazon source and was not delisted." };
+  }
+  const result = await endEbayListingForUser(user.id, ebayListingId, "SOURCE_UNAVAILABLE");
+  revalidate();
+  return result;
+}
+
 export type CleanupItemResult = {
   ebayListingId: string;
   listingId?: string;
