@@ -71,7 +71,7 @@ type Tab = "ALL" | "NEEDS_ACTION" | "PURCHASED" | "IN_TRANSIT" | "DELIVERED" | "
 type RefreshRun = {
   startedAt: number;
   server: "running" | "complete" | "error";
-  helper: "starting" | "running" | "complete" | "cancelled" | "unavailable";
+  helper: "starting" | "running" | "complete" | "cancelled" | "error" | "unavailable";
   trackingTotal: number;
   trackingProcessed: number;
   trackingFound: number;
@@ -79,7 +79,7 @@ type RefreshRun = {
 };
 
 type AmazonPriceCheckRun = {
-  status: "starting" | "running" | "complete" | "cancelled" | "unavailable";
+  status: "starting" | "running" | "complete" | "cancelled" | "error" | "unavailable";
   total: number;
   processed: number;
   found: number;
@@ -308,7 +308,7 @@ export function OrdersView({ orders, fetchError, profitProtectionEnabled, autoRe
       } : current);
     }
     function receiveHelperProgress(event: Event) {
-      const detail = (event as CustomEvent<{ status?: "running" | "complete" | "cancelled"; total?: number; processed?: number; found?: number }>).detail;
+      const detail = (event as CustomEvent<{ status?: "running" | "complete" | "cancelled" | "error"; total?: number; processed?: number; found?: number }>).detail;
       if (!detail?.status) return;
       const helperStatus = detail.status;
       setRefreshRun((current) => current ? {
@@ -318,6 +318,7 @@ export function OrdersView({ orders, fetchError, profitProtectionEnabled, autoRe
         trackingProcessed: detail.processed ?? current.trackingProcessed,
         trackingFound: detail.found ?? current.trackingFound,
       } : current);
+      if (helperStatus === "error") setRefreshMessage("The Chrome helper could not start the Amazon tracking check. Reload it and try again.");
     }
     function receiveAmazonPrice(event: Event) {
       const detail = (event as CustomEvent<{ orderIds?: string[]; unitPriceCents?: number; shippingCents?: number | null }>).detail;
@@ -333,7 +334,7 @@ export function OrdersView({ orders, fetchError, profitProtectionEnabled, autoRe
       }
     }
     function receiveAmazonPriceProgress(event: Event) {
-      const detail = (event as CustomEvent<{ status?: "running" | "complete" | "cancelled"; total?: number; processed?: number; found?: number }>).detail;
+      const detail = (event as CustomEvent<{ status?: "running" | "complete" | "cancelled" | "error"; total?: number; processed?: number; found?: number }>).detail;
       if (!detail?.status) return;
       setAmazonPriceCheck({
         status: detail.status,
@@ -345,6 +346,8 @@ export function OrdersView({ orders, fetchError, profitProtectionEnabled, autoRe
         setRefreshMessage(`Amazon price check complete: ${detail.found ?? 0} of ${detail.total ?? 0} unique product${detail.total === 1 ? "" : "s"} updated. Profit has been recalculated.`);
       } else if (detail.status === "cancelled") {
         setRefreshMessage(`Amazon price check stopped after ${detail.processed ?? 0} of ${detail.total ?? 0} products.`);
+      } else if (detail.status === "error") {
+        setRefreshMessage("The Chrome helper could not start the Amazon price check. Reload it and try again.");
       }
     }
     document.addEventListener("sellfinity:tracking-filled", receiveExtensionTracking);
@@ -363,7 +366,7 @@ export function OrdersView({ orders, fetchError, profitProtectionEnabled, autoRe
     if (amazonPriceCheck?.status !== "starting") return;
     const timer = window.setTimeout(() => {
       setAmazonPriceCheck((current) => current?.status === "starting" ? { ...current, status: "unavailable" } : current);
-      setRefreshMessage("The Amazon price checker needs Chrome helper version 1.3.2. Reload the helper, then refresh this Sellfinity tab and try again.");
+      setRefreshMessage("The Chrome helper did not respond. Reload helper v1.3.3, refresh this Sellfinity tab, then try again.");
     }, 8_000);
     return () => window.clearTimeout(timer);
   }, [amazonPriceCheck?.status]);
@@ -847,13 +850,13 @@ export function OrdersView({ orders, fetchError, profitProtectionEnabled, autoRe
           {refreshRun?.helper === "running" && <Button variant="danger" onClick={stopTrackingCheck}>Stop tracking check</Button>}
           <Button variant="secondary" disabled={amazonPriceCheckWorking || refreshWorking} onClick={checkAmazonPrices}>{amazonPriceCheckWorking ? `Checking ${amazonPriceCheck?.processed ?? 0}/${amazonPriceCheck?.total ?? 0}…` : "Check Amazon prices"}</Button>
           {amazonPriceCheckWorking && <Button variant="danger" onClick={stopAmazonPriceCheck}>Stop price check</Button>}
-          <a href="/downloads/sellfinity-tracking-helper.zip?v=1.3.2" download className="inline-flex min-h-10 items-center justify-center rounded-lg border border-slate-300 bg-white px-3 text-sm font-medium text-slate-700 hover:bg-slate-50">Download Chrome helper v1.3.2</a>
+          <a href="/downloads/sellfinity-tracking-helper.zip?v=1.3.3" download className="inline-flex min-h-10 items-center justify-center rounded-lg border border-slate-300 bg-white px-3 text-sm font-medium text-slate-700 hover:bg-slate-50">Download Chrome helper v1.3.3</a>
         </div>
 
         {amazonPriceCheck && amazonPriceCheck.status !== "unavailable" && (
           <div className="border-b border-violet-100 bg-violet-50/70 px-4 py-3" role="status" aria-live="polite">
             <div className="flex items-center justify-between gap-3 text-xs font-medium text-violet-900">
-              <span>{amazonPriceCheck.status === "complete" ? "Amazon prices checked" : amazonPriceCheck.status === "cancelled" ? "Amazon price check stopped" : "Checking signed-in Amazon prices and shipping…"}</span>
+              <span>{amazonPriceCheck.status === "complete" ? "Amazon prices checked" : amazonPriceCheck.status === "cancelled" ? "Amazon price check stopped" : amazonPriceCheck.status === "error" ? "Amazon price check could not start" : "Checking signed-in Amazon prices and shipping…"}</span>
               <span>{amazonPriceCheck.processed}/{amazonPriceCheck.total} · {amazonPriceCheck.found} updated</span>
             </div>
             <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-violet-100">

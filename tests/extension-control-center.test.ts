@@ -25,11 +25,20 @@ describe("Chrome helper control center", () => {
     expect(background).toContain("for (let attempt = 0; attempt < 12; attempt++)");
   });
 
-  it("ships the popup script in helper version 1.3.2", () => {
+  it("acknowledges price scans before waiting for the background queue", () => {
+    const content = extensionFile("sellfinity-content.js");
+    const immediateProgress = content.indexOf("reportAmazonPriceProgress();");
+    const backgroundRequest = content.indexOf('chrome.runtime.sendMessage({ type: "BEGIN_BULK_AMAZON_PRICE_CHECK"');
+
+    expect(immediateProgress).toBeGreaterThan(-1);
+    expect(immediateProgress).toBeLessThan(backgroundRequest);
+  });
+
+  it("ships the popup script in helper version 1.3.3", () => {
     const manifest = JSON.parse(extensionFile("manifest.json")) as { version: string };
     const popup = extensionFile("popup.html");
 
-    expect(manifest.version).toBe("1.3.2");
+    expect(manifest.version).toBe("1.3.3");
     expect(popup).toContain('<script src="popup.js"></script>');
   });
 });

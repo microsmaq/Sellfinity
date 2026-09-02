@@ -35,6 +35,10 @@ separate stop buttons. Sellfinity also shows a stop button during each active
 check. The Amazon reader now waits for the real product page instead of treating
 the temporary blank loading tab as a failed read.
 
+Version 1.3.3 reports progress to Sellfinity immediately, before Amazon tabs
+finish opening. This prevents slow tab launches from being incorrectly shown
+as a missing or outdated helper.
+
 After updating the extension files, click the extension's **Reload** button on
 `chrome://extensions` before trying it again.
 

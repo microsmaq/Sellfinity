@@ -188,8 +188,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       await savePending(requests);
       const queued = requests.filter((request) => request.bulk && request.mode !== "PRICE" && request.sourceTabId === sender.tab.id).length;
       await startRun(sender.tab.id, "TRACKING", queued);
-      await processBulkQueue(sender.tab.id);
       sendResponse({ ok: true, queued });
+      await processBulkQueue(sender.tab.id);
     })();
     return true;
   }
@@ -218,8 +218,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       await savePending(requests);
       const queued = requests.filter((request) => request.bulk && request.mode === "PRICE" && request.sourceTabId === sender.tab.id).length;
       await startRun(sender.tab.id, "PRICE", queued);
-      await processBulkQueue(sender.tab.id);
       sendResponse({ ok: true, queued });
+      await processBulkQueue(sender.tab.id);
     })();
     return true;
   }

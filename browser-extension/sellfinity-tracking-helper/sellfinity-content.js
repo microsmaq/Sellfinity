@@ -141,29 +141,45 @@
   document.addEventListener("sellfinity:bulk-tracking-refresh", (event) => {
     const requests = bulkTrackingRequests(event.detail?.requests || []);
     if (!requests.length) return;
+    // Acknowledge the request before the background worker opens any tabs so
+    // Sellfinity never mistakes a slow Amazon launch for a missing helper.
+    bulkProgress = { total: requests.length, processed: 0, found: 0 };
+    reportBulkProgress();
     chrome.runtime.sendMessage({ type: "BEGIN_BULK_TRACKING_REQUEST", requests })
       .then((result) => {
         if (result?.queued) {
-          bulkProgress = { total: result.queued, processed: 0, found: 0 };
+          bulkProgress.total = result.queued;
           reportBulkProgress();
           toast(`Checking ${result.queued} Amazon tracking page${result.queued === 1 ? "" : "s"}…`);
         }
       })
-      .catch(() => toast("The tracking helper could not start the automatic check.", "error"));
+      .catch(() => {
+        reportBulkProgress("error");
+        bulkProgress = null;
+        toast("The tracking helper could not start the automatic check.", "error");
+      });
   });
 
   document.addEventListener("sellfinity:bulk-amazon-price-check", (event) => {
     const requests = amazonPriceRequests(event.detail?.requests);
     if (!requests.length) return;
+    // Report immediately. Opening several signed-in Amazon tabs can take more
+    // than the UI's helper-detection window even though the extension is fine.
+    amazonPriceProgress = { total: requests.length, processed: 0, found: 0 };
+    reportAmazonPriceProgress();
     chrome.runtime.sendMessage({ type: "BEGIN_BULK_AMAZON_PRICE_CHECK", requests })
       .then((result) => {
         if (result?.queued) {
-          amazonPriceProgress = { total: result.queued, processed: 0, found: 0 };
+          amazonPriceProgress.total = result.queued;
           reportAmazonPriceProgress();
           toast(`Checking ${result.queued} unique Amazon product${result.queued === 1 ? "" : "s"} for current price and shipping…`);
         }
       })
-      .catch(() => toast("The Amazon price checker could not start.", "error"));
+      .catch(() => {
+        reportAmazonPriceProgress("error");
+        amazonPriceProgress = null;
+        toast("The Amazon price checker could not start.", "error");
+      });
   });
 
   document.addEventListener("sellfinity:stop-amazon-price-check", () => {
