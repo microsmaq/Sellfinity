@@ -17,6 +17,7 @@ import { getRainforestEfficiencySummary } from "@/lib/mirror/rainforest";
 import { recalculateAllArbitragePricing } from "@/lib/arbitrage/recalculate-pricing";
 import { arbitrageSuggestedPriceCents } from "@/lib/arbitrage/pricing";
 import { estimateMargin } from "@/lib/fees";
+import { AMAZON_FRESHNESS_WINDOW_MS } from "@/lib/amazon/freshness";
 
 export type AdminActionResult = {
   ok: boolean;
@@ -59,8 +60,13 @@ export async function adminRecalculateArbitragePricing(): Promise<AdminActionRes
   }
 }
 
-export async function prepareAdminLiveAmazonRefresh(selectedIds?: string[]): Promise<{ requests: AdminLiveAmazonRequest[] }> {
+export async function prepareAdminLiveAmazonRefresh(
+  selectedIds?: string[],
+  skipRecentlyChecked = true,
+): Promise<{ requests: AdminLiveAmazonRequest[]; skippedFresh: number }> {
   await requireAdmin();
+  const skipFresh = z.boolean().parse(skipRecentlyChecked);
+  const freshnessCutoff = new Date(Date.now() - AMAZON_FRESHNESS_WINDOW_MS);
   const ids = selectedIds?.length
     ? z.array(z.string().min(1).max(100)).max(5_000).parse([...new Set(selectedIds)])
     : undefined;
@@ -68,6 +74,7 @@ export async function prepareAdminLiveAmazonRefresh(selectedIds?: string[]): Pro
     where: {
       status: { not: "ARCHIVED" },
       ...(ids && { id: { in: ids } }),
+      ...(skipFresh && { OR: [{ amazonRefreshedAt: null }, { amazonRefreshedAt: { lt: freshnessCutoff } }] }),
     },
     select: { id: true, asin: true, amazonUrl: true },
     orderBy: [{ amazonRefreshedAt: { sort: "asc", nulls: "first" } }, { updatedAt: "asc" }],
@@ -83,7 +90,8 @@ export async function prepareAdminLiveAmazonRefresh(selectedIds?: string[]): Pro
       orderIds: [row.id],
     });
   }
-  return { requests: [...grouped.values()] };
+  const requestedCount = ids?.length ?? await db.adminArbitrageProduct.count({ where: { status: { not: "ARCHIVED" } } });
+  return { requests: [...grouped.values()], skippedFresh: Math.max(0, requestedCount - rows.length) };
 }
 
 export async function adminUpdateAmazonCostsFromBrowser(

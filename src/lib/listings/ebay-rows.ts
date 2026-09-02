@@ -27,6 +27,7 @@ export type LocalListingFacts = {
     shippingCostCents: number;
     supplierStock: number;
     supplierUrl: string;
+    amazonRefreshedAt?: Date | null;
   };
 };
 
@@ -109,6 +110,7 @@ export function buildEbayRows(
         sourceAssessment: null,
         shippingStrategy: null,
         buyerShippingCents: null,
+        amazonUpdatedAt: null,
       });
       continue;
     }
@@ -141,6 +143,7 @@ export function buildEbayRows(
         },
         shippingStrategy: localListing.shippingStrategy ?? "FREE_SHIPPING",
         buyerShippingCents: localListing.buyerShippingCents ?? 0,
+        amazonUpdatedAt: localListing.product.amazonRefreshedAt?.toISOString() ?? null,
       });
       continue;
     }
@@ -183,6 +186,7 @@ export function buildEbayRows(
       },
       shippingStrategy: localListing.shippingStrategy ?? "FREE_SHIPPING",
       buyerShippingCents: localListing.buyerShippingCents ?? 0,
+      amazonUpdatedAt: localListing.product.amazonRefreshedAt?.toISOString() ?? null,
     });
   }
 

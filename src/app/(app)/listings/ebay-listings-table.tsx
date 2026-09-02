@@ -45,6 +45,7 @@ import {
   selectedSmartSyncOptionCount,
   type SmartSyncOptions,
 } from "@/lib/listings/smart-sync-options";
+import { isAmazonDataFresh } from "@/lib/amazon/freshness";
 
 export type EbayRow = {
   ebayListingId: string;
@@ -75,6 +76,7 @@ export type EbayRow = {
   suggestedPriceCents: number | null;
   suggestedBuyerShippingCents: number | null;
   marketUpdatedAt?: string | null;
+  amazonUpdatedAt?: string | null;
   performance?: {
     units7d: number;
     units30d: number;
@@ -670,9 +672,11 @@ export function EbayListingsTable({
   const [smartSyncOpen, setSmartSyncOpen] = useState(false);
   const [smartSyncOptions, setSmartSyncOptions] = useState<SmartSyncOptions>({ ...DEFAULT_SMART_SYNC_OPTIONS });
   const [smartSyncScope, setSmartSyncScope] = useState<"ALL" | "SELECTED">("ALL");
+  const [skipFreshAmazon, setSkipFreshAmazon] = useState(true);
   const [amazonPriceBridgeIds, setAmazonPriceBridgeIds] = useState<string[]>([]);
   const [amazonPriceProgress, setAmazonPriceProgress] = useState<{ status: "starting" | "running" | "complete" | "cancelled" | "error"; total: number; processed: number; found: number } | null>(null);
-  const amazonPriceResolver = useRef<((result: { availableIds: Set<string>; unavailableIds: Set<string> }) => void) | null>(null);
+  const amazonPriceResolver = useRef<((result: { availableIds: Set<string>; unavailableIds: Set<string>; skippedFresh: number }) => void) | null>(null);
+  const amazonPriceSkippedFresh = useRef(0);
   const amazonPriceRejecter = useRef<((error: Error) => void) | null>(null);
   const amazonPriceSuccessfulIds = useRef(new Set<string>());
   const amazonUnavailableIds = useRef(new Set<string>());
@@ -813,6 +817,7 @@ export function EbayListingsTable({
         setRows((current) => current.map((row) => result.updatedEbayListingIds.includes(row.ebayListingId) && row.match
           ? {
               ...row,
+              amazonUpdatedAt: result.amazonRefreshedAt,
               match: {
                 ...row.match,
                 amazonPriceCents: result.amazonPriceCents,
@@ -832,7 +837,7 @@ export function EbayListingsTable({
         if ("error" in result) return;
         for (const id of result.updatedEbayListingIds) amazonUnavailableIds.current.add(id);
         setRows((current) => current.map((row) => result.updatedEbayListingIds.includes(row.ebayListingId) && row.match
-          ? { ...row, match: { ...row.match, unavailable: true } }
+          ? { ...row, amazonUpdatedAt: result.amazonRefreshedAt, match: { ...row.match, unavailable: true } }
           : row));
       })();
       amazonPriceSavePromises.current.push(save);
@@ -857,6 +862,7 @@ export function EbayListingsTable({
         void Promise.all(amazonPriceSavePromises.current).then(() => resolve({
           availableIds: new Set(amazonPriceSuccessfulIds.current),
           unavailableIds: new Set(amazonUnavailableIds.current),
+          skippedFresh: amazonPriceSkippedFresh.current,
         }));
       }
       if (detail.status === "cancelled" && amazonPriceRejecter.current) {
@@ -882,9 +888,12 @@ export function EbayListingsTable({
     };
   }, []);
 
-  async function checkLiveAmazonPrices(targetRows: EbayRow[]): Promise<{ availableIds: Set<string>; unavailableIds: Set<string> }> {
+  async function checkLiveAmazonPrices(targetRows: EbayRow[]): Promise<{ availableIds: Set<string>; unavailableIds: Set<string>; skippedFresh: number }> {
+    const freshRows = skipFreshAmazon ? targetRows.filter((row) => isAmazonDataFresh(row.amazonUpdatedAt)) : [];
+    const freshIds = new Set(freshRows.map((row) => row.ebayListingId));
+    const rowsToCheck = targetRows.filter((row) => !freshIds.has(row.ebayListingId));
     const grouped = new Map<string, { requestKey: string; amazonUrl: string; orderIds: string[] }>();
-    for (const row of targetRows) {
+    for (const row of rowsToCheck) {
       if (!row.match?.amazonUrl || !row.match.sku) continue;
       const requestKey = row.match.sku.trim().toUpperCase();
       const current = grouped.get(requestKey);
@@ -896,14 +905,23 @@ export function EbayListingsTable({
       });
     }
     const requests = [...grouped.values()];
-    if (!requests.length) throw new Error("No matched Amazon products are available in this Smart Sync scope.");
-    amazonPriceSuccessfulIds.current = new Set();
-    amazonUnavailableIds.current = new Set();
+    const freshAvailableIds = freshRows.filter((row) => row.match && !row.match.unavailable).map((row) => row.ebayListingId);
+    const freshUnavailableIds = freshRows.filter((row) => row.match?.unavailable).map((row) => row.ebayListingId);
+    amazonPriceSuccessfulIds.current = new Set(freshAvailableIds);
+    amazonUnavailableIds.current = new Set(freshUnavailableIds);
+    amazonPriceSkippedFresh.current = freshRows.length;
     amazonPriceSavePromises.current = [];
+    if (!requests.length) {
+      if (freshRows.length) {
+        setAmazonPriceProgress({ status: "complete", total: 0, processed: 0, found: 0 });
+        return { availableIds: new Set(freshAvailableIds), unavailableIds: new Set(freshUnavailableIds), skippedFresh: freshRows.length };
+      }
+      throw new Error("No matched Amazon products are available in this Smart Sync scope.");
+    }
     setAmazonPriceBridgeIds(requests.flatMap((request) => request.orderIds));
     setAmazonPriceProgress({ status: "starting", total: requests.length, processed: 0, found: 0 });
     await new Promise<void>((resolve) => window.requestAnimationFrame(() => window.requestAnimationFrame(() => resolve())));
-    return new Promise<{ availableIds: Set<string>; unavailableIds: Set<string> }>((resolve, reject) => {
+    return new Promise<{ availableIds: Set<string>; unavailableIds: Set<string>; skippedFresh: number }>((resolve, reject) => {
       amazonPriceResolver.current = resolve;
       amazonPriceRejecter.current = reject;
       amazonPriceStartupTimer.current = window.setTimeout(() => {
@@ -1376,7 +1394,7 @@ export function EbayListingsTable({
       try {
         const liveAmazonCheck = smartSyncOptions.checkLiveAmazonPrices
           ? await checkLiveAmazonPrices(smartSyncTargetRows)
-          : { availableIds: new Set<string>(), unavailableIds: new Set<string>() };
+          : { availableIds: new Set<string>(), unavailableIds: new Set<string>(), skippedFresh: 0 };
         const scopeIds = smartSyncScope === "SELECTED" ? [...selected] : undefined;
         const started = await prepareConfigurableSmartSync(smartSyncOptions, retryLastSyncErrorsOnly, scopeIds);
         if (started.error) throw new Error(started.error);
@@ -1508,7 +1526,7 @@ export function EbayListingsTable({
         setNotice({
           text: syncTotal === 0
             ? "Smart Sync found no eligible listings for the selected operations."
-            : `${retryLastSyncErrorsOnly ? "Smart Sync retry" : "Smart Sync"} complete: ${totals.successful} successful, ${totals.needsAttention} need attention, and ${totals.errors} errors. ${totals.updated} updated, ${totals.ended} ended, and ${totals.relisted} relisted.${liveAmazonCheck.unavailableIds.size ? ` Amazon confirmed ${liveAmazonCheck.unavailableIds.size} unavailable listing${liveAmazonCheck.unavailableIds.size === 1 ? "" : "s"}; ${smartSyncOptions.endUnavailableListings ? "eligible listings were ended automatically" : "they were flagged for your review"}.` : ""}`,
+            : `${retryLastSyncErrorsOnly ? "Smart Sync retry" : "Smart Sync"} complete: ${totals.successful} successful, ${totals.needsAttention} need attention, and ${totals.errors} errors. ${totals.updated} updated, ${totals.ended} ended, and ${totals.relisted} relisted.${liveAmazonCheck.skippedFresh ? ` ${liveAmazonCheck.skippedFresh} recently checked Amazon listing${liveAmazonCheck.skippedFresh === 1 ? " was" : "s were"} reused.` : ""}${liveAmazonCheck.unavailableIds.size ? ` Amazon confirmed ${liveAmazonCheck.unavailableIds.size} unavailable listing${liveAmazonCheck.unavailableIds.size === 1 ? "" : "s"}; ${smartSyncOptions.endUnavailableListings ? "eligible listings were ended automatically" : "they were flagged for your review"}.` : ""}`,
           error: totals.errors > 0,
         });
         setSmartSyncOpen(false);
@@ -1946,6 +1964,14 @@ export function EbayListingsTable({
               </label>
             ))}
           </div>
+          {smartSyncOptions.checkLiveAmazonPrices && (
+            <div className="border-t border-indigo-100 bg-indigo-50/40 px-4 py-3 sm:px-5">
+              <label className="flex cursor-pointer items-start gap-2 text-xs font-semibold text-slate-700">
+                <input type="checkbox" checked={skipFreshAmazon} onChange={(event) => setSkipFreshAmazon(event.target.checked)} disabled={pending} className="mt-0.5 h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500" />
+                <span>Skip Amazon products checked in the last 24 hours <span className="block pt-0.5 font-normal text-slate-500">Fresh saved prices, shipping, and availability will be reused.</span></span>
+              </label>
+            </div>
+          )}
           {amazonPriceProgress && smartSyncOptions.checkLiveAmazonPrices && (
             <div className="border-t border-violet-100 bg-violet-50/70 px-4 py-3 sm:px-5" role="status" aria-live="polite">
               <div className="flex flex-wrap items-center justify-between gap-3 text-xs font-medium text-violet-900"><span>{amazonPriceProgress.status === "complete" ? "Live Amazon prices checked" : amazonPriceProgress.status === "cancelled" ? "Live Amazon price check stopped" : amazonPriceProgress.status === "error" ? "Live Amazon price check could not start" : "Checking signed-in Amazon prices and shipping…"}</span><span className="flex items-center gap-2"><span>{amazonPriceProgress.processed}/{amazonPriceProgress.total} · {amazonPriceProgress.found} found</span>{(amazonPriceProgress.status === "starting" || amazonPriceProgress.status === "running") && <Button size="sm" variant="danger" onClick={stopLiveAmazonPrices}>Stop check</Button>}</span></div>
@@ -2408,6 +2434,7 @@ export function EbayListingsTable({
                       <dd className="mt-1 text-base font-bold tabular-nums text-slate-900">
                         {r.source ? formatCents(r.source.priceCents + r.source.shippingCostCents) : "—"}
                       </dd>
+                      <p className="mt-0.5 text-[9px] text-slate-400">{r.amazonUpdatedAt ? formatFreshness(r.amazonUpdatedAt) : "Not checked yet"}</p>
                     </div>
                   </div>
                   <div className="border-b border-r border-slate-100 p-3">
@@ -2644,7 +2671,7 @@ export function EbayListingsTable({
                   </td>
                   <td className="min-w-[170px] px-4 py-4 text-sm text-slate-700">{r.source?.category ?? "—"}</td>
                   <td className="whitespace-nowrap px-4 py-4 text-right font-semibold tabular-nums">
-                    {r.source ? <>{formatCents(r.source.priceCents + r.source.shippingCostCents)}<p className="mt-0.5 text-[11px] font-normal text-slate-500">{formatCents(r.source.priceCents)}{r.source.shippingCostCents > 0 ? ` + ${formatCents(r.source.shippingCostCents)} shipping` : " · free shipping"}</p></> : "—"}
+                    {r.source ? <>{formatCents(r.source.priceCents + r.source.shippingCostCents)}<p className="mt-0.5 text-[11px] font-normal text-slate-500">{formatCents(r.source.priceCents)}{r.source.shippingCostCents > 0 ? ` + ${formatCents(r.source.shippingCostCents)} shipping` : " · free shipping"}</p><p className="mt-0.5 text-[10px] font-normal text-slate-400">{r.amazonUpdatedAt ? formatFreshness(r.amazonUpdatedAt) : "Not checked yet"}</p></> : "—"}
                   </td>
                   <td className="min-w-[310px] px-4 py-4">
                     <a href={r.url} target="_blank" rel="noreferrer" className="line-clamp-2 text-sm font-medium text-slate-800 hover:text-indigo-600">{r.title}</a>

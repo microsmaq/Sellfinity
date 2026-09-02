@@ -391,18 +391,18 @@ model EbayConnection {
 // Retained copy of eBay's active-listing response. Normal page loads read
 // this table; only an intentional Smart Sync refresh calls eBay again.
 model EbayListingSnapshot {
-  id             String    @id @default(cuid())
-  userId         String
-  ebayListingId  String
-  title          String
-  priceCents     Int
-  url            String
-  imageUrl       String?
-  quantity       Int?
-  listingDate    DateTime?
-  lastSeenAt     DateTime  @default(now())
-  createdAt      DateTime  @default(now())
-  updatedAt      DateTime  @updatedAt
+  id            String    @id @default(cuid())
+  userId        String
+  ebayListingId String
+  title         String
+  priceCents    Int
+  url           String
+  imageUrl      String?
+  quantity      Int?
+  listingDate   DateTime?
+  lastSeenAt    DateTime  @default(now())
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -414,15 +414,15 @@ model EbayListingSnapshot {
 // Amazon URL. Supplier fields snapshot the supplier state at import; sync
 // refreshes them.
 model Product {
-  id                  String   @id @default(cuid())
+  id                  String    @id @default(cuid())
   userId              String
   sku                 String
   title               String
   // Manufacturer brand retained from Amazon for category compliance on eBay.
-  brand               String   @default("")
+  brand               String    @default("")
   description         String
   // JSON string array of image URLs
-  imageUrlsJson       String   @default("[]")
+  imageUrlsJson       String    @default("[]")
   category            String
   supplierName        String
   supplierProductId   String
@@ -432,17 +432,20 @@ model Product {
   /**
    * Estimated cost for the seller to ship one unit to the buyer.
    */
-  shippingCostCents   Int      @default(0)
+  shippingCostCents   Int       @default(0)
+  // Last time Amazon price, shipping, and availability were explicitly refreshed.
+  amazonRefreshedAt   DateTime?
   suggestedPriceCents Int
   // 0-100 sourcing score at import time
   sourceScore         Int
-  createdAt           DateTime @default(now())
+  createdAt           DateTime  @default(now())
 
   user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   listings Listing[]
 
   @@unique([userId, sku])
   @@index([userId])
+  @@index([userId, amazonRefreshedAt])
 }
 
 // An eBay listing for a product. Mirrors what we believe the live eBay state
@@ -490,14 +493,14 @@ model Listing {
 // A sale imported from eBay. Fee/cost fields are snapshotted at import so the
 // P&L is stable even if fee rates or supplier costs change later.
 model Order {
-  id                         String   @id @default(cuid())
+  id                         String    @id @default(cuid())
   userId                     String
   listingId                  String
   ebayOrderId                String
   quantity                   Int
   // per-unit sale price
   salePriceCents             Int
-  shippingChargedCents       Int      @default(0)
+  shippingChargedCents       Int       @default(0)
   ebayFeeCents               Int
   // Finalized eBay order earnings. Null means the dashboard must use the
   // legacy fee estimate until the Finances API publishes the transaction.
@@ -518,12 +521,12 @@ model Order {
   shippingCostCents          Int
   cogsCents                  Int // total cost of goods for this order
   // PAID | SHIPPED | REFUNDED
-  status                     String   @default("PAID")
+  status                     String    @default("PAID")
   buyerUsername              String
   shippingRecipientName      String?
   shippingAddressFingerprint String?
   saleDate                   DateTime
-  createdAt                  DateTime @default(now())
+  createdAt                  DateTime  @default(now())
 
   // Reconciled Amazon fulfillment data. Catalog COGS remains the estimate;
   // realized dashboards use the linked purchase item's allocated actual cost.

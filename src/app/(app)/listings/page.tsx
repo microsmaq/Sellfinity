@@ -47,6 +47,7 @@ export default async function ListingsPage() {
             shippingCostCents: true,
             supplierStock: true,
             supplierUrl: true,
+            amazonRefreshedAt: true,
           },
         },
       },

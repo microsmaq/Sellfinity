@@ -1478,11 +1478,13 @@ export async function updateListingAmazonCostsFromBrowser(
   });
   const productIds = [...new Set(listings.map((listing) => listing.productId))];
   if (!productIds.length) return { error: "No matching Sellfinity listings were found." };
+  const amazonRefreshedAt = new Date();
   await db.product.updateMany({
     where: { userId: user.id, id: { in: productIds } },
     data: {
       costCents: unitPriceCents,
       supplierStock: 50,
+      amazonRefreshedAt,
       ...(shippingCents !== null && { shippingCostCents: shippingCents }),
     },
   });
@@ -1491,6 +1493,7 @@ export async function updateListingAmazonCostsFromBrowser(
     updatedEbayListingIds: listings.flatMap((listing) => listing.ebayListingId ? [listing.ebayListingId] : []),
     amazonPriceCents: unitPriceCents,
     amazonShippingCents: shippingCents,
+    amazonRefreshedAt: amazonRefreshedAt.toISOString(),
   };
 }
 
@@ -1504,12 +1507,16 @@ export async function markListingAmazonUnavailableFromBrowser(rawEbayListingIds:
   });
   const productIds = [...new Set(listings.map((listing) => listing.productId))];
   if (!productIds.length) return { error: "No matching Sellfinity listings were found." };
+  const amazonRefreshedAt = new Date();
   await db.product.updateMany({
     where: { userId: user.id, id: { in: productIds } },
-    data: { supplierStock: 0 },
+    data: { supplierStock: 0, amazonRefreshedAt },
   });
   revalidatePath("/listings");
-  return { updatedEbayListingIds: listings.flatMap((listing) => listing.ebayListingId ? [listing.ebayListingId] : []) };
+  return {
+    updatedEbayListingIds: listings.flatMap((listing) => listing.ebayListingId ? [listing.ebayListingId] : []),
+    amazonRefreshedAt: amazonRefreshedAt.toISOString(),
+  };
 }
 
 function adminListingImages(adminSource: {

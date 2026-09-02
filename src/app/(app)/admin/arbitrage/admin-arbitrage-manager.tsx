@@ -76,6 +76,13 @@ function confidenceTone(value: number): "green" | "amber" | "red" {
   return "red";
 }
 
+function amazonFreshness(value: string | null): string {
+  if (!value) return "Amazon data never checked";
+  const timestamp = new Date(value);
+  if (Number.isNaN(timestamp.getTime())) return "Amazon update unknown";
+  return `Amazon updated ${new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" }).format(timestamp)}`;
+}
+
 function CellValue({
   value,
   suffix = "",
@@ -196,6 +203,7 @@ function CatalogRow({
             ? ` + ${formatCents(row.amazonShippingCents)} shipping`
             : " · free shipping"}
         </p>
+        <p className="mt-1 text-[10px] font-normal text-slate-400">{amazonFreshness(row.amazonRefreshedAt)}</p>
       </td>
       <td className="min-w-[300px] px-4 py-4">
         {row.ebayTitle && row.ebayUrl ? (
@@ -322,6 +330,7 @@ export function AdminArbitrageManager({
   const [refreshProgress, setRefreshProgress] = useState<AdminRefreshProgress | null>(null);
   const [liveAmazonProgress, setLiveAmazonProgress] = useState<AdminLiveAmazonProgress | null>(null);
   const [liveAmazonScope, setLiveAmazonScope] = useState<"ALL" | "SELECTED">("SELECTED");
+  const [skipFreshAmazon, setSkipFreshAmazon] = useState(true);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [expanded, setExpanded] = useState(false);
   const [pending, startTransition] = useTransition();
@@ -330,6 +339,7 @@ export function AdminArbitrageManager({
   const liveAmazonSavePromises = useRef<Promise<void>[]>([]);
   const liveAmazonUnavailableIds = useRef(new Set<string>());
   const liveAmazonUpdatedIds = useRef(new Set<string>());
+  const liveAmazonSkippedFresh = useRef(0);
   const liveAmazonStartupTimer = useRef<number | null>(null);
   const liveAmazonRunning = liveAmazonProgress?.status === "starting" || liveAmazonProgress?.status === "running";
   const allPageSelected = data.rows.length > 0 && data.rows.every((row) => selected.has(row.id));
@@ -377,7 +387,7 @@ export function AdminArbitrageManager({
           const failed = Math.max(0, next.total - updated - unavailable);
           setLiveAmazonProgress({ ...next, unavailable });
           setNotice({
-            text: `Live Amazon refresh complete: ${updated} prices updated, ${unavailable} confirmed unavailable${failed ? `, and ${failed} could not be verified` : ""}. No Rainforest credits used.`,
+            text: `Live Amazon refresh complete: ${updated} prices updated, ${unavailable} confirmed unavailable${failed ? `, and ${failed} could not be verified` : ""}${liveAmazonSkippedFresh.current ? `. ${liveAmazonSkippedFresh.current.toLocaleString()} recently checked product${liveAmazonSkippedFresh.current === 1 ? " was" : "s were"} skipped` : ""}. No Rainforest credits used.`,
             error: failed > 0,
           });
           router.refresh();
@@ -426,9 +436,10 @@ export function AdminArbitrageManager({
     setScanProgress(null);
     setRefreshProgress(null);
     startTransition(async () => {
-      const prepared = await prepareAdminLiveAmazonRefresh(liveAmazonScope === "SELECTED" ? [...selected] : undefined);
+      const prepared = await prepareAdminLiveAmazonRefresh(liveAmazonScope === "SELECTED" ? [...selected] : undefined, skipFreshAmazon);
+      liveAmazonSkippedFresh.current = prepared.skippedFresh;
       if (!prepared.requests.length) {
-        setNotice({ text: "No eligible Amazon catalog products were found.", error: false });
+        setNotice({ text: prepared.skippedFresh ? `Nothing to refresh. ${prepared.skippedFresh.toLocaleString()} product${prepared.skippedFresh === 1 ? " was" : "s were"} checked within the last 24 hours.` : "No eligible Amazon catalog products were found.", error: false });
         return;
       }
       if (prepared.requests.length >= 250 && !window.confirm(`This will open and check ${prepared.requests.length.toLocaleString()} unique Amazon products and may take a long time. Continue?`)) return;
@@ -883,6 +894,10 @@ export function AdminArbitrageManager({
               <option value="SELECTED">Selected products ({selected.size})</option>
               <option value="ALL">All catalog products ({data.counts.all.toLocaleString()})</option>
             </select>
+            <label className="flex min-h-10 cursor-pointer items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700">
+              <input type="checkbox" checked={skipFreshAmazon} disabled={pending || liveAmazonRunning} onChange={(event) => setSkipFreshAmazon(event.target.checked)} className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500" />
+              Skip checked in last 24 hours
+            </label>
             <Button type="button" disabled={pending || liveAmazonRunning || (liveAmazonScope === "SELECTED" && selected.size === 0)} onClick={startLiveAmazonRefresh}>{liveAmazonRunning ? "Checking Amazon…" : "Check live prices & shipping"}</Button>
             {liveAmazonRunning && <Button type="button" variant="danger" onClick={stopLiveAmazonRefresh}>Stop</Button>}
             <a href="/downloads/sellfinity-tracking-helper.zip?v=1.3.5" download className="text-xs font-semibold text-indigo-700 hover:underline">Chrome helper v1.3.5</a>

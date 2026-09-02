@@ -61,6 +61,7 @@ export type AdminCatalogRow = {
   amazonPriceCents: number;
   amazonShippingCents: number;
   amazonInStock: boolean;
+  amazonRefreshedAt: string | null;
   amazonUrl: string;
   amazonImageUrl: string | null;
   category: string;
@@ -322,6 +323,7 @@ export async function listAdminCatalog(params: {
         estimatedProfitCents: margin?.estimatedProfitCents ?? null,
         marginPct: margin ? Math.round(margin.marginPct) : null,
         usersListed: userSets.get(item.asin)?.size ?? 0,
+        amazonRefreshedAt: item.amazonRefreshedAt?.toISOString() ?? null,
         lastResearchedAt: item.lastResearchedAt?.toISOString() ?? null,
         updatedAt: item.updatedAt.toISOString(),
       };
