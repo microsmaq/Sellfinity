@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Sellfinity Amazon Tracking Helper",
-  "version": "1.3.4",
+  "version": "1.3.5",
   "description": "Automatically checks Amazon tracking pages and saves carrier tracking to Sellfinity fulfillment.",
   "permissions": ["tabs", "storage"],
   "host_permissions": [
@@ -26,10 +26,13 @@
       "matches": [
         "https://www.sellfinity.app/orders*",
         "https://www.sellfinity.app/listings*",
+        "https://www.sellfinity.app/admin/arbitrage*",
         "https://sellfinity.app/orders*",
         "https://sellfinity.app/listings*",
+        "https://sellfinity.app/admin/arbitrage*",
         "https://sellfinity.vercel.app/orders*",
-        "https://sellfinity.vercel.app/listings*"
+        "https://sellfinity.vercel.app/listings*",
+        "https://sellfinity.vercel.app/admin/arbitrage*"
       ],
       "js": ["sellfinity-content.js"],
       "run_at": "document_idle"

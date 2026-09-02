@@ -60,6 +60,7 @@ export type AdminCatalogRow = {
   amazonTitle: string;
   amazonPriceCents: number;
   amazonShippingCents: number;
+  amazonInStock: boolean;
   amazonUrl: string;
   amazonImageUrl: string | null;
   category: string;

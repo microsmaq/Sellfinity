@@ -44,6 +44,10 @@ CAPTCHA, and temporary read failures. Confirmed unavailable products are saved
 as out of stock in Sellfinity and can be ended on eBay when the Smart Sync
 end-unavailable option is selected.
 
+Version 1.3.5 enables the same signed-in price, shipping, and availability
+checker in Admin Product Intelligence for selected products or the full shared
+catalog. These admin checks do not consume Rainforest credits.
+
 After updating the extension files, click the extension's **Reload** button on
 `chrome://extensions` before trying it again.
 

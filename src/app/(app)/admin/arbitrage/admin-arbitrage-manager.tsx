@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { FormEvent, useRef, useState, useTransition } from "react";
+import { FormEvent, useEffect, useRef, useState, useTransition } from "react";
 import {
   adminAddAmazonItem,
   adminArchiveItem,
@@ -12,6 +12,9 @@ import {
   adminResearchItem,
   adminScanBestSellers,
   prepareAdminCatalogRefresh,
+  prepareAdminLiveAmazonRefresh,
+  adminUpdateAmazonCostsFromBrowser,
+  adminMarkAmazonUnavailableFromBrowser,
   type AdminRefreshMode,
 } from "@/lib/actions/admin-arbitrage";
 import type {
@@ -42,6 +45,14 @@ type AdminRefreshProgress = {
   failed: number;
   rainforestRequests: number;
   cacheHits: number;
+};
+
+type AdminLiveAmazonProgress = {
+  status: "starting" | "running" | "complete" | "cancelled" | "error";
+  total: number;
+  processed: number;
+  found: number;
+  unavailable: number;
 };
 
 const statusOptions: { value: AdminCatalogStatus; label: string }[] = [
@@ -124,10 +135,14 @@ function CatalogRow({
   row,
   busy,
   run,
+  selected,
+  toggleSelected,
 }: {
   row: AdminCatalogRow;
   busy: boolean;
   run: (kind: "research" | "publish" | "archive", id: string) => void;
+  selected: boolean;
+  toggleSelected: (id: string) => void;
 }) {
   const priceAssessment = assessPriceCompetitiveness(
     row.suggestedPriceCents ?? 0,
@@ -139,6 +154,7 @@ function CatalogRow({
     <tr className="group border-t border-slate-100 align-top hover:bg-slate-50/70">
       <td className="sticky left-0 z-10 min-w-[390px] bg-white px-5 py-4 group-hover:bg-slate-50">
         <div className="flex gap-3">
+          <input type="checkbox" checked={selected} onChange={() => toggleSelected(row.id)} aria-label={`Select ${row.amazonTitle}`} className="mt-1 h-4 w-4 shrink-0 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500" />
           {row.amazonImageUrl ?? row.ebayImageUrl ? (
             // eslint-disable-next-line @next/next/no-img-element
             <img
@@ -164,6 +180,7 @@ function CatalogRow({
             <div className="mt-1 flex gap-1.5">
               <Badge tone={statusTone(row.status)}>{row.status.replace("_", " ")}</Badge>
               {row.isAmazonBestSeller && <Badge tone="indigo">Amazon bestseller</Badge>}
+              {!row.amazonInStock && <Badge tone="red">Amazon unavailable</Badge>}
             </div>
           </div>
         </div>
@@ -303,10 +320,134 @@ export function AdminArbitrageManager({
   const [refreshMode, setRefreshMode] = useState<AdminRefreshMode>("MARKET");
   const [refreshCount, setRefreshCount] = useState(25);
   const [refreshProgress, setRefreshProgress] = useState<AdminRefreshProgress | null>(null);
+  const [liveAmazonProgress, setLiveAmazonProgress] = useState<AdminLiveAmazonProgress | null>(null);
+  const [liveAmazonScope, setLiveAmazonScope] = useState<"ALL" | "SELECTED">("SELECTED");
+  const [selected, setSelected] = useState<Set<string>>(new Set());
   const [expanded, setExpanded] = useState(false);
   const [pending, startTransition] = useTransition();
   const stopScanRequested = useRef(false);
   const stopRefreshRequested = useRef(false);
+  const liveAmazonSavePromises = useRef<Promise<void>[]>([]);
+  const liveAmazonUnavailableIds = useRef(new Set<string>());
+  const liveAmazonUpdatedIds = useRef(new Set<string>());
+  const liveAmazonStartupTimer = useRef<number | null>(null);
+  const liveAmazonRunning = liveAmazonProgress?.status === "starting" || liveAmazonProgress?.status === "running";
+  const allPageSelected = data.rows.length > 0 && data.rows.every((row) => selected.has(row.id));
+
+  useEffect(() => {
+    function receiveAmazonPrice(event: Event) {
+      const detail = (event as CustomEvent<{ orderIds?: string[]; unitPriceCents?: number; shippingCents?: number | null }>).detail;
+      if (!detail?.orderIds?.length || !Number.isFinite(detail.unitPriceCents)) return;
+      const save = (async () => {
+        const result = await adminUpdateAmazonCostsFromBrowser(detail.orderIds!, detail.unitPriceCents!, detail.shippingCents ?? null);
+        if ("error" in result) return;
+        for (const id of result.updatedIds) liveAmazonUpdatedIds.current.add(id);
+      })();
+      liveAmazonSavePromises.current.push(save);
+    }
+    function receiveAmazonUnavailable(event: Event) {
+      const detail = (event as CustomEvent<{ orderIds?: string[] }>).detail;
+      if (!detail?.orderIds?.length) return;
+      const save = (async () => {
+        const result = await adminMarkAmazonUnavailableFromBrowser(detail.orderIds!);
+        if ("error" in result) return;
+        for (const id of result.updatedIds) liveAmazonUnavailableIds.current.add(id);
+      })();
+      liveAmazonSavePromises.current.push(save);
+    }
+    function receiveAmazonProgress(event: Event) {
+      const detail = (event as CustomEvent<{ status?: AdminLiveAmazonProgress["status"]; total?: number; processed?: number; found?: number }>).detail;
+      if (!detail?.status) return;
+      if (liveAmazonStartupTimer.current !== null) {
+        window.clearTimeout(liveAmazonStartupTimer.current);
+        liveAmazonStartupTimer.current = null;
+      }
+      const next = {
+        status: detail.status,
+        total: detail.total ?? 0,
+        processed: detail.processed ?? 0,
+        found: detail.found ?? 0,
+        unavailable: liveAmazonUnavailableIds.current.size,
+      };
+      setLiveAmazonProgress(next);
+      if (detail.status === "complete") {
+        void Promise.all(liveAmazonSavePromises.current).then(() => {
+          const unavailable = liveAmazonUnavailableIds.current.size;
+          const updated = liveAmazonUpdatedIds.current.size;
+          const failed = Math.max(0, next.total - updated - unavailable);
+          setLiveAmazonProgress({ ...next, unavailable });
+          setNotice({
+            text: `Live Amazon refresh complete: ${updated} prices updated, ${unavailable} confirmed unavailable${failed ? `, and ${failed} could not be verified` : ""}. No Rainforest credits used.`,
+            error: failed > 0,
+          });
+          router.refresh();
+        });
+      } else if (detail.status === "cancelled") {
+        setNotice({ text: `Live Amazon refresh stopped after ${detail.processed ?? 0}/${detail.total ?? 0} products. Completed updates were kept.`, error: false });
+      } else if (detail.status === "error") {
+        setNotice({ text: "The Chrome helper could not start the admin Amazon refresh. Reload helper v1.3.5 and try again.", error: true });
+      }
+    }
+    document.addEventListener("sellfinity:amazon-price-found", receiveAmazonPrice);
+    document.addEventListener("sellfinity:amazon-product-unavailable", receiveAmazonUnavailable);
+    document.addEventListener("sellfinity:amazon-price-helper-progress", receiveAmazonProgress);
+    return () => {
+      if (liveAmazonStartupTimer.current !== null) window.clearTimeout(liveAmazonStartupTimer.current);
+      document.removeEventListener("sellfinity:amazon-price-found", receiveAmazonPrice);
+      document.removeEventListener("sellfinity:amazon-product-unavailable", receiveAmazonUnavailable);
+      document.removeEventListener("sellfinity:amazon-price-helper-progress", receiveAmazonProgress);
+    };
+  }, [router]);
+
+  function toggleSelected(id: string) {
+    setSelected((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleCurrentPage() {
+    setSelected((current) => {
+      const next = new Set(current);
+      for (const row of data.rows) {
+        if (allPageSelected) next.delete(row.id); else next.add(row.id);
+      }
+      return next;
+    });
+  }
+
+  function startLiveAmazonRefresh() {
+    if (liveAmazonScope === "SELECTED" && selected.size === 0) {
+      setNotice({ text: "Select at least one catalog product or choose all catalog products.", error: true });
+      return;
+    }
+    setNotice(null);
+    setScanProgress(null);
+    setRefreshProgress(null);
+    startTransition(async () => {
+      const prepared = await prepareAdminLiveAmazonRefresh(liveAmazonScope === "SELECTED" ? [...selected] : undefined);
+      if (!prepared.requests.length) {
+        setNotice({ text: "No eligible Amazon catalog products were found.", error: false });
+        return;
+      }
+      if (prepared.requests.length >= 250 && !window.confirm(`This will open and check ${prepared.requests.length.toLocaleString()} unique Amazon products and may take a long time. Continue?`)) return;
+      liveAmazonSavePromises.current = [];
+      liveAmazonUnavailableIds.current = new Set();
+      liveAmazonUpdatedIds.current = new Set();
+      setLiveAmazonProgress({ status: "starting", total: prepared.requests.length, processed: 0, found: 0, unavailable: 0 });
+      await new Promise<void>((resolve) => window.requestAnimationFrame(() => window.requestAnimationFrame(() => resolve())));
+      liveAmazonStartupTimer.current = window.setTimeout(() => {
+        setLiveAmazonProgress((current) => current?.status === "starting" ? { ...current, status: "error" } : current);
+        setNotice({ text: "The Chrome helper did not respond. Reload helper v1.3.5, refresh this page, then try again.", error: true });
+      }, 8_000);
+      document.dispatchEvent(new CustomEvent("sellfinity:bulk-amazon-price-check", { detail: { requests: prepared.requests } }));
+    });
+  }
+
+  function stopLiveAmazonRefresh() {
+    document.dispatchEvent(new CustomEvent("sellfinity:stop-amazon-price-check"));
+  }
 
   function finish(result: { ok: boolean; message: string }) {
     setNotice({ text: result.message, error: !result.ok });
@@ -728,6 +869,42 @@ export function AdminArbitrageManager({
         </div>
       </Card>
 
+      <Card className="overflow-hidden border-indigo-200 bg-gradient-to-r from-white to-indigo-50/70 p-5">
+        <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
+          <div>
+            <div className="flex flex-wrap items-center gap-2">
+              <h2 className="font-bold text-slate-950">Live signed-in Amazon refresh</h2>
+              <Badge tone="indigo">0 Rainforest credits</Badge>
+            </div>
+            <p className="mt-1 max-w-3xl text-sm leading-6 text-slate-600">Open each unique ASIN through the Chrome helper and save its current item price, shipping charge, and availability directly into the shared admin catalog.</p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <select value={liveAmazonScope} disabled={pending || liveAmazonRunning} onChange={(event) => setLiveAmazonScope(event.target.value as "ALL" | "SELECTED")} className="min-h-10 rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-700" aria-label="Live Amazon refresh scope">
+              <option value="SELECTED">Selected products ({selected.size})</option>
+              <option value="ALL">All catalog products ({data.counts.all.toLocaleString()})</option>
+            </select>
+            <Button type="button" disabled={pending || liveAmazonRunning || (liveAmazonScope === "SELECTED" && selected.size === 0)} onClick={startLiveAmazonRefresh}>{liveAmazonRunning ? "Checking Amazon…" : "Check live prices & shipping"}</Button>
+            {liveAmazonRunning && <Button type="button" variant="danger" onClick={stopLiveAmazonRefresh}>Stop</Button>}
+            <a href="/downloads/sellfinity-tracking-helper.zip?v=1.3.5" download className="text-xs font-semibold text-indigo-700 hover:underline">Chrome helper v1.3.5</a>
+          </div>
+        </div>
+      </Card>
+
+      {liveAmazonProgress && (
+        <PremiumProgress
+          title={liveAmazonProgress.status === "complete" ? "Live Amazon catalog refresh complete" : liveAmazonProgress.status === "cancelled" ? "Live Amazon catalog refresh stopped" : liveAmazonProgress.status === "error" ? "Live Amazon catalog refresh needs attention" : "Checking live Amazon catalog prices"}
+          subtitle="Completed prices and shipping are saved immediately. Confirmed unavailable products are flagged; uncertain pages remain unchanged."
+          percentage={liveAmazonProgress.total ? liveAmazonProgress.processed / liveAmazonProgress.total * 100 : 0}
+          status={liveAmazonProgress.status === "error" ? "error" : liveAmazonProgress.status === "complete" ? "complete" : liveAmazonProgress.status === "cancelled" ? "paused" : "running"}
+          stats={[
+            { label: "Checked", value: `${liveAmazonProgress.processed}/${liveAmazonProgress.total}`, tone: "info" },
+            { label: "Prices updated", value: liveAmazonProgress.found, tone: "success" },
+            { label: "Unavailable", value: liveAmazonProgress.unavailable, tone: liveAmazonProgress.unavailable ? "warning" : "default" },
+          ]}
+          action={liveAmazonRunning ? <Button type="button" variant="secondary" onClick={stopLiveAmazonRefresh}>Stop refresh</Button> : null}
+        />
+      )}
+
       {operation && (
         <PremiumProgress
           title={operation}
@@ -813,6 +990,8 @@ export function AdminArbitrageManager({
               </p>
             </div>
             <div className="flex items-center gap-2">
+              <Button type="button" variant="secondary" size="sm" onClick={toggleCurrentPage}>{allPageSelected ? "Clear page selection" : "Select this page"}</Button>
+              {selected.size > 0 && <Badge tone="indigo">{selected.size.toLocaleString()} selected</Badge>}
               <span className="text-xs text-slate-500">
                 {data.total.toLocaleString()} results
               </span>
@@ -996,6 +1175,8 @@ export function AdminArbitrageManager({
                   row={row}
                   busy={pending && busyId === row.id}
                   run={run}
+                  selected={selected.has(row.id)}
+                  toggleSelected={toggleSelected}
                 />
               ))}
             </tbody>

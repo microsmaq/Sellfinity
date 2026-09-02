@@ -34,11 +34,16 @@ describe("Chrome helper control center", () => {
     expect(immediateProgress).toBeLessThan(backgroundRequest);
   });
 
-  it("ships the popup script in helper version 1.3.4", () => {
+  it("ships the popup script in helper version 1.3.5", () => {
     const manifest = JSON.parse(extensionFile("manifest.json")) as { version: string };
     const popup = extensionFile("popup.html");
 
-    expect(manifest.version).toBe("1.3.4");
+    expect(manifest.version).toBe("1.3.5");
     expect(popup).toContain('<script src="popup.js"></script>');
+  });
+
+  it("runs on Admin Product Intelligence", () => {
+    const manifest = extensionFile("manifest.json");
+    expect(manifest).toContain("https://www.sellfinity.app/admin/arbitrage*");
   });
 });

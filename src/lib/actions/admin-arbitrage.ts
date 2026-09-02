@@ -15,6 +15,8 @@ import { publishCatalogProductToUsers } from "@/lib/arbitrage/admin-catalog";
 import type { ScanReport } from "@/lib/arbitrage/scan-types";
 import { getRainforestEfficiencySummary } from "@/lib/mirror/rainforest";
 import { recalculateAllArbitragePricing } from "@/lib/arbitrage/recalculate-pricing";
+import { arbitrageSuggestedPriceCents } from "@/lib/arbitrage/pricing";
+import { estimateMargin } from "@/lib/fees";
 
 export type AdminActionResult = {
   ok: boolean;
@@ -30,6 +32,12 @@ export type AdminRefreshBatchResult = AdminActionResult & {
   failed: number;
   rainforestRequests: number;
   cacheHits: number;
+};
+
+export type AdminLiveAmazonRequest = {
+  requestKey: string;
+  amazonUrl: string;
+  orderIds: string[];
 };
 
 function message(error: unknown): string {
@@ -49,6 +57,99 @@ export async function adminRecalculateArbitragePricing(): Promise<AdminActionRes
   } catch (error) {
     return { ok: false, message: message(error) };
   }
+}
+
+export async function prepareAdminLiveAmazonRefresh(selectedIds?: string[]): Promise<{ requests: AdminLiveAmazonRequest[] }> {
+  await requireAdmin();
+  const ids = selectedIds?.length
+    ? z.array(z.string().min(1).max(100)).max(5_000).parse([...new Set(selectedIds)])
+    : undefined;
+  const rows = await db.adminArbitrageProduct.findMany({
+    where: {
+      status: { not: "ARCHIVED" },
+      ...(ids && { id: { in: ids } }),
+    },
+    select: { id: true, asin: true, amazonUrl: true },
+    orderBy: [{ amazonRefreshedAt: { sort: "asc", nulls: "first" } }, { updatedAt: "asc" }],
+  });
+  const grouped = new Map<string, AdminLiveAmazonRequest>();
+  for (const row of rows) {
+    const requestKey = row.asin.trim().toUpperCase();
+    const current = grouped.get(requestKey);
+    if (current) current.orderIds.push(row.id);
+    else grouped.set(requestKey, {
+      requestKey,
+      amazonUrl: /^[A-Z0-9]{10}$/i.test(requestKey) ? `https://www.amazon.com/dp/${requestKey}` : row.amazonUrl,
+      orderIds: [row.id],
+    });
+  }
+  return { requests: [...grouped.values()] };
+}
+
+export async function adminUpdateAmazonCostsFromBrowser(
+  rawIds: string[],
+  rawPriceCents: number,
+  rawShippingCents: number | null,
+): Promise<{ updatedIds: string[]; priceCents: number; shippingCents: number | null } | { error: string }> {
+  await requireAdmin();
+  const ids = z.array(z.string().min(1).max(100)).min(1).max(100).parse([...new Set(rawIds)]);
+  const priceCents = Math.round(rawPriceCents);
+  const shippingCents = rawShippingCents === null ? null : Math.round(rawShippingCents);
+  if (!Number.isFinite(priceCents) || priceCents <= 0 || priceCents > 1_000_000
+    || (shippingCents !== null && (!Number.isFinite(shippingCents) || shippingCents < 0 || shippingCents > 100_000))) {
+    return { error: "Amazon returned an invalid price or shipping amount." };
+  }
+  const rows = await db.adminArbitrageProduct.findMany({ where: { id: { in: ids } } });
+  if (!rows.length) return { error: "No matching admin catalog products were found." };
+  await db.$transaction(rows.flatMap((row) => {
+    const nextShipping = shippingCents ?? row.amazonShippingCents;
+    const suggested = row.ebayPriceCents
+      ? arbitrageSuggestedPriceCents(priceCents, row.ebayPriceCents, row.ebayRecommendedPriceCents, row.averageCompetitorPriceCents ?? row.ebayPriceCents, nextShipping)
+      : null;
+    const margin = suggested ? estimateMargin(suggested, priceCents, nextShipping) : null;
+    return [
+      db.adminArbitrageProduct.update({
+        where: { id: row.id },
+        data: {
+          amazonPriceCents: priceCents,
+          amazonShippingCents: nextShipping,
+          amazonInStock: true,
+          amazonRefreshedAt: new Date(),
+          suggestedPriceCents: suggested,
+          estimatedProfitCents: margin?.estimatedProfitCents ?? null,
+          marginPct: margin ? Math.round(margin.marginPct) : null,
+        },
+      }),
+      db.arbitrageItem.updateMany({
+        where: { asin: row.asin },
+        data: {
+          amazonPriceCents: priceCents,
+          amazonShippingCents: nextShipping,
+          ...(margin && {
+            profitCents: margin.estimatedProfitCents,
+            marginPct: Math.round(margin.marginPct),
+            feeCents: margin.estimatedFeeCents,
+          }),
+        },
+      }),
+    ];
+  }));
+  revalidatePath("/admin/arbitrage");
+  revalidatePath("/arbitrage");
+  return { updatedIds: rows.map((row) => row.id), priceCents, shippingCents };
+}
+
+export async function adminMarkAmazonUnavailableFromBrowser(rawIds: string[]): Promise<{ updatedIds: string[] } | { error: string }> {
+  await requireAdmin();
+  const ids = z.array(z.string().min(1).max(100)).min(1).max(100).parse([...new Set(rawIds)]);
+  const result = await db.adminArbitrageProduct.updateMany({
+    where: { id: { in: ids } },
+    data: { amazonInStock: false, amazonRefreshedAt: new Date() },
+  });
+  if (!result.count) return { error: "No matching admin catalog products were found." };
+  revalidatePath("/admin/arbitrage");
+  revalidatePath("/arbitrage");
+  return { updatedIds: ids };
 }
 
 export async function adminAddAmazonItem(
