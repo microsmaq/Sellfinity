@@ -17,6 +17,7 @@ import {
   recordSuggestedPriceActivity,
   recordSmartSyncActivity,
   rejectAmazonCandidate,
+  setAmazonCandidateFromInput,
   unmatchEbayListing,
   prepareConfigurableSmartSync,
   processConfigurableSmartSyncItem,
@@ -685,6 +686,7 @@ export function EbayListingsTable({
   const [healthFilter, setHealthFilter] = useState<"all" | "attention" | "healthy" | "protected" | "unmatched" | "highConfidence" | "unprofitable" | "needsPricing" | "recentSales">("all");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkApprovalProgress, setBulkApprovalProgress] = useState<{ completed: number; total: number } | null>(null);
+  const [manualAmazonInputs, setManualAmazonInputs] = useState<Record<string, string>>({});
   const [targetProfitOpen, setTargetProfitOpen] = useState(false);
   const [targetProfitDollars, setTargetProfitDollars] = useState("7.00");
   const [expandedTable, setExpandedTable] = useState(false);
@@ -1018,6 +1020,53 @@ export function EbayListingsTable({
             }
           : candidate));
         setNotice({ text: "Amazon candidate found. Compare the products, then approve or reject the pairing.", error: false });
+      } finally {
+        setBusyId(null);
+      }
+    });
+  }
+
+  function loadAmazonCandidateInput(row: EbayRow) {
+    const amazonInput = manualAmazonInputs[row.ebayListingId]?.trim();
+    if (!amazonInput) {
+      setNotice({ text: "Paste an Amazon product link or enter its 10-character ASIN.", error: true });
+      return;
+    }
+    setNotice(null);
+    setBusyId(row.ebayListingId);
+    startTransition(async () => {
+      try {
+        const result = await setAmazonCandidateFromInput({
+          ebayListingId: row.ebayListingId,
+          title: row.title,
+          priceCents: row.priceCents,
+          imageUrl: row.imageUrl,
+          quantity: row.quantity,
+          amazonInput,
+        });
+        if (!result.ok) {
+          setNotice({ text: result.error, error: true });
+          return;
+        }
+        setRows((current) => current.map((candidate) => candidate.ebayListingId === row.ebayListingId
+          ? {
+              ...candidate,
+              source: {
+                title: result.candidate.title,
+                sku: result.candidate.sku,
+                imageUrl: result.candidate.imageUrl,
+                category: "Imported",
+                priceCents: result.candidate.amazonPriceCents,
+                shippingCostCents: result.candidate.amazonShippingCents,
+                url: result.candidate.amazonUrl,
+                stock: 50,
+              },
+              match: null,
+              sourceAssessment: { ...result.assessment, amazonUrl: result.candidate.amazonUrl },
+            }
+          : candidate));
+        setManualAmazonInputs((current) => ({ ...current, [row.ebayListingId]: "" }));
+        setNotice({ text: "Amazon candidate loaded from your link. Review it, then approve the match.", error: false });
       } finally {
         setBusyId(null);
       }
@@ -1950,8 +1999,23 @@ export function EbayListingsTable({
                     </div>
                   )}
                   <div className="flex flex-wrap items-center gap-2 border-t border-slate-100 px-4 py-3">
-                    {!review ? <Button size="sm" variant="secondary" disabled={pending || busyId === row.ebayListingId} onClick={() => findReviewCandidate(row)}>{busyId === row.ebayListingId ? "Searching Amazon…" : "Find Amazon candidate"}</Button> : <><Button size="sm" disabled={pending || busyId === row.ebayListingId} onClick={() => approveReviewCandidate(row)}>{busyId === row.ebayListingId ? "Saving…" : rejected ? "Approve anyway" : "Approve match"}</Button>{rejected && <Button size="sm" variant="secondary" disabled={pending || busyId === row.ebayListingId} onClick={() => findReviewCandidate(row)}>Find another candidate</Button>}{healthFilter === "unmatched" && review.verdict === "REVIEW" && <Button size="sm" variant="secondary" disabled={pending || busyId === row.ebayListingId} onClick={() => rejectReviewCandidate(row)}>Reject candidate</Button>}</>}
+                    {!review ? <Button size="sm" variant="secondary" disabled={pending || busyId === row.ebayListingId} onClick={() => findReviewCandidate(row)}>{busyId === row.ebayListingId ? "Searching Amazon…" : "Find best candidate"}</Button> : <><Button size="sm" disabled={pending || busyId === row.ebayListingId} onClick={() => approveReviewCandidate(row)}>{busyId === row.ebayListingId ? "Saving…" : rejected ? "Approve anyway" : "Approve match"}</Button>{rejected && <Button size="sm" variant="secondary" disabled={pending || busyId === row.ebayListingId} onClick={() => findReviewCandidate(row)}>{busyId === row.ebayListingId ? "Searching…" : "Find best candidate"}</Button>}{healthFilter === "unmatched" && review.verdict === "REVIEW" && <Button size="sm" variant="secondary" disabled={pending || busyId === row.ebayListingId} onClick={() => rejectReviewCandidate(row)}>Reject candidate</Button>}</>}
                     {row.source?.url && <a href={row.source.url} target="_blank" rel="noreferrer" className="ml-auto text-xs font-semibold text-indigo-700 hover:underline">Open Amazon ↗</a>}
+                    <details className="w-full rounded-xl border border-slate-200 bg-slate-50/70 px-3 py-2">
+                      <summary className="cursor-pointer text-xs font-semibold text-indigo-700">Use an Amazon link or ASIN instead</summary>
+                      <div className="mt-2 flex flex-col gap-2 sm:flex-row">
+                        <input
+                          value={manualAmazonInputs[row.ebayListingId] ?? ""}
+                          onChange={(event) => setManualAmazonInputs((current) => ({ ...current, [row.ebayListingId]: event.target.value }))}
+                          onKeyDown={(event) => { if (event.key === "Enter") loadAmazonCandidateInput(row); }}
+                          placeholder="Paste Amazon product link or ASIN"
+                          aria-label={`Amazon link or ASIN for ${row.title}`}
+                          className="h-10 min-w-0 flex-1 rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-900 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100"
+                        />
+                        <Button size="sm" disabled={pending || busyId === row.ebayListingId} onClick={() => loadAmazonCandidateInput(row)}>{busyId === row.ebayListingId ? "Loading…" : "Use this product"}</Button>
+                      </div>
+                      <p className="mt-2 text-[11px] leading-4 text-slate-500">The exact ASIN is loaded from the shared admin catalog. A first-seen ASIN is fetched once and saved for future use.</p>
+                    </details>
                   </div>
                 </article>
               );

@@ -28,6 +28,7 @@ import {
   isApprovedProductMatch,
 } from "@/lib/arbitrage/product-match";
 import { findAmazonMatches } from "@/lib/mirror/match";
+import { extractAsin } from "@/lib/mirror/scraper";
 import { resolveExactAmazonVariant } from "@/lib/mirror/variant";
 import { parseImageUrls, serializeImageUrls } from "@/lib/types";
 import { publishListingForUser } from "@/lib/listings/publish";
@@ -144,13 +145,18 @@ export async function findAmazonCandidateForReview(input: TrackInput): Promise<A
   } catch (error) {
     return { ok: false, ebayListingId: input.ebayListingId, error: error instanceof Error ? error.message : "Amazon candidate search failed." };
   }
-  const priorAsin = existing?.product.sku.toUpperCase();
-  const candidate = candidates.find((item) => item.asin.toUpperCase() !== priorAsin) ?? null;
-  if (!candidate) return { ok: false, ebayListingId: input.ebayListingId, error: "No new Amazon candidate was found for manual review." };
-  const assessment = await assessProductMatch(
-    { title: input.title, imageUrl: input.imageUrl },
-    { title: candidate.title, imageUrl: candidate.imageUrl },
-  );
+  const assessed = await Promise.all(candidates.slice(0, 5).map(async (candidate) => ({
+    candidate,
+    assessment: await assessProductMatch(
+      { title: input.title, imageUrl: input.imageUrl },
+      { title: candidate.title, imageUrl: candidate.imageUrl },
+    ),
+  })));
+  const score = ({ assessment }: (typeof assessed)[number]) => ({ MATCH: 400, LIKELY: 300, REVIEW: 200, REJECTED: 0 }[assessment.verdict] + (assessment.verdict === "REJECTED" ? 100 - assessment.confidence : assessment.confidence));
+  assessed.sort((left, right) => score(right) - score(left));
+  const best = assessed[0] ?? null;
+  if (!best) return { ok: false, ebayListingId: input.ebayListingId, error: "No Amazon candidate was found for manual review." };
+  const { candidate, assessment } = best;
   const reviewConfidence = assessment.verdict === "REJECTED"
     ? Math.max(1, 100 - assessment.confidence)
     : assessment.confidence;
@@ -234,6 +240,121 @@ export async function findAmazonCandidateForReview(input: TrackInput): Promise<A
       amazonUrl: candidate.url,
     },
     assessment: { ...assessment, verdict: "REVIEW", confidence: reviewConfidence, reason: `Candidate for manual review: ${assessment.reason}` },
+  };
+}
+
+export async function setAmazonCandidateFromInput(
+  input: TrackInput & { amazonInput: string },
+): Promise<AmazonReviewCandidateResult> {
+  const user = await requireUser();
+  const raw = input.amazonInput.trim();
+  const asin = /^[A-Z0-9]{10}$/i.test(raw) ? raw.toUpperCase() : extractAsin(raw);
+  if (!asin) return { ok: false, ebayListingId: input.ebayListingId, error: "Enter a valid Amazon product link or 10-character ASIN." };
+
+  let source;
+  try {
+    source = await getAdminAmazonSourceWithFallback(asin);
+  } catch (error) {
+    return { ok: false, ebayListingId: input.ebayListingId, error: error instanceof Error ? error.message : "Amazon product data could not be loaded." };
+  }
+  if (!source.amazonInStock || source.amazonPriceCents <= 0) {
+    return { ok: false, ebayListingId: input.ebayListingId, error: "That Amazon product is currently unavailable or has no usable price." };
+  }
+  const images = [...new Set([
+    ...parseImageUrls(source.amazonImageUrlsJson),
+    ...(source.amazonImageUrl ? [source.amazonImageUrl] : []),
+  ])];
+  const assessment = await assessProductMatch(
+    { title: input.title, imageUrl: input.imageUrl },
+    { title: source.amazonTitle, imageUrl: images[0] ?? null },
+  );
+  const reviewConfidence = assessment.verdict === "REJECTED" ? Math.max(1, 100 - assessment.confidence) : assessment.confidence;
+
+  await db.$transaction(async (transaction) => {
+    const product = await transaction.product.upsert({
+      where: { userId_sku: { userId: user.id, sku: asin } },
+      create: {
+        userId: user.id,
+        sku: asin,
+        title: source.amazonTitle,
+        brand: source.amazonBrand,
+        description: source.amazonDescription || source.amazonTitle,
+        imageUrlsJson: serializeImageUrls(images),
+        category: source.category || "Imported",
+        supplierName: "Amazon",
+        supplierProductId: asin,
+        supplierUrl: source.amazonUrl || `https://www.amazon.com/dp/${asin}`,
+        costCents: source.amazonPriceCents,
+        supplierStock: 50,
+        shippingCostCents: source.amazonShippingCents,
+        suggestedPriceCents: input.priceCents,
+        sourceScore: reviewConfidence,
+      },
+      update: {
+        title: source.amazonTitle,
+        brand: source.amazonBrand,
+        description: source.amazonDescription || source.amazonTitle,
+        imageUrlsJson: serializeImageUrls(images),
+        category: source.category || "Imported",
+        supplierProductId: asin,
+        supplierUrl: source.amazonUrl || `https://www.amazon.com/dp/${asin}`,
+        costCents: source.amazonPriceCents,
+        supplierStock: 50,
+        shippingCostCents: source.amazonShippingCents,
+        sourceScore: reviewConfidence,
+      },
+    });
+    const updated = await transaction.listing.updateMany({
+      where: { userId: user.id, ebayListingId: input.ebayListingId },
+      data: {
+        productId: product.id,
+        sourceMatchVerdict: "REVIEW",
+        sourceMatchConfidence: reviewConfidence,
+        sourceMatchReason: `Seller-provided Amazon candidate: ${assessment.reason}`.slice(0, 240),
+        sourceMatchMethod: "MANUAL_REVIEW",
+        sourceMatchCheckedAt: new Date(),
+      },
+    });
+    if (!updated.count) {
+      await transaction.listing.create({
+        data: {
+          userId: user.id,
+          productId: product.id,
+          title: input.title,
+          description: input.title,
+          priceCents: input.priceCents,
+          quantity: Math.min(LISTING_QUANTITY_CAP, input.quantity ?? 1),
+          imageUrlsJson: serializeImageUrls(input.imageUrl ? [input.imageUrl] : []),
+          status: "ACTIVE",
+          ebayListingId: input.ebayListingId,
+          publishedAt: new Date(),
+          sourceMatchVerdict: "REVIEW",
+          sourceMatchConfidence: reviewConfidence,
+          sourceMatchReason: `Seller-provided Amazon candidate: ${assessment.reason}`.slice(0, 240),
+          sourceMatchMethod: "MANUAL_REVIEW",
+          sourceMatchCheckedAt: new Date(),
+        },
+      });
+    }
+  });
+  revalidate();
+  return {
+    ok: true,
+    ebayListingId: input.ebayListingId,
+    candidate: {
+      sku: asin,
+      title: source.amazonTitle,
+      imageUrl: images[0] ?? null,
+      amazonPriceCents: source.amazonPriceCents,
+      amazonShippingCents: source.amazonShippingCents,
+      amazonUrl: source.amazonUrl || `https://www.amazon.com/dp/${asin}`,
+    },
+    assessment: {
+      verdict: "REVIEW",
+      confidence: reviewConfidence,
+      reason: `Seller-provided Amazon candidate: ${assessment.reason}`,
+      method: "MANUAL_REVIEW",
+    },
   };
 }
 
