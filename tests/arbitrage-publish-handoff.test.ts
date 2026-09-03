@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   metricUpsert: vi.fn(),
   transaction: vi.fn(),
   research: vi.fn(),
+  matchDecision: vi.fn(),
 }));
 
 vi.mock("@/lib/db", () => ({
@@ -29,6 +30,7 @@ vi.mock("@/lib/db", () => ({
       create: vi.fn(),
     },
     mirrorBatchItem: { findMany: vi.fn() },
+    userArbitrageMatchDecision: { findUnique: mocks.matchDecision },
     $transaction: mocks.transaction,
   },
 }));
@@ -62,6 +64,28 @@ describe("Arbitrage publishing research handoff", () => {
     mocks.opportunityUpdate.mockResolvedValue({});
     mocks.metricUpsert.mockResolvedValue({});
     mocks.transaction.mockResolvedValue([]);
+    mocks.matchDecision.mockResolvedValue(null);
+  });
+
+  it("preserves a seller-approved review as a manual 100% match", async () => {
+    mocks.opportunity.mockResolvedValue({
+      ...retainedOpportunity,
+      matchVerdict: "REVIEW",
+      matchConfidence: 72,
+    });
+    mocks.matchDecision.mockResolvedValue({
+      decision: "APPROVED",
+      updatedAt: new Date("2026-09-03T12:00:00.000Z"),
+    });
+    await attachArbitrageResearchToListing("user-1", "listing-1", "SOURCE-1");
+    expect(mocks.listingUpdateMany).toHaveBeenCalledWith({
+      where: { id: "listing-1", userId: "user-1" },
+      data: expect.objectContaining({
+        sourceMatchVerdict: "MATCH",
+        sourceMatchConfidence: 100,
+        sourceMatchMethod: "MANUAL",
+      }),
+    });
   });
 
   it("copies verified match confidence onto the mirrored listing", async () => {

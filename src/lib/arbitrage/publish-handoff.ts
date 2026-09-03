@@ -10,25 +10,31 @@ export async function attachArbitrageResearchToListing(
   listingId: string,
   ebayItemId: string,
 ): Promise<void> {
-  const opportunity = await db.arbitrageItem.findUnique({
-    where: { ebayItemId },
-    select: {
-      matchVerdict: true,
-      matchConfidence: true,
-      matchReason: true,
-      matchMethod: true,
-      matchCheckedAt: true,
-    },
-  });
+  const [opportunity, decision] = await Promise.all([
+    db.arbitrageItem.findUnique({
+      where: { ebayItemId },
+      select: {
+        matchVerdict: true,
+        matchConfidence: true,
+        matchReason: true,
+        matchMethod: true,
+        matchCheckedAt: true,
+      },
+    }),
+    db.userArbitrageMatchDecision.findUnique({
+      where: { userId_ebayItemId: { userId, ebayItemId } },
+      select: { decision: true, updatedAt: true },
+    }),
+  ]);
   if (!opportunity) return;
   await db.listing.updateMany({
     where: { id: listingId, userId },
     data: {
-      sourceMatchVerdict: opportunity.matchVerdict,
-      sourceMatchConfidence: opportunity.matchConfidence,
-      sourceMatchReason: opportunity.matchReason,
-      sourceMatchMethod: opportunity.matchMethod,
-      sourceMatchCheckedAt: opportunity.matchCheckedAt ?? new Date(),
+      sourceMatchVerdict: decision?.decision === "APPROVED" ? "MATCH" : opportunity.matchVerdict,
+      sourceMatchConfidence: decision?.decision === "APPROVED" ? 100 : opportunity.matchConfidence,
+      sourceMatchReason: decision?.decision === "APPROVED" ? "Manually verified by the seller as the correct Amazon/eBay product pair." : opportunity.matchReason,
+      sourceMatchMethod: decision?.decision === "APPROVED" ? "MANUAL" : opportunity.matchMethod,
+      sourceMatchCheckedAt: decision?.decision === "APPROVED" ? decision.updatedAt : opportunity.matchCheckedAt ?? new Date(),
     },
   });
 }

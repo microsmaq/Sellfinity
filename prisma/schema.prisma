@@ -75,6 +75,7 @@ model User {
   ebayListingSnapshots    EbayListingSnapshot[]
   ebayMarketMetrics       EbayMarketMetric[]
   hiddenArbitrageItems    HiddenArbitrageItem[]
+  arbitrageMatchDecisions UserArbitrageMatchDecision[]
   mirrorBatches           MirrorBatch[]
   generatedListingImages  GeneratedListingImage[]
   ebayConnection          EbayConnection?
@@ -575,8 +576,8 @@ model SyncRun {
 // A researched arbitrage opportunity: a live eBay listing paired with a
 // cheaper Amazon source. Global (shared by all users); grows as scans run.
 model ArbitrageItem {
-  id                    String                @id @default(cuid())
-  ebayItemId            String                @unique
+  id                    String                       @id @default(cuid())
+  ebayItemId            String                       @unique
   ebayTitle             String
   ebayPriceCents        Int
   ebayUrl               String
@@ -585,7 +586,7 @@ model ArbitrageItem {
   asin                  String
   amazonTitle           String
   amazonPriceCents      Int
-  amazonShippingCents   Int                   @default(0)
+  amazonShippingCents   Int                          @default(0)
   amazonUrl             String
   profitCents           Int
   marginPct             Int
@@ -596,14 +597,15 @@ model ArbitrageItem {
   // Lower-quartile competitive eBay price retained from discovery and copied
   // to the seller's listing market snapshot after publication.
   bestSellingPriceCents Int?
-  matchVerdict          String                @default("UNVERIFIED")
-  matchConfidence       Int                   @default(0)
+  matchVerdict          String                       @default("UNVERIFIED")
+  matchConfidence       Int                          @default(0)
   matchReason           String?
-  matchMethod           String                @default("RULES")
+  matchMethod           String                       @default("RULES")
   matchCheckedAt        DateTime?
-  createdAt             DateTime              @default(now())
-  updatedAt             DateTime              @updatedAt
+  createdAt             DateTime                     @default(now())
+  updatedAt             DateTime                     @updatedAt
   hiddenBy              HiddenArbitrageItem[]
+  userMatchDecisions    UserArbitrageMatchDecision[]
 
   @@index([profitCents])
   @@index([category])
@@ -624,6 +626,25 @@ model HiddenArbitrageItem {
 
   @@unique([userId, ebayItemId])
   @@index([userId])
+  @@index([ebayItemId])
+}
+
+// A seller's explicit decision applies only to their account. It can unlock a
+// shared REVIEW opportunity without changing the administrator's assessment
+// for every other seller.
+model UserArbitrageMatchDecision {
+  id         String   @id @default(cuid())
+  userId     String
+  ebayItemId String
+  decision   String   @default("APPROVED")
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  user User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  item ArbitrageItem @relation(fields: [ebayItemId], references: [ebayItemId], onDelete: Cascade)
+
+  @@unique([userId, ebayItemId])
+  @@index([userId, decision])
   @@index([ebayItemId])
 }
 

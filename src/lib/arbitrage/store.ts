@@ -355,7 +355,7 @@ export async function listArbitragePage(
 
   // Ownership: which of this page's ASINs the user already sells.
   const asins = items.map((i) => i.asin);
-  const [products, researchRows, listedByUser] = await Promise.all([
+  const [products, researchRows, matchDecisions, listedByUser] = await Promise.all([
     db.product.findMany({
       where: { userId, sku: { in: asins } },
       select: {
@@ -378,6 +378,14 @@ export async function listArbitragePage(
         matchMethod: true,
         createdAt: true,
       },
+    }),
+    db.userArbitrageMatchDecision.findMany({
+      where: {
+        userId,
+        decision: "APPROVED",
+        ebayItemId: { in: items.flatMap((item) => item.ebayItemId ?? []) },
+      },
+      select: { ebayItemId: true },
     }),
     db.product.count({
       where: {
@@ -403,6 +411,7 @@ export async function listArbitragePage(
   const researchById = new Map(
     researchRows.map((row) => [row.ebayItemId, row]),
   );
+  const approvedIds = new Set(matchDecisions.map((decision) => decision.ebayItemId));
 
   return {
     rows: items.map((i) => {
@@ -422,6 +431,7 @@ export async function listArbitragePage(
         sitewideDiscountBps,
         adRateBps,
       );
+      const userApproved = Boolean(i.ebayItemId && approvedIds.has(i.ebayItemId));
       return {
         asin: i.asin,
       ebayItemId: i.ebayItemId ?? "",
@@ -451,10 +461,10 @@ export async function listArbitragePage(
       ebayRecommendedPriceCents: i.ebayRecommendedPriceCents,
       usersListed: usersByAsin.get(i.asin)?.size ?? 0,
       lastResearchedAt: i.lastResearchedAt?.toISOString() ?? null,
-      matchVerdict: i.matchVerdict,
-      matchConfidence: i.matchConfidence,
-      matchReason: i.matchReason,
-        matchMethod: researchById.get(i.ebayItemId ?? "")?.matchMethod ?? "ADMIN",
+      matchVerdict: userApproved ? "MATCH" : i.matchVerdict,
+      matchConfidence: userApproved ? 100 : i.matchConfidence,
+      matchReason: userApproved ? "Manually verified by you as the correct Amazon/eBay product pair." : i.matchReason,
+        matchMethod: userApproved ? "MANUAL" : researchById.get(i.ebayItemId ?? "")?.matchMethod ?? "ADMIN",
       };
     }),
     total,

@@ -42,6 +42,29 @@ export async function hideArbitrageItem(ebayItemId: string): Promise<void> {
   revalidatePath("/arbitrage");
 }
 
+export async function approveArbitrageMatch(ebayItemId: string): Promise<{ ok: boolean; message: string }> {
+  const user = await requireUser();
+  const id = ebayItemId.trim();
+  const [item, catalog] = await Promise.all([
+    db.arbitrageItem.findFirst({
+      where: { ebayItemId: id, matchVerdict: "REVIEW" },
+      select: { ebayItemId: true },
+    }),
+    db.adminArbitrageProduct.findFirst({
+      where: { ebayItemId: id, status: "PUBLISHED", amazonInStock: true },
+      select: { id: true },
+    }),
+  ]);
+  if (!item || !catalog) return { ok: false, message: "This review candidate is no longer available or its Amazon source is unavailable." };
+  await db.userArbitrageMatchDecision.upsert({
+    where: { userId_ebayItemId: { userId: user.id, ebayItemId: id } },
+    create: { userId: user.id, ebayItemId: id, decision: "APPROVED" },
+    update: { decision: "APPROVED" },
+  });
+  revalidatePath("/arbitrage");
+  return { ok: true, message: "Match approved for your account. This product can now be selected and published." };
+}
+
 export async function exportArbitrageExcel(params: ArbitragePageParams) {
   const user = await requireUser();
   const rows = [];

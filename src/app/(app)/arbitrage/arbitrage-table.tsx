@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import {
+  approveArbitrageMatch,
   exportArbitrageExcel,
   hideArbitrageItem,
 } from "@/lib/actions/arbitrage";
@@ -92,6 +93,7 @@ function FinderRow({
   onSelect,
   onPublish,
   onHide,
+  onApprove,
   sitewideDiscountBps,
 }: {
   row: OpportunityRow;
@@ -100,6 +102,7 @@ function FinderRow({
   onSelect: (checked: boolean) => void;
   onPublish: () => void;
   onHide: () => void;
+  onApprove: () => void;
   sitewideDiscountBps: number;
 }) {
   const publishable = eligible(row);
@@ -162,23 +165,21 @@ function FinderRow({
             : " · free shipping"}
         </p>
       </td>
-      <td className="min-w-[310px] px-4 py-4">
-        <a
-          href={row.ebayUrl}
-          target="_blank"
-          rel="noreferrer"
-          className="line-clamp-2 text-sm font-medium text-slate-800 hover:text-indigo-600"
-        >
-          {row.title}
-        </a>
-        <div className="mt-1">
-          <Badge tone={confidenceTone(row.matchConfidence)}>
-            {row.matchVerdict} {row.matchConfidence}%
-          </Badge>
+      <td className="min-w-[330px] px-4 py-4">
+        <div className="flex gap-3">
+          {row.imageUrl ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={row.imageUrl} alt="" className="h-16 w-16 shrink-0 rounded-lg border border-slate-200 bg-white object-contain" />
+          ) : <div className="h-16 w-16 shrink-0 rounded-lg bg-slate-100" />}
+          <div className="min-w-0">
+            <a href={row.ebayUrl} target="_blank" rel="noreferrer" className="line-clamp-2 text-sm font-medium text-slate-800 hover:text-indigo-600">{row.title}</a>
+            <div className="mt-1 flex flex-wrap gap-1.5">
+              <Badge tone={confidenceTone(row.matchConfidence)}>{row.matchVerdict} {row.matchConfidence}%</Badge>
+              {row.matchMethod === "MANUAL" && <Badge tone="green">Verified by you</Badge>}
+            </div>
+            {row.matchReason && <p className="mt-1 line-clamp-2 text-xs text-slate-500">{row.matchReason}</p>}
+          </div>
         </div>
-        {row.matchReason && (
-          <p className="mt-1 line-clamp-2 text-xs text-slate-500">{row.matchReason}</p>
-        )}
       </td>
       <td className="whitespace-nowrap px-4 py-4 text-right font-medium tabular-nums">
         {formatCents(row.ebayPriceCents)}
@@ -233,10 +234,10 @@ function FinderRow({
             <Button size="sm" disabled={busy} onClick={onPublish}>
               {busy ? "Starting…" : "Publish to eBay"}
             </Button>
+          ) : row.matchVerdict === "REVIEW" ? (
+            <Button size="sm" variant="secondary" disabled={busy} onClick={onApprove}>{busy ? "Approving…" : "Approve match"}</Button>
           ) : (
-            <span className="rounded-lg bg-amber-50 px-2.5 py-1.5 text-center text-xs font-medium text-amber-700">
-              Review match first
-            </span>
+            <span className="rounded-lg bg-amber-50 px-2.5 py-1.5 text-center text-xs font-medium text-amber-700">Review match first</span>
           )}
           <Button size="sm" variant="ghost" disabled={busy} onClick={onHide}>
             Hide from my finder
@@ -328,6 +329,17 @@ export function ArbitrageTable({
       });
       setBusyId(null);
       router.refresh();
+    });
+  }
+
+  function approve(row: OpportunityRow) {
+    setBusyId(row.ebayItemId);
+    setNotice(null);
+    startTransition(async () => {
+      const result = await approveArbitrageMatch(row.ebayItemId);
+      setBusyId(null);
+      setNotice({ text: result.message, error: !result.ok });
+      if (result.ok) router.refresh();
     });
   }
 
@@ -526,6 +538,7 @@ export function ArbitrageTable({
                   })}
                   onPublish={() => publish([row.ebayItemId])}
                   onHide={() => hide(row)}
+                  onApprove={() => approve(row)}
                   sitewideDiscountBps={sitewideDiscountBps}
                 />
               ))}

@@ -183,10 +183,18 @@ export async function createArbitrageMirrorBatch(
     select: { ebayItemId: true },
   });
   const publishedIds = published.flatMap((item) => item.ebayItemId ?? []);
+  const approved = await db.userArbitrageMatchDecision.findMany({
+    where: { userId: user.id, ebayItemId: { in: publishedIds }, decision: "APPROVED" },
+    select: { ebayItemId: true },
+  });
+  const approvedIds = approved.map((decision) => decision.ebayItemId);
   const rows = await db.arbitrageItem.findMany({
     where: {
       ebayItemId: { in: publishedIds },
-      matchVerdict: { in: ["MATCH", "LIKELY"] },
+      OR: [
+        { matchVerdict: { in: ["MATCH", "LIKELY"] } },
+        { ebayItemId: { in: approvedIds } },
+      ],
     },
     select: { ebayItemId: true, amazonUrl: true },
   });
