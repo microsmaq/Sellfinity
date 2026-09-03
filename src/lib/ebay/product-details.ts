@@ -1,5 +1,9 @@
 export const EBAY_US_IDENTIFIER_UNAVAILABLE = "Does not apply";
 
+const EPA_REGISTRATION_ASPECT = /\bEPA\b.*\b(?:registration|reg(?:istration)?)\b/i;
+const EPA_REGISTRATION_VALUE = /\bEPA\s*(?:registration|reg\.?)\s*(?:number|no\.?)?\s*[:#-]?\s*(\d{1,7}-\d{1,7}(?:-\d{1,7})?)\b/i;
+const PESTICIDE_CLAIM = /\b(?:pesticide|insecticide|herbicide|fungicide|rodenticide|algaecide|weed\s*killer|bug\s*killer|insect\s*repellent|flea\s*(?:and|&)\s*tick|disinfect(?:ant|s|ing)?|sanitiz(?:e|er|es|ing)|pool\s*shock|water\s*purif(?:ier|ication))\b/i;
+
 function cleanEbayIdentifier(value?: string | null): string {
   return (value ?? "")
     .replace(/[\u0000-\u001f\u007f]/g, " ")
@@ -29,8 +33,17 @@ export function ebayProductMpn(mpn?: string | null): string {
 export function requiredEbayAspectValue(
   aspectName: string,
   brand?: string | null,
-): string {
-  return aspectName.trim().toLowerCase() === "brand"
-    ? ebayProductBrand(brand)
-    : EBAY_US_IDENTIFIER_UNAVAILABLE;
+  listingText?: string | null,
+): string | null {
+  if (aspectName.trim().toLowerCase() === "brand") return ebayProductBrand(brand);
+  if (EPA_REGISTRATION_ASPECT.test(aspectName)) return extractEpaRegistrationNumber(listingText);
+  return EBAY_US_IDENTIFIER_UNAVAILABLE;
+}
+
+export function extractEpaRegistrationNumber(value?: string | null): string | null {
+  return cleanEbayIdentifier(value).match(EPA_REGISTRATION_VALUE)?.[1] ?? null;
+}
+
+export function hasPesticideClaims(value?: string | null): boolean {
+  return PESTICIDE_CLAIM.test(cleanEbayIdentifier(value));
 }

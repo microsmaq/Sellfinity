@@ -9,6 +9,7 @@ import {
   EBAY_US_IDENTIFIER_UNAVAILABLE,
   ebayProductBrand,
   ebayProductMpn,
+  hasPesticideClaims,
   requiredEbayAspectValue,
 } from "./product-details";
 import {
@@ -369,7 +370,7 @@ export class RealEbayClient implements EbayClient {
     return [{ priority: 1, shippingServiceType: "DOMESTIC", shippingCost: amount, additionalShippingCost: amount }];
   }
 
-  private async suggestCategoryId(title: string): Promise<string> {
+  private async suggestCategoryIds(title: string): Promise<string[]> {
     const res = await this.request<{
       categorySuggestions?: { category: { categoryId: string } }[];
     }>(
@@ -378,9 +379,9 @@ export class RealEbayClient implements EbayClient {
       undefined,
       "app",
     );
-    const id = res.categorySuggestions?.[0]?.category.categoryId;
-    if (!id) throw new EbayApiError(`eBay could not suggest a category for "${title}"`);
-    return id;
+    const ids = [...new Set((res.categorySuggestions ?? []).map((suggestion) => suggestion.category.categoryId).filter(Boolean))];
+    if (!ids.length) throw new EbayApiError(`eBay could not suggest a category for "${title}"`);
+    return ids;
   }
 
   /**
@@ -393,7 +394,8 @@ export class RealEbayClient implements EbayClient {
   private async requiredAspects(
     categoryId: string,
     brand?: string,
-  ): Promise<Record<string, string[]>> {
+    listingText?: string,
+  ): Promise<{ aspects: Record<string, string[]>; missingRegulatory: string[] }> {
     const res = await this.request<{
       aspects?: {
         localizedAspectName: string;
@@ -406,21 +408,46 @@ export class RealEbayClient implements EbayClient {
       "app",
     );
     const aspects: Record<string, string[]> = {};
+    const missingRegulatory: string[] = [];
     for (const aspect of res.aspects ?? []) {
       if (!aspect.aspectConstraint?.aspectRequired) continue;
       const name = aspect.localizedAspectName;
-      aspects[name] = [requiredEbayAspectValue(name, brand)];
+      const value = requiredEbayAspectValue(name, brand, listingText);
+      if (value) aspects[name] = [value];
+      else missingRegulatory.push(name);
     }
-    return aspects;
+    return { aspects, missingRegulatory };
   }
 
   async createListing(input: CreateListingInput): Promise<{ ebayListingId: string }> {
     await this.ensureLocation();
-    const [policies, categoryId] = await Promise.all([
+    const [policies, categoryIds] = await Promise.all([
       this.ensurePolicies(),
-      this.suggestCategoryId(input.title),
+      this.suggestCategoryIds(input.title),
     ]);
-    const aspects = await this.requiredAspects(categoryId, input.brand);
+    const listingText = `${input.title} ${input.description}`;
+    const regulatedClaims = hasPesticideClaims(listingText);
+    let categoryId: string | null = null;
+    let aspects: Record<string, string[]> = {};
+    let missingRegulatory: string[] = [];
+    // eBay occasionally ranks a regulated category first for an ordinary
+    // product. Use another category suggested by eBay only when the listing
+    // itself makes no pesticide/disinfectant claim. A genuinely regulated
+    // item must carry its real registration number and is never bypassed.
+    for (const candidateId of categoryIds.slice(0, 5)) {
+      const required = await this.requiredAspects(candidateId, input.brand, listingText);
+      if (!required.missingRegulatory.length) {
+        categoryId = candidateId;
+        aspects = required.aspects;
+        break;
+      }
+      missingRegulatory = required.missingRegulatory;
+      if (regulatedClaims) break;
+    }
+    if (!categoryId) {
+      const field = missingRegulatory[0] ?? "EPA Registration Number";
+      throw new EbayApiError(`This product requires a genuine ${field} before it can be listed on eBay. Sellfinity will not submit “Does not apply” for regulated products. Add the number exactly as printed after “EPA Reg. No.” on the package, or choose the correct non-regulated product/category.`);
+    }
     const buyerShippingCents = input.buyerShippingCents ?? 0;
     const listingPolicies = {
       ...policies,
@@ -639,7 +666,13 @@ ${innerXml}
           ? Math.round(update.quantity)
           : Math.max(1, local.quantity);
       const brand = ebayProductBrand(local.product.brand);
-      const aspects = categoryId ? await this.requiredAspects(categoryId, local.product.brand) : {};
+      const required = categoryId
+        ? await this.requiredAspects(categoryId, local.product.brand, `${update.title ?? local.title} ${update.description ?? local.description}`)
+        : { aspects: {}, missingRegulatory: [] };
+      if (required.missingRegulatory.length) {
+        throw new EbayApiError(`This eBay category requires a genuine ${required.missingRegulatory[0]}. Sellfinity will not use “Does not apply” for regulated fields.`);
+      }
+      const aspects = required.aspects;
       await runEbayIdempotentUpdate(() => this.request(
         "PUT",
         `/sell/inventory/v1/inventory_item/${encodeURIComponent(offer.sku)}`,
