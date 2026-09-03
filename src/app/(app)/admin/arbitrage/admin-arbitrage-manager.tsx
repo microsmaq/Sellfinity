@@ -5,6 +5,9 @@ import { useRouter } from "next/navigation";
 import { FormEvent, useEffect, useRef, useState, useTransition } from "react";
 import {
   adminAddAmazonItem,
+  adminAttachEbayCandidate,
+  adminApproveEbayCandidate,
+  adminRejectEbayCandidate,
   adminArchiveItem,
   adminPublishItem,
   adminRecalculateArbitragePricing,
@@ -144,13 +147,16 @@ function CatalogRow({
   run,
   selected,
   toggleSelected,
+  attachCandidate,
 }: {
   row: AdminCatalogRow;
   busy: boolean;
-  run: (kind: "research" | "publish" | "archive", id: string) => void;
+  run: (kind: "research" | "publish" | "approve" | "reject" | "archive", id: string) => void;
   selected: boolean;
   toggleSelected: (id: string) => void;
+  attachCandidate: (id: string, input: string) => void;
 }) {
+  const [candidateInput, setCandidateInput] = useState("");
   const priceAssessment = assessPriceCompetitiveness(
     row.suggestedPriceCents ?? 0,
     row.ebayPriceCents ?? 0,
@@ -207,24 +213,21 @@ function CatalogRow({
       </td>
       <td className="min-w-[300px] px-4 py-4">
         {row.ebayTitle && row.ebayUrl ? (
-          <>
-            <a
-              href={row.ebayUrl}
-              target="_blank"
-              rel="noreferrer"
-              className="line-clamp-2 text-sm font-medium text-slate-800 hover:text-indigo-600"
-            >
-              {row.ebayTitle}
-            </a>
-            <div className="mt-1 flex items-center gap-1.5">
-              <Badge tone={confidenceTone(row.matchConfidence)}>
-                {row.matchVerdict} {row.matchConfidence}%
-              </Badge>
-            </div>
-            {row.matchReason && (
-              <p className="mt-1 line-clamp-2 text-xs text-slate-500">{row.matchReason}</p>
+          <div className="flex gap-2.5">
+            {row.ebayImageUrl && (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={row.ebayImageUrl} alt="" className="h-14 w-14 shrink-0 rounded-lg border border-slate-200 bg-white object-contain" />
             )}
-          </>
+            <div className="min-w-0">
+              <a href={row.ebayUrl} target="_blank" rel="noreferrer" className="line-clamp-2 text-sm font-medium text-slate-800 hover:text-indigo-600">{row.ebayTitle}</a>
+              <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                <Badge tone={confidenceTone(row.matchConfidence)}>{row.matchVerdict} {row.matchConfidence}%</Badge>
+                {row.matchMethod === "MANUAL" && <Badge tone="green">Admin verified</Badge>}
+                {row.matchMethod === "MANUAL_REVIEW" && <Badge tone="amber">Manual review</Badge>}
+              </div>
+              {row.matchReason && <p className="mt-1 line-clamp-2 text-xs text-slate-500">{row.matchReason}</p>}
+            </div>
+          </div>
         ) : (
           <span className="text-sm text-slate-400">No equivalent found</span>
         )}
@@ -290,11 +293,26 @@ function CatalogRow({
           >
             ↻ Research
           </Button>
-          {row.status !== "PUBLISHED" && row.ebayItemId && (
-            <Button size="sm" disabled={busy} onClick={() => run("publish", row.id)}>
-              Publish to users
+          {row.status !== "PUBLISHED" && row.amazonInStock && row.ebayItemId && (
+            <Button size="sm" disabled={busy} onClick={() => run("approve", row.id)}>
+              Approve match
             </Button>
           )}
+          {row.status !== "PUBLISHED" && row.amazonInStock && row.ebayItemId && (
+            <Button size="sm" variant="ghost" disabled={busy} onClick={() => run("reject", row.id)}>
+              Reject candidate
+            </Button>
+          )}
+          {row.status !== "PUBLISHED" && row.amazonInStock && (
+            <details className="rounded-lg border border-slate-200 bg-slate-50 p-2 text-xs">
+              <summary className="cursor-pointer font-semibold text-slate-700">{row.ebayItemId ? "Use different eBay item" : "Add eBay candidate"}</summary>
+              <form className="mt-2 space-y-2" onSubmit={(event) => { event.preventDefault(); if (candidateInput.trim()) attachCandidate(row.id, candidateInput); }}>
+                <input value={candidateInput} onChange={(event) => setCandidateInput(event.target.value)} placeholder="eBay link or item ID" aria-label={`eBay candidate for ${row.amazonTitle}`} className="min-h-9 w-full rounded-md border border-slate-300 bg-white px-2 text-xs outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100" />
+                <Button type="submit" size="sm" variant="secondary" disabled={busy || !candidateInput.trim()}>Review item</Button>
+              </form>
+            </details>
+          )}
+          {row.status !== "PUBLISHED" && !row.amazonInStock && <p className="rounded-lg bg-red-50 px-2 py-1.5 text-[11px] leading-4 text-red-700">Refresh or replace the unavailable Amazon source before matching.</p>}
           {row.status !== "ARCHIVED" && (
             <Button
               size="sm"
@@ -693,7 +711,7 @@ export function AdminArbitrageManager({
     });
   }
 
-  function run(kind: "research" | "publish" | "archive", id: string) {
+  function run(kind: "research" | "publish" | "approve" | "reject" | "archive", id: string) {
     setBusyId(id);
     setScanProgress(null);
     setRefreshProgress(null);
@@ -702,7 +720,11 @@ export function AdminArbitrageManager({
         ? "Refreshing source, match, and market intelligence"
         : kind === "publish"
           ? "Publishing the curated product to users"
-          : "Archiving the product",
+          : kind === "approve"
+            ? "Approving the administrator-verified match"
+            : kind === "reject"
+              ? "Rejecting the eBay candidate"
+              : "Archiving the product",
     );
     setNotice(null);
     startTransition(async () => {
@@ -711,7 +733,23 @@ export function AdminArbitrageManager({
           ? await adminResearchItem(id)
           : kind === "publish"
             ? await adminPublishItem(id)
-            : await adminArchiveItem(id);
+            : kind === "approve"
+              ? await adminApproveEbayCandidate(id)
+              : kind === "reject"
+                ? await adminRejectEbayCandidate(id)
+                : await adminArchiveItem(id);
+      finish(result);
+      setBusyId(null);
+      setOperation(null);
+    });
+  }
+
+  function attachCandidate(id: string, input: string) {
+    setBusyId(id);
+    setNotice(null);
+    setOperation("Loading the administrator-selected eBay candidate");
+    startTransition(async () => {
+      const result = await adminAttachEbayCandidate(id, input);
       finish(result);
       setBusyId(null);
       setOperation(null);
@@ -780,6 +818,9 @@ export function AdminArbitrageManager({
         <StatCard label="Needs review" value={data.counts.noMatch.toLocaleString()} tone="negative" />
         <StatCard label="Archived" value={data.counts.archived.toLocaleString()} />
       </div>
+      <Card className="border-indigo-200 bg-indigo-50/60 px-5 py-4 text-sm leading-6 text-slate-700">
+        <span className="font-semibold text-slate-950">Research status:</span> Pending research means the Amazon product is waiting for its eBay comparison to finish. Needs review means the Amazon source is unavailable, no equivalent was found, or the best eBay candidate was not safe enough to publish automatically. Open the Needs review filter to compare a suggested pair, approve or reject it, or paste a different eBay item link or ID.
+      </Card>
 
       <Card className="overflow-hidden">
         <div className="grid gap-5 bg-gradient-to-r from-slate-950 to-indigo-950 px-6 py-5 text-white lg:grid-cols-[1fr_auto]">
@@ -1192,6 +1233,7 @@ export function AdminArbitrageManager({
                   run={run}
                   selected={selected.has(row.id)}
                   toggleSelected={toggleSelected}
+                  attachCandidate={attachCandidate}
                 />
               ))}
             </tbody>

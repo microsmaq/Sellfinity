@@ -10,6 +10,9 @@ import {
   refreshAdminAmazonCost,
   refreshAdminEbayMarket,
   researchAdminCatalogProduct,
+  attachAdminEbayCandidate,
+  approveAdminEbayCandidate,
+  rejectAdminEbayCandidate,
 } from "@/lib/arbitrage/admin-research";
 import { publishCatalogProductToUsers } from "@/lib/arbitrage/admin-catalog";
 import type { ScanReport } from "@/lib/arbitrage/scan-types";
@@ -196,6 +199,44 @@ export async function adminPublishItem(id: string): Promise<AdminActionResult> {
     revalidatePath("/admin/arbitrage");
     revalidatePath("/arbitrage");
     return { ok: true, message: "This product is now visible to users." };
+  } catch (error) {
+    return { ok: false, message: message(error) };
+  }
+}
+
+export async function adminAttachEbayCandidate(id: string, input: string): Promise<AdminActionResult> {
+  await requireAdmin();
+  try {
+    await attachAdminEbayCandidate(
+      z.string().min(1).max(100).parse(id),
+      z.string().trim().min(1).max(500).parse(input),
+    );
+    revalidatePath("/admin/arbitrage");
+    return { ok: true, message: "The eBay candidate is ready for manual comparison and approval." };
+  } catch (error) {
+    return { ok: false, message: message(error) };
+  }
+}
+
+export async function adminApproveEbayCandidate(id: string): Promise<AdminActionResult> {
+  await requireAdmin();
+  try {
+    await approveAdminEbayCandidate(z.string().min(1).max(100).parse(id));
+    revalidatePath("/admin/arbitrage");
+    revalidatePath("/arbitrage");
+    return { ok: true, message: "Match manually verified and published to users." };
+  } catch (error) {
+    return { ok: false, message: message(error) };
+  }
+}
+
+export async function adminRejectEbayCandidate(id: string): Promise<AdminActionResult> {
+  await requireAdmin();
+  try {
+    await rejectAdminEbayCandidate(z.string().min(1).max(100).parse(id));
+    revalidatePath("/admin/arbitrage");
+    revalidatePath("/arbitrage");
+    return { ok: true, message: "Candidate rejected. You can research again or paste a different eBay item." };
   } catch (error) {
     return { ok: false, message: message(error) };
   }

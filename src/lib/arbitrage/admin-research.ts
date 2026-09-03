@@ -1,5 +1,5 @@
 import { db } from "@/lib/db";
-import { researchAdminEbayMarket, searchAdminEbayProducts } from "./admin-ebay-market";
+import { getAdminEbayProductByInput, researchAdminEbayMarket, searchAdminEbayProducts } from "./admin-ebay-market";
 import { estimateMargin } from "@/lib/fees";
 import { getScraper } from "@/lib/mirror";
 import { extractAsin } from "@/lib/mirror/scraper";
@@ -75,6 +75,7 @@ export async function researchAdminCatalogProduct(id: string): Promise<void> {
         matchVerdict: "REJECTED",
         matchConfidence: 100,
         matchReason: "The exact Amazon source is unavailable or its shipping cost could not be verified.",
+        matchMethod: "RULES",
         lastResearchedAt: new Date(),
       },
     });
@@ -137,6 +138,7 @@ export async function researchAdminCatalogProduct(id: string): Promise<void> {
         matchVerdict: "REJECTED",
         matchConfidence: 90,
         matchReason: "No sufficiently similar eBay product was found.",
+        matchMethod: "RULES",
         estimatedSales30d: null,
         competitorCount: null,
         averageCompetitorPriceCents: null,
@@ -186,6 +188,7 @@ export async function researchAdminCatalogProduct(id: string): Promise<void> {
       matchVerdict: best.assessment.verdict,
       matchConfidence: best.assessment.confidence,
       matchReason: best.assessment.reason,
+      matchMethod: best.assessment.method,
       estimatedSales30d:
         metrics?.estimatedSales30d ??
         estimatedSales30d(best.candidate.itemId, best.candidate.priceCents),
@@ -220,6 +223,7 @@ export async function refreshAdminAmazonCost(id: string): Promise<void> {
         matchVerdict: "REJECTED",
         matchConfidence: 100,
         matchReason: "The exact Amazon source is unavailable or its shipping cost could not be verified.",
+        matchMethod: "RULES",
         lastResearchedAt: new Date(),
       },
     });
@@ -321,6 +325,7 @@ export async function refreshAdminEbayMarket(id: string): Promise<{
       matchVerdict: assessment.verdict,
       matchConfidence: assessment.confidence,
       matchReason: assessment.reason,
+      matchMethod: assessment.method,
       estimatedSales30d: metrics.estimatedSales30d,
       competitorCount: metrics.competitorCount,
       averageCompetitorPriceCents: metrics.averageCompetitorPriceCents,
@@ -359,4 +364,106 @@ export async function refreshAdminEbayMarket(id: string): Promise<{
     matchConfidence: assessment.confidence,
     marketFallback: !market,
   };
+}
+
+export async function attachAdminEbayCandidate(id: string, input: string): Promise<void> {
+  const item = await db.adminArbitrageProduct.findUnique({ where: { id } });
+  if (!item) throw new Error("Catalog item no longer exists.");
+  const candidate = await getAdminEbayProductByInput(input);
+  const duplicate = await db.adminArbitrageProduct.findFirst({
+    where: { ebayItemId: candidate.itemId, id: { not: id } },
+    select: { asin: true },
+  });
+  if (duplicate) throw new Error(`That eBay item is already matched to Amazon ASIN ${duplicate.asin}.`);
+  const [assessment, market] = await Promise.all([
+    assessProductMatch(
+      { title: candidate.title, imageUrl: candidate.imageUrl },
+      { title: item.amazonTitle, imageUrl: item.amazonImageUrl },
+    ),
+    researchAdminEbayMarket(candidate.title, candidate.itemId, { allowReferenceFallback: true }),
+  ]);
+  const averagePrice = market?.metrics.averageCompetitorPriceCents ?? candidate.priceCents;
+  const recommendedPrice = market?.metrics.bestSellingPriceCents ?? candidate.priceCents;
+  const suggestedPrice = arbitrageSuggestedPriceCents(
+    item.amazonPriceCents,
+    candidate.priceCents,
+    recommendedPrice,
+    averagePrice,
+    item.amazonShippingCents,
+  );
+  const margin = estimateMargin(suggestedPrice, item.amazonPriceCents, item.amazonShippingCents);
+  await db.adminArbitrageProduct.update({
+    where: { id },
+    data: {
+      status: "NO_MATCH",
+      ebayItemId: candidate.itemId,
+      ebayTitle: candidate.title,
+      ebayPriceCents: candidate.priceCents,
+      ebayUrl: candidate.url,
+      ebayImageUrl: candidate.imageUrl || null,
+      matchVerdict: "REVIEW",
+      matchConfidence: assessment.verdict === "REJECTED" ? Math.max(1, 100 - assessment.confidence) : assessment.confidence,
+      matchReason: `Administrator-provided candidate: ${assessment.reason}`.slice(0, 240),
+      matchMethod: "MANUAL_REVIEW",
+      estimatedSales30d: market?.metrics.estimatedSales30d ?? estimatedSales30d(candidate.itemId, candidate.priceCents),
+      competitorCount: market?.metrics.competitorCount ?? 1,
+      averageCompetitorPriceCents: averagePrice,
+      ebayRecommendedPriceCents: recommendedPrice,
+      suggestedPriceCents: suggestedPrice,
+      estimatedProfitCents: margin.estimatedProfitCents,
+      marginPct: Math.round(margin.marginPct),
+      lastResearchedAt: new Date(),
+    },
+  });
+}
+
+export async function approveAdminEbayCandidate(id: string): Promise<void> {
+  const item = await db.adminArbitrageProduct.findUnique({ where: { id } });
+  if (!item?.ebayItemId || !item.ebayTitle || !item.ebayPriceCents || !item.ebayUrl) {
+    throw new Error("Add or research an eBay candidate before approving the match.");
+  }
+  if (!item.amazonInStock) throw new Error("The Amazon source is unavailable and cannot be published.");
+  await db.adminArbitrageProduct.update({
+    where: { id },
+    data: {
+      status: "PUBLISHED",
+      matchVerdict: "MATCH",
+      matchConfidence: 100,
+      matchReason: "Manually verified by an administrator as the correct eBay equivalent.",
+      matchMethod: "MANUAL",
+      lastResearchedAt: new Date(),
+    },
+  });
+  await publishCatalogProductToUsers(id);
+}
+
+export async function rejectAdminEbayCandidate(id: string): Promise<void> {
+  const item = await db.adminArbitrageProduct.findUnique({ where: { id } });
+  if (!item) throw new Error("Catalog item no longer exists.");
+  await db.$transaction([
+    db.adminArbitrageProduct.update({
+      where: { id },
+      data: {
+        status: "NO_MATCH",
+        ebayItemId: null,
+        ebayTitle: null,
+        ebayPriceCents: null,
+        ebayUrl: null,
+        ebayImageUrl: null,
+        matchVerdict: "REJECTED",
+        matchConfidence: 100,
+        matchReason: "The eBay candidate was rejected by an administrator.",
+        matchMethod: "MANUAL_REJECTED",
+        estimatedSales30d: null,
+        competitorCount: null,
+        averageCompetitorPriceCents: null,
+        ebayRecommendedPriceCents: null,
+        suggestedPriceCents: null,
+        estimatedProfitCents: null,
+        marginPct: null,
+        lastResearchedAt: new Date(),
+      },
+    }),
+    db.arbitrageItem.deleteMany({ where: { ebayItemId: item.ebayItemId ?? "__none__" } }),
+  ]);
 }

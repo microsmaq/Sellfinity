@@ -75,6 +75,7 @@ export type AdminCatalogRow = {
   matchVerdict: string;
   matchConfidence: number;
   matchReason: string | null;
+  matchMethod: string;
   estimatedSales30d: number | null;
   competitorCount: number | null;
   averageCompetitorPriceCents: number | null;
@@ -386,7 +387,7 @@ export async function publishCatalogProductToUsers(id: string): Promise<void> {
         matchVerdict: item.matchVerdict,
         matchConfidence: item.matchConfidence,
         matchReason: item.matchReason,
-        matchMethod: "AI",
+        matchMethod: item.matchMethod,
         matchCheckedAt: item.lastResearchedAt ?? new Date(),
       },
       update: {
@@ -410,7 +411,7 @@ export async function publishCatalogProductToUsers(id: string): Promise<void> {
         matchVerdict: item.matchVerdict,
         matchConfidence: item.matchConfidence,
         matchReason: item.matchReason,
-        matchMethod: "AI",
+        matchMethod: item.matchMethod,
         matchCheckedAt: item.lastResearchedAt ?? new Date(),
       },
     }),
@@ -448,6 +449,7 @@ export async function syncAdminCatalogFromOpportunities(
       verdict: "MATCH",
       confidence: 100,
       reason: "The scanner supplied an already paired catalog product.",
+      method: "RULES" as const,
     };
     await db.adminArbitrageProduct.upsert({
       where: { asin: opportunity.amazon.asin },
@@ -474,6 +476,7 @@ export async function syncAdminCatalogFromOpportunities(
         matchVerdict: match.verdict,
         matchConfidence: match.confidence,
         matchReason: match.reason,
+        matchMethod: match.method ?? "RULES",
         estimatedSales30d:
           opportunity.market?.estimatedSales30d ?? opportunity.ebay.salesLast30d,
         competitorCount: opportunity.market?.competitorCount,
@@ -508,6 +511,7 @@ export async function syncAdminCatalogFromOpportunities(
         matchVerdict: match.verdict,
         matchConfidence: match.confidence,
         matchReason: match.reason,
+        matchMethod: match.method ?? "RULES",
         estimatedSales30d:
           opportunity.market?.estimatedSales30d ?? opportunity.ebay.salesLast30d,
         competitorCount: opportunity.market?.competitorCount,

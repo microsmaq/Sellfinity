@@ -1,0 +1,2 @@
+ALTER TABLE "AdminArbitrageProduct"
+ADD COLUMN "matchMethod" TEXT NOT NULL DEFAULT 'UNVERIFIED';

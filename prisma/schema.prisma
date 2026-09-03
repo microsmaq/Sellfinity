@@ -194,6 +194,8 @@ model AdminArbitrageProduct {
   matchVerdict                String    @default("UNVERIFIED")
   matchConfidence             Int       @default(0)
   matchReason                 String?
+  // UNVERIFIED | RULES | AI | MANUAL_REVIEW | MANUAL | MANUAL_REJECTED
+  matchMethod                 String    @default("UNVERIFIED")
   estimatedSales30d           Int?
   competitorCount             Int?
   averageCompetitorPriceCents Int?

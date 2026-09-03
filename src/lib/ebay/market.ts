@@ -5,6 +5,7 @@ import {
   summarizeBrowseMarket,
   type BrowseSummary,
 } from "./market-analysis";
+import { ebayLegacyItemIdFromInput } from "./item-input";
 
 export type EbayProductCandidate = {
   itemId: string;
@@ -14,6 +15,46 @@ export type EbayProductCandidate = {
   imageUrl: string;
   category: string;
 };
+
+/** Resolve an administrator-supplied eBay listing URL or legacy item ID into
+ * the same candidate shape used by automatic matching. */
+export async function getEbayProductByInput(input: string): Promise<EbayProductCandidate> {
+  const legacyItemId = ebayLegacyItemIdFromInput(input);
+  if (!legacyItemId) throw new Error("Enter a valid eBay item link or 9–15 digit item ID.");
+  const config = ebayEnvConfig();
+  if (!config) throw new Error("eBay Browse API is not configured.");
+  const token = await appAccessToken(config);
+  const params = new URLSearchParams({ legacy_item_id: legacyItemId });
+  const response = await fetch(`${config.apiHost}/buy/browse/v1/item/get_item_by_legacy_id?${params}`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "X-EBAY-C-MARKETPLACE-ID": "EBAY_US",
+    },
+    cache: "no-store",
+    signal: AbortSignal.timeout(45_000),
+  });
+  if (!response.ok) throw new Error(`eBay could not load item ${legacyItemId} (${response.status}).`);
+  const item = await response.json() as {
+    itemId?: string;
+    legacyItemId?: string;
+    title?: string;
+    itemWebUrl?: string;
+    image?: { imageUrl?: string };
+    price?: { value?: string };
+    categoryPath?: string;
+  };
+  const title = item.title?.trim();
+  const priceCents = Math.round(Number(item.price?.value ?? 0) * 100);
+  if (!title || priceCents <= 0) throw new Error("That eBay item is ended or has no usable fixed price.");
+  return {
+    itemId: item.itemId?.trim() || item.legacyItemId?.trim() || legacyItemId,
+    title,
+    priceCents,
+    url: item.itemWebUrl ?? `https://www.ebay.com/itm/${legacyItemId}`,
+    imageUrl: item.image?.imageUrl ?? "",
+    category: item.categoryPath?.split("|").at(-1)?.trim() || "Other",
+  };
+}
 
 async function browseSearch(title: string, limit = 50): Promise<{
   total: number;
