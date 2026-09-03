@@ -1,12 +1,19 @@
 const PENDING_KEY = "pendingTrackingRequests";
 const STATUS_KEY = "bulkRunStatuses";
-const MAX_REQUEST_AGE_MS = 45 * 60 * 1000;
+// A full admin catalog can contain several thousand products. Four Amazon tabs
+// may need multiple hours when pages are slow or occasionally wait for the
+// 30-second reader timeout, so active work must outlive the old 45-minute cap.
+const MAX_REQUEST_AGE_MS = 12 * 60 * 60 * 1000;
+const FINISHED_STATUS_AGE_MS = 60 * 60 * 1000;
 const MAX_BULK_TABS = 4;
 
 async function runStatuses() {
   const stored = await chrome.storage.session.get(STATUS_KEY);
   const now = Date.now();
-  return (stored[STATUS_KEY] || []).filter((status) => now - status.startedAt < MAX_REQUEST_AGE_MS);
+  return (stored[STATUS_KEY] || []).filter((status) => {
+    const age = now - (status.updatedAt || status.startedAt);
+    return age < (status.status === "running" ? MAX_REQUEST_AGE_MS : FINISHED_STATUS_AGE_MS);
+  });
 }
 
 async function saveRunStatuses(statuses) {
@@ -19,7 +26,8 @@ function requestMode(request) {
 
 async function startRun(sourceTabId, mode, total) {
   const statuses = (await runStatuses()).filter((status) => !(status.sourceTabId === sourceTabId && status.mode === mode));
-  statuses.push({ sourceTabId, mode, total, completed: 0, found: 0, errors: 0, status: "running", startedAt: Date.now() });
+  const now = Date.now();
+  statuses.push({ sourceTabId, mode, total, completed: 0, found: 0, errors: 0, status: "running", startedAt: now, updatedAt: now });
   await saveRunStatuses(statuses);
 }
 
@@ -31,6 +39,7 @@ async function advanceRun(sourceTabId, mode, found) {
   if (found) status.found += 1;
   else status.errors += 1;
   if (status.completed >= status.total) status.status = "complete";
+  status.updatedAt = Date.now();
   await saveRunStatuses(statuses);
 }
 
@@ -47,6 +56,7 @@ async function cancelRuns(sourceTabId, mode) {
   for (const status of statuses) {
     if ((!sourceTabId || status.sourceTabId === sourceTabId) && (!mode || status.mode === mode) && status.status === "running") {
       status.status = "cancelled";
+      status.updatedAt = Date.now();
     }
   }
   await saveRunStatuses(statuses);

@@ -48,6 +48,10 @@ Version 1.3.5 enables the same signed-in price, shipping, and availability
 checker in Admin Product Intelligence for selected products or the full shared
 catalog. These admin checks do not consume Rainforest credits.
 
+Version 1.3.6 keeps large price-check queues alive for up to 12 hours and
+refreshes the active-run heartbeat after every product. This prevents catalog
+checks with thousands of products from silently becoming idle after 45 minutes.
+
 After updating the extension files, click the extension's **Reload** button on
 `chrome://extensions` before trying it again.
 

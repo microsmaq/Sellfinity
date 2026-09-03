@@ -34,12 +34,18 @@ describe("Chrome helper control center", () => {
     expect(immediateProgress).toBeLessThan(backgroundRequest);
   });
 
-  it("ships the popup script in helper version 1.3.5", () => {
+  it("ships the popup script in helper version 1.3.6", () => {
     const manifest = JSON.parse(extensionFile("manifest.json")) as { version: string };
     const popup = extensionFile("popup.html");
 
-    expect(manifest.version).toBe("1.3.5");
+    expect(manifest.version).toBe("1.3.6");
     expect(popup).toContain('<script src="popup.js"></script>');
+  });
+
+  it("keeps multi-thousand-product price runs alive beyond 45 minutes", () => {
+    const background = extensionFile("background.js");
+    expect(background).toContain("12 * 60 * 60 * 1000");
+    expect(background).toContain("status.updatedAt = Date.now()");
   });
 
   it("runs on Admin Product Intelligence", () => {
