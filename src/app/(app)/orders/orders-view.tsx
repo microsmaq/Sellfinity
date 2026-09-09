@@ -731,14 +731,16 @@ export function OrdersView({ orders, fetchError, profitProtectionEnabled, autoRe
   const refreshComplete = !!refreshRun && !refreshWorking && refreshRun.server === "complete" && refreshRun.helper !== "cancelled";
   const refreshStatus = refreshWorking ? "running" : refreshComplete ? "complete" : "error";
   const helperRatio = refreshRun?.trackingTotal
-    ? refreshRun.trackingProcessed / refreshRun.trackingTotal
-    : 1;
+    ? Math.min(1, refreshRun.trackingProcessed / refreshRun.trackingTotal)
+    : 0;
   const refreshPercentage = !refreshRun
     ? 0
     : refreshComplete
       ? 100
       : refreshWorking
-        ? Math.min(96, Math.max(8, refreshRun.server === "running" ? 12 + refreshElapsed * 0.8 : 60, 55 + helperRatio * 40))
+        ? refreshRun.server === "running"
+          ? Math.min(68, 12 + refreshElapsed * 0.7)
+          : Math.min(96, 72 + helperRatio * 24)
         : 100;
   const refreshSubtitle = !refreshRun
     ? ""
