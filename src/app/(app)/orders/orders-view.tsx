@@ -641,9 +641,11 @@ export function OrdersView({ orders, fetchError, profitProtectionEnabled, autoRe
         ];
         if (result.ebayImport?.financialsSynced) details.push(`${result.ebayImport.financialsSynced} finalized eBay earning${result.ebayImport.financialsSynced === 1 ? "" : "s"} refreshed`);
         if (result.ebayImport?.financialsWarning) details.push(result.ebayImport.financialsWarning);
+        if (result.ebayImportError) details.push(`eBay order refresh needs retry: ${result.ebayImportError}`);
         if (result.tracking.savedLocally) details.push(`${result.tracking.savedLocally} tracking ID${result.tracking.savedLocally === 1 ? "" : "s"} saved`);
         if (resolution.pending) details.push(`${resolution.pending} tracking ID${resolution.pending === 1 ? " is" : "s are"} still pending`);
         if (result.tracking.failed) details.push(`${result.tracking.failed} eBay update${result.tracking.failed === 1 ? "" : "s"} failed`);
+        if (result.trackingError) details.push(`tracking upload needs retry: ${result.trackingError}`);
         if (result.protection) {
           const directAdjustments = Math.max(0, result.protection.adjusted - result.protection.relisted);
           if (directAdjustments) details.push(`${directAdjustments} future price${directAdjustments === 1 ? "" : "s"} protected`);
@@ -695,7 +697,10 @@ export function OrdersView({ orders, fetchError, profitProtectionEnabled, autoRe
         } : current);
         router.refresh();
       } catch {
-        const message = "Could not complete the Amazon and eBay refresh. Please try again.";
+        const elapsedSeconds = Math.floor((Date.now() - startedAt) / 1000);
+        const message = elapsedSeconds >= 270
+          ? "The refresh reached the server time limit. Completed updates were kept; click Refresh again to continue with the remaining Amazon emails."
+          : "Could not complete the Amazon and eBay refresh. Completed updates were kept; please try again.";
         setRefreshMessage(message);
         setRefreshRun((current) => current ? { ...current, server: "error", result: message } : current);
       }

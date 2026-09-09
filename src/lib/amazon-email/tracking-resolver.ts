@@ -3,7 +3,7 @@ import { db } from "@/lib/db";
 import { trackingFromPage } from "./tracking-resolver-utils";
 
 export type TrackingResolutionResult = { examined: number; resolved: number; pending: number };
-export type TrackingResolutionOptions = { retryFailed?: boolean };
+export type TrackingResolutionOptions = { retryFailed?: boolean; maxPurchases?: number };
 
 const ALLOWED_TRACKING_HOST = /(^|\.)(?:amazon\.com|a\.co|amzn\.to|ups\.com|fedex\.com|usps\.com|dhl\.com|ontrac\.com)$/i;
 
@@ -44,6 +44,7 @@ export async function resolveMissingAmazonTracking(
   userId: string,
   options: TrackingResolutionOptions = {},
 ): Promise<TrackingResolutionResult> {
+  const maxPurchases = Math.max(1, Math.min(80, Math.round(options.maxPurchases ?? 80)));
   const purchases = await db.amazonPurchase.findMany({
     where: {
       userId,
@@ -53,7 +54,7 @@ export async function resolveMissingAmazonTracking(
       ...(!options.retryFailed && { trackingLookupError: null }),
     },
     orderBy: { updatedAt: "desc" },
-    take: 80,
+    take: maxPurchases,
   });
   const result: TrackingResolutionResult = { examined: purchases.length, resolved: 0, pending: 0 };
   async function resolveOne(purchase: typeof purchases[number]): Promise<"resolved" | "pending"> {

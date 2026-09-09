@@ -13,10 +13,17 @@ export async function syncAmazonEmailsNow() {
   try {
     // Ensure there is a current local eBay sale ledger to match against.
     let ebayImport: Awaited<ReturnType<typeof importOrders>> | null = null;
-    try { ebayImport = await importOrders(user.id); } catch { /* Email ingestion can still proceed. */ }
+    let ebayImportError: string | null = null;
+    try { ebayImport = await importOrders(user.id); }
+    catch (error) { ebayImportError = error instanceof Error ? error.message.slice(0, 300) : "eBay order refresh failed"; }
     // A user-triggered refresh retries every unresolved Amazon tracking link,
     // including links that previously required sign-in or had no number yet.
-    const result = await syncAmazonPurchaseEmails(user.id, { retryTrackingFailures: true });
+    const result = await syncAmazonPurchaseEmails(user.id, {
+      retryTrackingFailures: true,
+      maxMessages: 500,
+      maxMessageDetails: 75,
+      maxTrackingPages: 24,
+    });
     const protection = user.autoProtectVerifiedProfit
       ? await protectVerifiedOrderMargins(user.id, { maxOrders: 200, retryFailures: true, maxRuntimeMs: 45_000 })
       : null;
@@ -61,7 +68,7 @@ export async function syncAmazonEmailsNow() {
         : []
     );
     revalidatePath("/dashboard"); revalidatePath("/settings"); revalidatePath("/orders"); revalidatePath("/listings");
-    return { ...result, ebayImport, tracking, trackingError, protection, restock, restockError, trackingHelperRequests };
+    return { ...result, ebayImport, ebayImportError, tracking, trackingError, protection, restock, restockError, trackingHelperRequests };
   } catch (error) {
     const message = error instanceof Error ? error.message.slice(0, 300) : "Amazon email sync failed";
     await db.amazonEmailConnection.updateMany({ where: { userId: user.id }, data: { lastSyncError: message } });

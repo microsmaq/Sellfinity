@@ -177,12 +177,25 @@ async function reopenAddressConflicts(userId: string): Promise<number> {
 
 export async function syncAmazonPurchaseEmails(
   userId: string,
-  options: { retryTrackingFailures?: boolean; resolveTracking?: boolean; maxMessages?: number } = {},
+  options: { retryTrackingFailures?: boolean; resolveTracking?: boolean; maxMessages?: number; maxMessageDetails?: number; maxTrackingPages?: number } = {},
 ): Promise<{ examined: number; imported: number; matched: number; trackingResolution: TrackingResolutionResult }> {
   const token = await accessToken(userId);
   const connection = await db.amazonEmailConnection.findUniqueOrThrow({ where: { userId } });
-  const processed = new Set<string>(JSON.parse(connection.processedMessageIdsJson) as string[]);
+  const savedMessageIds = JSON.parse(connection.processedMessageIdsJson) as string[];
+  const upgradingSync = connection.syncVersion < AMAZON_EMAIL_SYNC_VERSION;
+  const versionPrefix = `v${AMAZON_EMAIL_SYNC_VERSION}:`;
+  // During a parser-version migration, prefixed IDs are the checkpoint for
+  // messages already rebuilt by this version. Old unprefixed IDs belong to
+  // the previous parser and must be examined again.
+  const processed = new Set<string>(upgradingSync
+    ? savedMessageIds.filter((id) => id.startsWith(versionPrefix)).map((id) => id.slice(versionPrefix.length))
+    : savedMessageIds.map((id) => id.startsWith(versionPrefix) ? id.slice(versionPrefix.length) : id));
   const maxMessages = Math.max(1, Math.min(500, Math.round(options.maxMessages ?? 500)));
+  // Listing message IDs is inexpensive, while fetching and reconciling every
+  // full Gmail message can overrun a serverless request. Search the full
+  // window, skip saved IDs, and checkpoint a bounded slice on each run. A
+  // later refresh naturally continues with the next unprocessed slice.
+  const maxMessageDetails = Math.max(1, Math.min(maxMessages, Math.round(options.maxMessageDetails ?? maxMessages)));
   let pageToken: string | undefined; const ids: string[] = [];
   do {
     const params = new URLSearchParams({ q: AMAZON_EMAIL_SEARCH_QUERY, maxResults: String(Math.min(100, maxMessages - ids.length)) });
@@ -191,10 +204,17 @@ export async function syncAmazonPurchaseEmails(
     ids.push(...(page.messages ?? []).map((message) => message.id)); pageToken = page.nextPageToken;
   } while (pageToken && ids.length < maxMessages);
   let imported = 0;
+  let examined = 0;
+  let hasMoreUnprocessed = false;
   const observedStatuses = new Map<string, "ORDERED" | "SHIPPED" | "DELIVERED" | "CANCELLED">();
   const rank = { ORDERED: 1, SHIPPED: 2, DELIVERED: 3, CANCELLED: 4 } as const;
   for (const id of ids) {
-    if (processed.has(id) && connection.syncVersion >= AMAZON_EMAIL_SYNC_VERSION) continue;
+    if (processed.has(id)) continue;
+    if (examined >= maxMessageDetails) {
+      hasMoreUnprocessed = true;
+      break;
+    }
+    examined++;
     const message = await gmail<GmailMessage>(token, `messages/${id}?format=full`);
     const from = header(message, "from").toLowerCase();
     if (!/@(?:[a-z0-9-]+\.)*amazon\.(?:com|ca|co\.uk)>?$/.test(from.replace(/.*</, ""))) continue;
@@ -276,7 +296,7 @@ export async function syncAmazonPurchaseEmails(
   // Recompute the lifecycle from this rescan instead of preserving an older,
   // false DELIVERED value forever. A real delivery email still wins because
   // it has the highest observed non-cancellation rank.
-  if (connection.syncVersion < AMAZON_EMAIL_SYNC_VERSION) {
+  if (upgradingSync) {
     for (const [amazonOrderId, status] of observedStatuses) {
       const purchase = await db.amazonPurchase.findUnique({
         where: { userId_amazonOrderId: { userId, amazonOrderId } },
@@ -309,9 +329,22 @@ export async function syncAmazonPurchaseEmails(
     ? { examined: 0, resolved: 0, pending: 0 }
     : await resolveMissingAmazonTracking(userId, {
         retryFailed: options.retryTrackingFailures,
+        maxPurchases: options.maxTrackingPages,
       });
-  await db.amazonEmailConnection.update({ where: { userId }, data: { lastSyncedAt: new Date(), lastSyncError: null, processedMessageIdsJson: JSON.stringify([...processed].slice(-1000)), syncVersion: AMAZON_EMAIL_SYNC_VERSION } });
-  return { examined: ids.length, imported, matched, trackingResolution };
+  const migrationComplete = !upgradingSync || !hasMoreUnprocessed;
+  const savedProcessedIds = [...processed]
+    .slice(-1000)
+    .map((id) => upgradingSync && !migrationComplete ? `${versionPrefix}${id}` : id);
+  await db.amazonEmailConnection.update({
+    where: { userId },
+    data: {
+      lastSyncedAt: new Date(),
+      lastSyncError: null,
+      processedMessageIdsJson: JSON.stringify(savedProcessedIds),
+      syncVersion: migrationComplete ? AMAZON_EMAIL_SYNC_VERSION : connection.syncVersion,
+    },
+  });
+  return { examined, imported, matched, trackingResolution };
 }
 
 export function actualAmazonCost(item: { lineTotalCents: number | null; allocatedShippingCents: number; allocatedTaxCents: number; allocatedDiscountCents: number }): number | null {
