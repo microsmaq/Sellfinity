@@ -52,6 +52,10 @@ Version 1.3.6 keeps large price-check queues alive for up to 12 hours and
 refreshes the active-run heartbeat after every product. This prevents catalog
 checks with thousands of products from silently becoming idle after 45 minutes.
 
+Version 1.3.7 retries tracking extraction after Amazon finishes navigation and
+waits for Sellfinity to acknowledge the result before closing the reader. This
+prevents visible tracking IDs from being lost during a fast tab-opening race.
+
 After updating the extension files, click the extension's **Reload** button on
 `chrome://extensions` before trying it again.
 

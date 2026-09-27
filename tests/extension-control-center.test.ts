@@ -34,12 +34,21 @@ describe("Chrome helper control center", () => {
     expect(immediateProgress).toBeLessThan(backgroundRequest);
   });
 
-  it("ships the popup script in helper version 1.3.6", () => {
+  it("ships the popup script in helper version 1.3.7", () => {
     const manifest = JSON.parse(extensionFile("manifest.json")) as { version: string };
     const popup = extensionFile("popup.html");
 
-    expect(manifest.version).toBe("1.3.6");
+    expect(manifest.version).toBe("1.3.7");
     expect(popup).toContain('<script src="popup.js"></script>');
+  });
+
+  it("retries tracking extraction after the Amazon page and request association are ready", () => {
+    const background = extensionFile("background.js");
+    const amazonContent = extensionFile("amazon-content.js");
+
+    expect(background).toContain('type: "INSPECT_AMAZON_TRACKING"');
+    expect(amazonContent).toContain('message?.type === "INSPECT_AMAZON_TRACKING"');
+    expect(amazonContent).toContain("if (!response?.ok) return;");
   });
 
   it("keeps multi-thousand-product price runs alive beyond 45 minutes", () => {

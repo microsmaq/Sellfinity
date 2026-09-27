@@ -282,7 +282,7 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   if (changeInfo.status !== "complete") return;
   (async () => {
     const requests = await pendingRequests();
-    const request = requests.find((candidate) => candidate.mode === "PRICE" && candidate.destinationTabId === tabId);
+    const request = requests.find((candidate) => candidate.destinationTabId === tabId);
     if (!request) return;
     // chrome.tabs.create("about:blank") can emit a completed event after the
     // request is registered but before navigation reaches Amazon. Never treat
@@ -290,6 +290,17 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
     let pageUrl;
     try { pageUrl = new URL(tab.url || changeInfo.url || ""); } catch { return; }
     if (!(pageUrl.protocol === "https:" && (pageUrl.hostname === "amazon.com" || pageUrl.hostname.endsWith(".amazon.com")))) return;
+    if (requestMode(request) === "TRACKING") {
+      for (let attempt = 0; attempt < 12; attempt++) {
+        try {
+          await chrome.tabs.sendMessage(tabId, { type: "INSPECT_AMAZON_TRACKING" });
+          return;
+        } catch {
+          await new Promise((resolve) => setTimeout(resolve, 500));
+        }
+      }
+      return;
+    }
     for (let attempt = 0; attempt < 12; attempt++) {
       try {
         await chrome.tabs.sendMessage(tabId, { type: "INSPECT_AMAZON_PRICE" });
