@@ -8,7 +8,7 @@ import { Badge, Button, Card, Input, StatCard, cx } from "@/components/ui";
 import { PremiumProgress } from "@/components/premium-progress";
 import { formatCents } from "@/lib/money";
 import { protectOrderMargin, setAutoProfitProtection } from "@/lib/actions/profit-protection";
-import { syncAmazonEmailsNow } from "@/lib/actions/amazon-email";
+import { finishFulfillmentMaintenanceNow, syncAmazonEmailsNow } from "@/lib/actions/amazon-email";
 import { linkAmazonPurchase, markOrderCancelled, reassignAmazonPurchase, setAutoRestockFulfilledListings, submitManualOrderTracking, updateFulfillmentAmazonCosts } from "@/lib/actions/orders";
 import { fulfillmentActionReason, type FulfillmentActionReason, type FulfillmentStage } from "@/lib/orders/fulfillment-stage";
 import { trackingUploadErrorDisposition } from "@/lib/amazon-email/tracking-utils";
@@ -71,6 +71,7 @@ type Tab = "ALL" | "NEEDS_ACTION" | "PURCHASED" | "IN_TRANSIT" | "DELIVERED" | "
 type RefreshRun = {
   startedAt: number;
   server: "running" | "complete" | "error";
+  serverPhase: "tracking" | "maintenance";
   helper: "starting" | "running" | "complete" | "cancelled" | "error" | "unavailable";
   trackingTotal: number;
   trackingProcessed: number;
@@ -603,6 +604,7 @@ export function OrdersView({ orders, fetchError, profitProtectionEnabled, autoRe
     setRefreshRun({
       startedAt,
       server: "running",
+      serverPhase: "tracking",
       helper: helperCandidates ? "starting" : "complete",
       trackingTotal: 0,
       trackingProcessed: 0,
@@ -632,40 +634,21 @@ export function OrdersView({ orders, fetchError, profitProtectionEnabled, autoRe
           router.refresh();
           return;
         }
-        const resolution = result.trackingResolution;
         const details = [
           `${result.imported} Amazon update${result.imported === 1 ? "" : "s"}`,
           `${result.matched} order match${result.matched === 1 ? "" : "es"}`,
-          `${resolution.resolved} tracking number${resolution.resolved === 1 ? "" : "s"} resolved`,
-          `${result.tracking.uploaded} sent to eBay`,
         ];
         if (result.ebayImport?.financialsSynced) details.push(`${result.ebayImport.financialsSynced} finalized eBay earning${result.ebayImport.financialsSynced === 1 ? "" : "s"} refreshed`);
         if (result.ebayImport?.financialsWarning) details.push(result.ebayImport.financialsWarning);
         if (result.ebayImportError) details.push(`eBay order refresh needs retry: ${result.ebayImportError}`);
+        if (result.tracking.uploaded) details.push(`${result.tracking.uploaded} tracking update${result.tracking.uploaded === 1 ? "" : "s"} sent to eBay immediately`);
         if (result.tracking.savedLocally) details.push(`${result.tracking.savedLocally} tracking ID${result.tracking.savedLocally === 1 ? "" : "s"} saved`);
-        if (resolution.pending) details.push(`${resolution.pending} tracking ID${resolution.pending === 1 ? " is" : "s are"} still pending`);
-        if (result.tracking.failed) details.push(`${result.tracking.failed} eBay update${result.tracking.failed === 1 ? "" : "s"} failed`);
+        if (result.tracking.failed) details.push(`${result.tracking.failed} immediate eBay update${result.tracking.failed === 1 ? "" : "s"} failed`);
         if (result.trackingError) details.push(`tracking upload needs retry: ${result.trackingError}`);
-        if (result.protection) {
-          const directAdjustments = Math.max(0, result.protection.adjusted - result.protection.relisted);
-          if (directAdjustments) details.push(`${directAdjustments} future price${directAdjustments === 1 ? "" : "s"} protected`);
-          if (result.protection.relisted) details.push(`${result.protection.relisted} ended listing${result.protection.relisted === 1 ? "" : "s"} relisted at a protected price`);
-          if (result.protection.protected) details.push(`${result.protection.protected} listing${result.protection.protected === 1 ? " was" : "s were"} already protected`);
-          if (result.protection.review) details.push(`${result.protection.review} price${result.protection.review === 1 ? "" : "s"} need review`);
-          if (result.protection.failed) details.push(`${result.protection.failed} price update${result.protection.failed === 1 ? "" : "s"} failed`);
-          if (result.protection.deferred) details.push(`${result.protection.deferred} price check${result.protection.deferred === 1 ? " is" : "s are"} queued for the next refresh`);
-          if (result.protection.winnerLocked) details.push(`${result.protection.winnerLocked} profitable listing price${result.protection.winnerLocked === 1 ? " was" : "s were"} preserved`);
-          if (!result.protection.eligible && result.protection.checked) details.push(`${result.protection.checked} verified margin${result.protection.checked === 1 ? "" : "s"} checked`);
-          if (result.protection.awaitingVerification) details.push(`${result.protection.awaitingVerification} price${result.protection.awaitingVerification === 1 ? " was" : "s were"} left unchanged because the Amazon cost is still estimated`);
-        }
-        if (result.restock.restocked) details.push(`${result.restock.restocked} listing${result.restock.restocked === 1 ? "" : "s"} refilled to 5`);
-        if (result.restock.failed) details.push(`${result.restock.failed} stock refill${result.restock.failed === 1 ? "" : "s"} failed`);
-        if (result.restockError) details.push("stock check unavailable");
         const helperRequests = result.trackingHelperRequests ?? [];
         if (helperRequests.length) {
-          // The email scan may have discovered these URLs moments ago, after
-          // the pre-refresh helper scan. Mirror them into the current rows so
-          // both current and older helper versions can process them now.
+          // The email scan may have discovered these URLs moments ago. Start
+          // the signed-in reader before profit protection and stock checks.
           setOrderOverrides((current) => {
             const next = { ...current };
             for (const request of helperRequests) {
@@ -677,6 +660,7 @@ export function OrdersView({ orders, fetchError, profitProtectionEnabled, autoRe
           setQuery("");
           setRefreshRun((current) => current ? {
             ...current,
+            serverPhase: "maintenance",
             helper: "starting",
             trackingTotal: 0,
             trackingProcessed: 0,
@@ -687,8 +671,40 @@ export function OrdersView({ orders, fetchError, profitProtectionEnabled, autoRe
               detail: { requests: helperRequests },
             }));
           }));
-          details.push(`${helperRequests.length} signed-in Amazon tracking check${helperRequests.length === 1 ? "" : "s"} started`);
+          details.push(`${helperRequests.length} signed-in Amazon tracking check${helperRequests.length === 1 ? "" : "s"} started first`);
+        } else {
+          setRefreshRun((current) => current ? { ...current, serverPhase: "maintenance" } : current);
         }
+
+        const maintenance = await finishFulfillmentMaintenanceNow();
+        const resolution = maintenance.trackingResolution;
+        const totalUploaded = result.tracking.uploaded + maintenance.tracking.uploaded;
+        const totalSavedLocally = result.tracking.savedLocally + maintenance.tracking.savedLocally;
+        const totalTrackingFailed = result.tracking.failed + maintenance.tracking.failed;
+        details.push(`${resolution.resolved} tracking number${resolution.resolved === 1 ? "" : "s"} resolved by the server`);
+        if (totalUploaded && !result.tracking.uploaded) details.push(`${totalUploaded} sent to eBay`);
+        else if (maintenance.tracking.uploaded) details.push(`${maintenance.tracking.uploaded} additional tracking update${maintenance.tracking.uploaded === 1 ? "" : "s"} sent to eBay`);
+        if (totalSavedLocally > result.tracking.savedLocally) details.push(`${totalSavedLocally} tracking ID${totalSavedLocally === 1 ? "" : "s"} saved locally`);
+        if (resolution.pending) details.push(`${resolution.pending} tracking ID${resolution.pending === 1 ? " is" : "s are"} still pending`);
+        if (totalTrackingFailed > result.tracking.failed) details.push(`${totalTrackingFailed} eBay update${totalTrackingFailed === 1 ? "" : "s"} failed`);
+        if (maintenance.trackingResolutionError) details.push(`tracking page retry unavailable: ${maintenance.trackingResolutionError}`);
+        if (maintenance.trackingError) details.push(`tracking upload needs retry: ${maintenance.trackingError}`);
+        if (maintenance.protection) {
+          const directAdjustments = Math.max(0, maintenance.protection.adjusted - maintenance.protection.relisted);
+          if (directAdjustments) details.push(`${directAdjustments} future price${directAdjustments === 1 ? "" : "s"} protected`);
+          if (maintenance.protection.relisted) details.push(`${maintenance.protection.relisted} ended listing${maintenance.protection.relisted === 1 ? "" : "s"} relisted at a protected price`);
+          if (maintenance.protection.protected) details.push(`${maintenance.protection.protected} listing${maintenance.protection.protected === 1 ? " was" : "s were"} already protected`);
+          if (maintenance.protection.review) details.push(`${maintenance.protection.review} price${maintenance.protection.review === 1 ? "" : "s"} need review`);
+          if (maintenance.protection.failed) details.push(`${maintenance.protection.failed} price update${maintenance.protection.failed === 1 ? "" : "s"} failed`);
+          if (maintenance.protection.deferred) details.push(`${maintenance.protection.deferred} price check${maintenance.protection.deferred === 1 ? " is" : "s are"} queued for the next refresh`);
+          if (maintenance.protection.winnerLocked) details.push(`${maintenance.protection.winnerLocked} profitable listing price${maintenance.protection.winnerLocked === 1 ? " was" : "s were"} preserved`);
+          if (!maintenance.protection.eligible && maintenance.protection.checked) details.push(`${maintenance.protection.checked} verified margin${maintenance.protection.checked === 1 ? "" : "s"} checked`);
+          if (maintenance.protection.awaitingVerification) details.push(`${maintenance.protection.awaitingVerification} price${maintenance.protection.awaitingVerification === 1 ? " was" : "s were"} left unchanged because the Amazon cost is still estimated`);
+        }
+        if (maintenance.protectionError) details.push(`profit protection needs retry: ${maintenance.protectionError}`);
+        if (maintenance.restock.restocked) details.push(`${maintenance.restock.restocked} listing${maintenance.restock.restocked === 1 ? "" : "s"} refilled to 5`);
+        if (maintenance.restock.failed) details.push(`${maintenance.restock.failed} stock refill${maintenance.restock.failed === 1 ? "" : "s"} failed`);
+        if (maintenance.restockError) details.push("stock check unavailable");
         setRefreshMessage(`Refresh complete: ${details.join(" · ")}.`);
         setRefreshRun((current) => current ? {
           ...current,
@@ -739,19 +755,23 @@ export function OrdersView({ orders, fetchError, profitProtectionEnabled, autoRe
       ? 100
       : refreshWorking
         ? refreshRun.server === "running"
-          ? Math.min(68, 12 + refreshElapsed * 0.7)
+          ? refreshRun.serverPhase === "tracking"
+            ? Math.min(68, 12 + refreshElapsed * 0.7)
+            : Math.min(94, 72 + helperRatio * 18)
           : Math.min(96, 72 + helperRatio * 24)
         : 100;
   const refreshSubtitle = !refreshRun
     ? ""
     : refreshRun.server === "running"
-      ? refreshElapsed < 8
-        ? "Importing current eBay orders and preparing the Amazon email scan…"
-        : refreshElapsed < 35
-          ? "Scanning Amazon purchase, shipment, and delivery emails…"
-          : refreshElapsed < 90
-            ? "Resolving tracking links and matching purchases to fulfillment rows…"
-            : "Still working normally—large email histories and Amazon tracking pages can take several minutes."
+      ? refreshRun.serverPhase === "maintenance"
+        ? refreshRun.helper === "running"
+          ? "Tracking pages are being checked now while profit protection and stock maintenance finish in the background."
+          : "Tracking was prioritized first. Finishing profit protection and stock maintenance…"
+        : refreshElapsed < 8
+          ? "Importing current eBay orders and preparing the Amazon email scan…"
+          : refreshElapsed < 35
+            ? "Scanning the newest Amazon purchase and shipment emails for tracking…"
+            : "Matching Amazon shipments to fulfillment rows. Tracking-page checks will start before pricing and stock maintenance."
       : refreshRun.helper === "cancelled"
         ? "The tracking page check was stopped. eBay and Amazon email refresh results already completed were kept."
       : refreshRun.helper === "running"
@@ -890,10 +910,10 @@ export function OrdersView({ orders, fetchError, profitProtectionEnabled, autoRe
             />
             <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
               {[
-                { label: "eBay orders", active: refreshRun.server === "running" && refreshElapsed < 8, done: refreshRun.server !== "running" },
-                { label: "Amazon emails", active: refreshRun.server === "running" && refreshElapsed >= 8, done: refreshRun.server !== "running" },
+                { label: "eBay orders", active: refreshRun.server === "running" && refreshRun.serverPhase === "tracking" && refreshElapsed < 8, done: refreshRun.server !== "running" || refreshRun.serverPhase === "maintenance" },
+                { label: "Amazon emails", active: refreshRun.server === "running" && refreshRun.serverPhase === "tracking" && refreshElapsed >= 8, done: refreshRun.server !== "running" || refreshRun.serverPhase === "maintenance" },
                 ...(refreshRun.helper === "running" || (refreshRun.helper === "complete" && refreshRun.trackingTotal > 0) ? [{ label: "Tracking pages", active: refreshRun.helper === "running", done: refreshRun.helper === "complete" }] : []),
-                { label: "Prices & stock", active: refreshRun.server === "running" && refreshElapsed >= 35, done: refreshRun.server === "complete" },
+                { label: "Prices & stock", active: refreshRun.server === "running" && refreshRun.serverPhase === "maintenance", done: refreshRun.server === "complete" },
               ].map((stage) => (
                 <div key={stage.label} className={cx("flex items-center gap-2 rounded-lg border px-3 py-2 text-xs font-medium transition-colors", stage.done ? "border-emerald-200 bg-emerald-50 text-emerald-700" : stage.active ? "border-indigo-200 bg-indigo-50 text-indigo-700" : "border-slate-200 bg-white text-slate-400")}>
                   <span className={cx("flex h-5 w-5 items-center justify-center rounded-full", stage.done ? "bg-emerald-600 text-white" : stage.active ? "animate-pulse bg-indigo-600 text-white" : "bg-slate-200 text-slate-500")}>{stage.done ? "✓" : stage.active ? "•" : ""}</span>
