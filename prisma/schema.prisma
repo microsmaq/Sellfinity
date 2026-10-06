@@ -219,6 +219,15 @@ model AdminArbitrageProduct {
 // A durable direct-to-eBay publishing run. The browser advances one item at a
 // time so progress survives serverless request limits and every outcome is
 // retained for the seller's audit history.
+model AdminCatalogReviewAutomation {
+  id              String    @id @default("main")
+  enabled         Boolean   @default(false)
+  dailyLimit      Int       @default(10)
+  lockUntil       DateTime?
+  lastRunAt       DateTime?
+  lastSummaryJson String    @default("{}")
+}
+
 model MirrorBatch {
   id                    String    @id @default(cuid())
   userId                String

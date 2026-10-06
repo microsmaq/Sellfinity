@@ -1,6 +1,10 @@
 {
   "crons": [
     {
+      "path": "/api/cron/catalog-review",
+      "schedule": "0 12 * * *"
+    },
+    {
       "path": "/api/cron/amazon-refresh?utc=9",
       "schedule": "0 9 * * *"
     },
