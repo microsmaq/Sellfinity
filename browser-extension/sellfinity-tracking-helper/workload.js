@@ -3,6 +3,7 @@ const WORKLOAD_KEY = "amazonWorkloadControls";
 const WORKLOAD_ALARM = "amazon-workload-wake";
 const DEFAULT_WORKLOAD = { intervalSeconds: 60, dailyLimit: 100, batchSize: 20, breakMinutes: 15 };
 let queueProcessing = false;
+let workloadWrite = Promise.resolve();
 
 async function workloadState() {
   const saved = (await chrome.storage.local.get(WORKLOAD_KEY))[WORKLOAD_KEY] || {};
@@ -10,9 +11,13 @@ async function workloadState() {
   return { ...DEFAULT_WORKLOAD, ...saved, ...(saved.day !== today ? { day: today, used: 0, batchCount: 0 } : {}) };
 }
 async function saveWorkload(patch) {
-  const state = { ...(await workloadState()), ...patch };
-  await chrome.storage.local.set({ [WORKLOAD_KEY]: state });
-  return state;
+  const write = workloadWrite.then(async () => {
+    const state = { ...(await workloadState()), ...patch };
+    await chrome.storage.local.set({ [WORKLOAD_KEY]: state });
+    return state;
+  });
+  workloadWrite = write.catch(() => {});
+  return write;
 }
 async function pauseAmazonWork(reason, verification = false, verificationTabId = null) {
   await saveWorkload({ paused: true, verification, verificationTabId, verificationCheckAt: verification ? Date.now() + 60 * 60_000 : 0, reason, nextAt: 0 });
@@ -62,7 +67,7 @@ chrome.runtime.onMessage.addListener((message, _sender, respond) => {
       const input = message.settings || {};
       const bounds = { intervalSeconds: [30, 3600], dailyLimit: [1, 1000], batchSize: [1, 100], breakMinutes: [1, 240] };
       for (const [field, [min, max]] of Object.entries(bounds)) {
-        if (!Number.isInteger(input[field]) || input[field] < min || input[field] > max) return respond({ ok: false });
+        if (!Number.isInteger(input[field]) || input[field] < min || input[field] > max) return respond({ ok: false, error: `${field} must be a whole number from ${min} to ${max}.` });
       }
       await saveWorkload(Object.fromEntries(Object.keys(bounds).map((key) => [key, input[key]])));
     }
@@ -83,7 +88,7 @@ chrome.runtime.onMessage.addListener((message, _sender, respond) => {
       for (const source of new Set((await pendingRequests()).filter((r) => r.bulk).map((r) => r.sourceTabId))) void processBulkQueue(source);
     }
     respond({ ok: true });
-  })();
+  })().catch(() => respond({ ok: false, error: "Chrome could not save the helper settings. Reload the extension and try again." }));
   return true;
 });
 chrome.alarms.onAlarm.addListener((alarm) => {

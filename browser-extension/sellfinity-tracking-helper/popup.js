@@ -56,7 +56,7 @@ async function refreshStatus() {
       document.getElementById("resume-catalog").disabled = !["error", "cancelled"].includes(job.status);
     }
   } catch {
-    document.querySelectorAll(".detail").forEach((element) => { element.textContent = "Helper status is temporarily unavailable."; });
+    document.querySelectorAll(".detail:not(#work-feedback)").forEach((element) => { element.textContent = "Helper status is temporarily unavailable."; });
   }
 }
 
@@ -80,11 +80,33 @@ void chrome.runtime.sendMessage({ type: "GET_WORKLOAD_SETTINGS" }).then((respons
   if (!response?.ok) return;
   const state = response.settings;
   for (const [id, field] of [["interval", "intervalSeconds"], ["limit", "dailyLimit"], ["batch", "batchSize"], ["break", "breakMinutes"]]) document.getElementById(`work-${id}`).value = state[field];
-});
+}).catch(() => { document.getElementById("work-feedback").textContent = "Settings could not load. Reload the extension, then reopen this popup."; });
 document.getElementById("save-work").addEventListener("click", async () => {
-  const settings = Object.fromEntries([["interval", "intervalSeconds"], ["limit", "dailyLimit"], ["batch", "batchSize"], ["break", "breakMinutes"]].map(([id, field]) => [field, Number(document.getElementById(`work-${id}`).value)]));
-  const result = await chrome.runtime.sendMessage({ type: "SAVE_WORKLOAD_SETTINGS", settings });
-  document.getElementById("work-detail").textContent = result?.ok ? "Limits saved." : "Enter whole numbers within the displayed limits.";
+  const feedback = document.getElementById("work-feedback");
+  const button = document.getElementById("save-work");
+  const fields = [["interval", "intervalSeconds", "Seconds between pages"], ["limit", "dailyLimit", "Maximum pages per day"], ["batch", "batchSize", "Pages before a break"], ["break", "breakMinutes", "Break length"]];
+  const settings = {};
+  for (const [id, field, label] of fields) {
+    const input = document.getElementById(`work-${id}`);
+    const value = Number(input.value);
+    if (!input.value.trim() || !Number.isInteger(value) || value < Number(input.min) || value > Number(input.max)) {
+      feedback.textContent = `${label}: enter a whole number from ${input.min} to ${input.max}.`;
+      input.focus();
+      return;
+    }
+    settings[field] = value;
+  }
+  button.disabled = true;
+  button.textContent = "Saving…";
+  try {
+    const result = await chrome.runtime.sendMessage({ type: "SAVE_WORKLOAD_SETTINGS", settings });
+    feedback.textContent = result?.ok ? "Workload limits saved. Your pause status is unchanged." : result?.error || "The helper did not confirm the save. Reload the extension and try again.";
+  } catch {
+    feedback.textContent = "Chrome could not reach the helper. Reload the extension, reopen this popup, and try again.";
+  } finally {
+    button.disabled = false;
+    button.textContent = "Save workload limits";
+  }
 });
 document.getElementById("pause-work").addEventListener("click", async () => { await chrome.runtime.sendMessage({ type: "PAUSE_AMAZON_WORK" }); await refreshStatus(); });
 document.getElementById("resume-work").addEventListener("click", async () => {

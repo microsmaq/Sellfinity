@@ -17,6 +17,8 @@
       <label>Pages before a break <input id="work-batch" type="number" min="1" max="100" value="20"></label>
       <label>Break length (minutes) <input id="work-break" type="number" min="1" max="240" value="15"></label>
       <button id="save-work" type="button">Save workload limits</button>
+      <p id="work-feedback" class="detail" role="status" aria-live="polite"></p>
+      <p class="detail">Allowed: 30–3,600 seconds between pages; 1–1,000 pages/day; 1–100 pages/batch; 1–240 minutes per break.</p>
       <button id="pause-work" type="button">Pause Amazon browsing</button>
       <button id="resume-work" type="button">Resume saved work</button>
       <p id="work-detail" class="detail" role="status"></p>

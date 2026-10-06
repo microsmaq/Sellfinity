@@ -121,4 +121,13 @@ describe("Amazon workload controls", () => {
     expect(await w.message({ type: "SAVE_WORKLOAD_SETTINGS", settings: { intervalSeconds: 120, dailyLimit: 50, batchSize: 10, breakMinutes: 30, paused: false } })).toMatchObject({ ok: true });
     expect(await w.run("workloadState()")).toMatchObject({ paused: true, dailyLimit: 50 });
   });
+  it("preserves saved limits during concurrent progress writes", async () => {
+    const w = workload();
+    await w.run("Promise.all([saveWorkload({dailyLimit:500}), saveWorkload({failures:2}), saveWorkload({used:10})])");
+    expect(await w.run("workloadState()")).toMatchObject({ dailyLimit: 500, failures: 2, used: 10 });
+  });
+  it("explains which limit prevents saving", async () => {
+    const w = workload();
+    expect(await w.message({ type: "SAVE_WORKLOAD_SETTINGS", settings: { intervalSeconds: 60, dailyLimit: 2000, batchSize: 20, breakMinutes: 15 } })).toMatchObject({ ok: false, error: "dailyLimit must be a whole number from 1 to 1000." });
+  });
 });
