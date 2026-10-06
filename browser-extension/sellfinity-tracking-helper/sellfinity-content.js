@@ -265,6 +265,9 @@
       if (message.autoSave) finishBulkItem(false);
       else toast(message.reason || "No supported tracking number was found.", "error");
     }
+    if (message?.type === "AMAZON_CHECK_ATTEMPTED") {
+      document.dispatchEvent(new CustomEvent("sellfinity:amazon-check-attempted", { detail: { orderIds: message.orderIds } }));
+    }
     if (message?.type === "FILL_AMAZON_PRICE") {
       document.dispatchEvent(new CustomEvent("sellfinity:amazon-price-found", { detail: {
         orderIds: message.orderIds,

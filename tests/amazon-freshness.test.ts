@@ -1,8 +1,21 @@
 import { describe, expect, it } from "vitest";
-import { AMAZON_FRESHNESS_WINDOW_MS, isAmazonDataFresh, shouldSkipRecentlyCheckedAmazon, oldestAmazonChecksFirst } from "../src/lib/amazon/freshness";
+import { AMAZON_FRESHNESS_WINDOW_MS, isAmazonDataFresh, shouldSkipRecentlyCheckedAmazon, oldestAmazonChecksFirst, latestAmazonCheckAt } from "../src/lib/amazon/freshness";
 
 describe("Amazon data freshness", () => {
   const now = Date.parse("2026-09-02T12:00:00.000Z");
+  it("puts a recent failed attempt behind untouched items without making its old price fresh", () => {
+    const oldPrice = new Date(now - 2 * AMAZON_FRESHNESS_WINDOW_MS);
+    const attempt = new Date(now);
+    expect(isAmazonDataFresh(latestAmazonCheckAt(attempt, oldPrice), now)).toBe(true);
+    expect(isAmazonDataFresh(oldPrice, now)).toBe(false);
+    const rows = [{ id: "failed", checked: attempt, refreshed: oldPrice }, { id: "untouched", checked: null, refreshed: null }];
+    expect(oldestAmazonChecksFirst(rows, (row) => latestAmazonCheckAt(row.checked, row.refreshed)).map((row) => row.id)).toEqual(["untouched", "failed"]);
+  });
+  it("uses the latest refresh or attempt and handles legacy missing attempt timestamps", () => {
+    expect(latestAmazonCheckAt(null, new Date(now))?.getTime()).toBe(now);
+    expect(latestAmazonCheckAt(new Date(now - 1000), new Date(now))?.getTime()).toBe(now);
+    expect(latestAmazonCheckAt("invalid", null)).toBeNull();
+  });
 
   it("prioritizes never-checked products before the oldest updated products", () => {
     const rows = [

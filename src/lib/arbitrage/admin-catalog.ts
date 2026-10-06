@@ -64,6 +64,7 @@ export type AdminCatalogRow = {
   amazonImportDetailsJson?: string;
   amazonInStock: boolean;
   amazonRefreshedAt: string | null;
+  amazonCheckedAt?: string | null;
   amazonUrl: string;
   amazonImageUrl: string | null;
   category: string;
@@ -327,6 +328,7 @@ export async function listAdminCatalog(params: {
         marginPct: margin ? Math.round(margin.marginPct) : null,
         usersListed: userSets.get(item.asin)?.size ?? 0,
         amazonRefreshedAt: item.amazonRefreshedAt?.toISOString() ?? null,
+        amazonCheckedAt: item.amazonCheckedAt?.toISOString() ?? null,
         lastResearchedAt: item.lastResearchedAt?.toISOString() ?? null,
         updatedAt: item.updatedAt.toISOString(),
       };

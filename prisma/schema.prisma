@@ -185,6 +185,8 @@ model AdminArbitrageProduct {
   amazonImageUrlsJson         String    @default("[]")
   amazonInStock               Boolean   @default(true)
   amazonRefreshedAt           DateTime?
+  // Last browser attempt, including failed/blocked checks; not price freshness.
+  amazonCheckedAt             DateTime?
   category                    String
   isAmazonBestSeller          Boolean   @default(true)
   // PENDING | PUBLISHED | NO_MATCH | ARCHIVED
@@ -449,6 +451,7 @@ model Product {
   shippingCostCents   Int       @default(0)
   // Last time Amazon price, shipping, and availability were explicitly refreshed.
   amazonRefreshedAt   DateTime?
+  amazonCheckedAt    DateTime?
   suggestedPriceCents Int
   // 0-100 sourcing score at import time
   sourceScore         Int

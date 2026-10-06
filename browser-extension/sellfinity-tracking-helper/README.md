@@ -63,7 +63,16 @@ The extension does not use clipboard access. It only reads supported
 Amazon/carrier tracking pages opened from Sellfinity and submits tracking to
 the matching fulfillment row.
 
-## Amazon workload controls (v1.6.1)
+## Amazon workload controls (v1.6.2)
+
+Price checks record a shared per-ASIN attempt timestamp in Sellfinity when the
+helper starts opening the page, even if the read later fails or is blocked.
+The next queue prioritizes never-checked, then oldest-checked items. Failed
+attempts have no 24-hour exclusion: they remain eligible after other items have
+had their turn. The existing freshness option only skips verified price or
+availability updates within 24 hours. Attempt history is separate from those updates:
+failed checks do not refresh prices or mark a product unavailable. Unopened
+queued items are not stamped as checked. Manual scans can disable the skip option.
 
 The popup provides editable limits for page spacing, a daily cap, batch size and
 scheduled breaks. Defaults: one helper-opened Amazon page at a time, 60 seconds
@@ -89,7 +98,7 @@ to 15 minutes, then remaining items continue automatically, even after repeated
 failures. User pauses always require manual resume. The page reader retains its
 bounded startup retries; failed products are not retried indefinitely.
 
-Reload the unpacked helper after replacing it with v1.6.1, then refresh the
+Reload the unpacked helper after replacing it with v1.6.2, then refresh the
 Sellfinity tab. Existing daily schedules are retained. Browser-local page limits
 are not a coordinated cap across multiple computers.
 

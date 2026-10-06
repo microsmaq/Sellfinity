@@ -32,6 +32,7 @@ import { formatCents } from "@/lib/money";
 import { Badge, Button, Card, Input, StatCard, cx } from "@/components/ui";
 import { PremiumProgress } from "@/components/premium-progress";
 import { shouldSkipRecentlyCheckedAmazon } from "@/lib/amazon/freshness";
+import { recordAmazonCheckAttempt } from "@/lib/actions/amazon-checks";
 
 type AdminScanProgress = {
   target: number;
@@ -210,7 +211,7 @@ function CatalogRow({
             ? ` + ${formatCents(row.amazonShippingCents)} shipping`
             : " · free shipping"}
         </p>
-        <p className="mt-1 text-[10px] font-normal text-slate-400">{amazonFreshness(row.amazonRefreshedAt)}</p>
+        <p className="mt-1 text-[10px] font-normal text-slate-400" title={`Last attempted check: ${row.amazonCheckedAt ? new Date(row.amazonCheckedAt).toLocaleString() : "Not recorded"}. A check attempt does not confirm the displayed price.`}>{amazonFreshness(row.amazonRefreshedAt)}{row.amazonCheckedAt ? ` · Checked ${new Date(row.amazonCheckedAt).toLocaleDateString()}` : ""}</p>
         {row.amazonImportDetailsJson && row.amazonImportDetailsJson !== "{}" && <details className="mt-2 whitespace-normal text-left text-xs font-normal text-slate-600"><summary className="cursor-pointer">Import source & variant</summary><pre className="mt-1 max-h-48 max-w-64 overflow-auto whitespace-pre-wrap text-[10px]">{(() => { try { const info = JSON.parse(row.amazonImportDetailsJson); return [info.source, info.variant, info.importedAt, info.bestsellerRank ? `Rank #${info.bestsellerRank} · ${info.bestsellerCategory}` : "", info.bestsellerUrl || info.sourceUrl].filter(Boolean).join("\n"); } catch { return "Source details unavailable"; } })()}</pre></details>}
       </td>
       <td className="min-w-[300px] px-4 py-4">
@@ -419,14 +420,20 @@ export function AdminArbitrageManager({
       } else if (detail.status === "cancelled") {
         setNotice({ text: `Live Amazon refresh stopped after ${detail.processed ?? 0}/${detail.total ?? 0} products. Completed updates were kept.`, error: false });
       } else if (detail.status === "error") {
-        setNotice({ text: "The Chrome helper could not start the admin Amazon refresh. Reload helper v1.6.1 and try again.", error: true });
+        setNotice({ text: "The Chrome helper could not start the admin Amazon refresh. Reload helper v1.6.2 and try again.", error: true });
       }
     }
+    function receiveAmazonAttempt(event: Event) {
+      const detail = (event as CustomEvent<{ orderIds?: string[] }>).detail;
+      if (detail?.orderIds?.length) liveAmazonSavePromises.current.push(recordAmazonCheckAttempt(detail.orderIds, "ADMIN").then(() => {}));
+    }
+    document.addEventListener("sellfinity:amazon-check-attempted", receiveAmazonAttempt);
     document.addEventListener("sellfinity:amazon-price-found", receiveAmazonPrice);
     document.addEventListener("sellfinity:amazon-product-unavailable", receiveAmazonUnavailable);
     document.addEventListener("sellfinity:amazon-price-helper-progress", receiveAmazonProgress);
     return () => {
       if (liveAmazonStartupTimer.current !== null) window.clearTimeout(liveAmazonStartupTimer.current);
+      document.removeEventListener("sellfinity:amazon-check-attempted", receiveAmazonAttempt);
       document.removeEventListener("sellfinity:amazon-price-found", receiveAmazonPrice);
       document.removeEventListener("sellfinity:amazon-product-unavailable", receiveAmazonUnavailable);
       document.removeEventListener("sellfinity:amazon-price-helper-progress", receiveAmazonProgress);
@@ -482,7 +489,7 @@ export function AdminArbitrageManager({
       await new Promise<void>((resolve) => window.requestAnimationFrame(() => window.requestAnimationFrame(() => resolve())));
       liveAmazonStartupTimer.current = window.setTimeout(() => {
         setLiveAmazonProgress((current) => current?.status === "starting" ? { ...current, status: "error" } : current);
-        setNotice({ text: "The Chrome helper did not respond. Reload helper v1.6.1, refresh this page, then try again.", error: true });
+        setNotice({ text: "The Chrome helper did not respond. Reload helper v1.6.2, refresh this page, then try again.", error: true });
       }, 8_000);
       document.dispatchEvent(new CustomEvent("sellfinity:bulk-amazon-price-check", { detail: { requests: prepared.requests } }));
     });
@@ -969,7 +976,7 @@ export function AdminArbitrageManager({
             </label>
             <Button type="button" disabled={pending || liveAmazonRunning || (liveAmazonScope === "SELECTED" && selected.size === 0)} onClick={() => startLiveAmazonRefresh()}>{liveAmazonRunning ? "Checking Amazon…" : "Check live prices & shipping"}</Button>
             {liveAmazonRunning && <Button type="button" variant="danger" onClick={stopLiveAmazonRefresh}>Stop</Button>}
-            <a href="/downloads/sellfinity-tracking-helper.zip?v=1.6.1" download className="text-xs font-semibold text-indigo-700 hover:underline">Chrome helper v1.6.1</a>
+            <a href="/downloads/sellfinity-tracking-helper.zip?v=1.6.2" download className="text-xs font-semibold text-indigo-700 hover:underline">Chrome helper v1.6.2</a>
           </div>
         </div>
       </Card>

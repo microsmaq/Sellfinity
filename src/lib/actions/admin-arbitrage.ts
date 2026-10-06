@@ -20,7 +20,7 @@ import { getRainforestEfficiencySummary } from "@/lib/mirror/rainforest";
 import { recalculateAllArbitragePricing } from "@/lib/arbitrage/recalculate-pricing";
 import { arbitrageSuggestedPriceCents } from "@/lib/arbitrage/pricing";
 import { estimateMargin } from "@/lib/fees";
-import { AMAZON_FRESHNESS_WINDOW_MS } from "@/lib/amazon/freshness";
+import { isAmazonDataFresh, latestAmazonCheckAt, oldestAmazonChecksFirst } from "@/lib/amazon/freshness";
 
 export type AdminActionResult = {
   ok: boolean;
@@ -69,7 +69,6 @@ export async function prepareAdminLiveAmazonRefresh(
 ): Promise<{ requests: AdminLiveAmazonRequest[]; skippedFresh: number }> {
   await requireAdmin();
   const skipFresh = z.boolean().parse(skipRecentlyChecked);
-  const freshnessCutoff = new Date(Date.now() - AMAZON_FRESHNESS_WINDOW_MS);
   const ids = selectedIds?.length
     ? z.array(z.string().min(1).max(100)).max(5_000).parse([...new Set(selectedIds)])
     : undefined;
@@ -77,13 +76,15 @@ export async function prepareAdminLiveAmazonRefresh(
     where: {
       status: { not: "ARCHIVED" },
       ...(ids && { id: { in: ids } }),
-      ...(skipFresh && { OR: [{ amazonRefreshedAt: null }, { amazonRefreshedAt: { lt: freshnessCutoff } }] }),
     },
-    select: { id: true, asin: true, amazonUrl: true },
+    select: { id: true, asin: true, amazonUrl: true, amazonCheckedAt: true, amazonRefreshedAt: true },
     orderBy: [{ amazonRefreshedAt: { sort: "asc", nulls: "first" } }, { updatedAt: "asc" }],
   });
   const grouped = new Map<string, AdminLiveAmazonRequest>();
-  for (const row of rows) {
+  // Only verified data qualifies for the existing freshness skip. Failed
+  // attempts affect ordering, never a mandatory retry exclusion window.
+  const eligibleRows = oldestAmazonChecksFirst(rows.filter((row) => !skipFresh || !isAmazonDataFresh(row.amazonRefreshedAt)), (row) => latestAmazonCheckAt(row.amazonCheckedAt, row.amazonRefreshedAt));
+  for (const row of eligibleRows) {
     const requestKey = row.asin.trim().toUpperCase();
     const current = grouped.get(requestKey);
     if (current) current.orderIds.push(row.id);
@@ -94,7 +95,7 @@ export async function prepareAdminLiveAmazonRefresh(
     });
   }
   const requestedCount = ids?.length ?? await db.adminArbitrageProduct.count({ where: { status: { not: "ARCHIVED" } } });
-  return { requests: [...grouped.values()], skippedFresh: Math.max(0, requestedCount - rows.length) };
+  return { requests: [...grouped.values()], skippedFresh: Math.max(0, requestedCount - eligibleRows.length) };
 }
 
 export async function adminUpdateAmazonCostsFromBrowser(

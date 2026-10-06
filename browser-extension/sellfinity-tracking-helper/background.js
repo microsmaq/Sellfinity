@@ -128,7 +128,10 @@ async function processBulkQueue(sourceTabId) {
         if (openedTabId) await chrome.tabs.remove(openedTabId);
         return;
       }
-      if (tab.id) await chrome.tabs.update(tab.id, { url: request.amazonUrl });
+      if (tab.id) {
+        if (requestMode(request) === "PRICE") await notifySource(request, { type: "AMAZON_CHECK_ATTEMPTED", orderIds: request.orderIds });
+        await chrome.tabs.update(tab.id, { url: request.amazonUrl });
+      }
     } catch {
       const isPrice = requestMode(request) === "PRICE";
       await notifySource(request, isPrice

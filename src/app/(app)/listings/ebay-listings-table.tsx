@@ -45,7 +45,8 @@ import {
   selectedSmartSyncOptionCount,
   type SmartSyncOptions,
 } from "@/lib/listings/smart-sync-options";
-import { isAmazonDataFresh, oldestAmazonChecksFirst } from "@/lib/amazon/freshness";
+import { isAmazonDataFresh, oldestAmazonChecksFirst, latestAmazonCheckAt } from "@/lib/amazon/freshness";
+import { recordAmazonCheckAttempt } from "@/lib/actions/amazon-checks";
 
 export type EbayRow = {
   ebayListingId: string;
@@ -77,6 +78,7 @@ export type EbayRow = {
   suggestedBuyerShippingCents: number | null;
   marketUpdatedAt?: string | null;
   amazonUpdatedAt?: string | null;
+  amazonCheckedAt?: string | null;
   performance?: {
     units7d: number;
     units30d: number;
@@ -879,10 +881,21 @@ export function EbayListingsTable({
         reject(new Error("The Chrome helper could not start the Amazon price check. Reload it and try again."));
       }
     }
+    function receiveAmazonAttempt(event: Event) {
+      const detail = (event as CustomEvent<{ orderIds?: string[] }>).detail;
+      if (!detail?.orderIds?.length) return;
+      const ids = detail.orderIds;
+      const save = recordAmazonCheckAttempt(ids, "LISTINGS").then((result) => {
+        setRows((current) => current.map((row) => ids.includes(row.ebayListingId) ? { ...row, amazonCheckedAt: result.checkedAt } : row));
+      });
+      amazonPriceSavePromises.current.push(save);
+    }
+    document.addEventListener("sellfinity:amazon-check-attempted", receiveAmazonAttempt);
     document.addEventListener("sellfinity:amazon-price-found", receiveAmazonPrice);
     document.addEventListener("sellfinity:amazon-product-unavailable", receiveAmazonUnavailable);
     document.addEventListener("sellfinity:amazon-price-helper-progress", receiveAmazonPriceProgress);
     return () => {
+      document.removeEventListener("sellfinity:amazon-check-attempted", receiveAmazonAttempt);
       document.removeEventListener("sellfinity:amazon-price-found", receiveAmazonPrice);
       document.removeEventListener("sellfinity:amazon-product-unavailable", receiveAmazonUnavailable);
       document.removeEventListener("sellfinity:amazon-price-helper-progress", receiveAmazonPriceProgress);
@@ -892,7 +905,7 @@ export function EbayListingsTable({
   async function checkLiveAmazonPrices(targetRows: EbayRow[]): Promise<{ availableIds: Set<string>; unavailableIds: Set<string>; skippedFresh: number }> {
     const freshRows = skipFreshAmazon ? targetRows.filter((row) => isAmazonDataFresh(row.amazonUpdatedAt)) : [];
     const freshIds = new Set(freshRows.map((row) => row.ebayListingId));
-    const rowsToCheck = oldestAmazonChecksFirst(targetRows.filter((row) => !freshIds.has(row.ebayListingId)), (row) => row.amazonUpdatedAt);
+    const rowsToCheck = oldestAmazonChecksFirst(targetRows.filter((row) => !freshIds.has(row.ebayListingId)), (row) => latestAmazonCheckAt(row.amazonCheckedAt, row.amazonUpdatedAt));
     const grouped = new Map<string, { requestKey: string; amazonUrl: string; orderIds: string[] }>();
     for (const row of rowsToCheck) {
       if (!row.match?.amazonUrl || !row.match.sku) continue;
@@ -906,8 +919,8 @@ export function EbayListingsTable({
       });
     }
     const requests = [...grouped.values()];
-    const freshAvailableIds = freshRows.filter((row) => row.match && !row.match.unavailable).map((row) => row.ebayListingId);
-    const freshUnavailableIds = freshRows.filter((row) => row.match?.unavailable).map((row) => row.ebayListingId);
+    const freshAvailableIds = freshRows.filter((row) => isAmazonDataFresh(row.amazonUpdatedAt) && row.match && !row.match.unavailable).map((row) => row.ebayListingId);
+    const freshUnavailableIds = freshRows.filter((row) => isAmazonDataFresh(row.amazonUpdatedAt) && row.match?.unavailable).map((row) => row.ebayListingId);
     amazonPriceSuccessfulIds.current = new Set(freshAvailableIds);
     amazonUnavailableIds.current = new Set(freshUnavailableIds);
     amazonPriceSkippedFresh.current = freshRows.length;
@@ -929,7 +942,7 @@ export function EbayListingsTable({
         amazonPriceResolver.current = null;
         amazonPriceRejecter.current = null;
         setAmazonPriceProgress(null);
-        reject(new Error("The Chrome helper did not respond. Reload helper v1.6.1, refresh this Sellfinity tab, then try again."));
+        reject(new Error("The Chrome helper did not respond. Reload helper v1.6.2, refresh this Sellfinity tab, then try again."));
       }, 8_000);
       document.dispatchEvent(new CustomEvent("sellfinity:bulk-amazon-price-check", { detail: { requests } }));
     });
@@ -1955,7 +1968,7 @@ export function EbayListingsTable({
               </div>
               <p className="mt-3 max-w-3xl text-xs leading-5 text-slate-600">Administrator data remains the normal shared source. Enable live Amazon checking when you want the signed-in Chrome helper to verify current item price and shipping before Smart Sync calculates profit.</p>
             </div>
-            <div className="flex flex-wrap items-center gap-2"><a href="/downloads/sellfinity-tracking-helper.zip?v=1.6.1" download className="text-xs font-semibold text-indigo-700 hover:underline">Chrome helper v1.6.1</a><Badge tone="indigo">{selectedSmartSyncOptionCount(smartSyncOptions)} selected</Badge></div>
+            <div className="flex flex-wrap items-center gap-2"><a href="/downloads/sellfinity-tracking-helper.zip?v=1.6.2" download className="text-xs font-semibold text-indigo-700 hover:underline">Chrome helper v1.6.2</a><Badge tone="indigo">{selectedSmartSyncOptionCount(smartSyncOptions)} selected</Badge></div>
           </div>
           <div className="border-b border-slate-100 bg-white/70 px-4 py-3 sm:px-5">
             <p className="mb-2 text-[10px] font-semibold uppercase tracking-[.1em] text-slate-400">Run on</p>
@@ -2453,7 +2466,7 @@ export function EbayListingsTable({
                       <dd className="mt-1 text-base font-bold tabular-nums text-slate-900">
                         {r.source ? formatCents(r.source.priceCents + r.source.shippingCostCents) : "—"}
                       </dd>
-                      <p className="mt-0.5 text-[9px] text-slate-400">{r.amazonUpdatedAt ? formatFreshness(r.amazonUpdatedAt) : "Not checked yet"}</p>
+                      <p className="mt-0.5 text-[9px] text-slate-400" title={`Last attempted check: ${r.amazonCheckedAt ? new Date(r.amazonCheckedAt).toLocaleString() : "Not recorded"}. Attempts do not confirm the price.`}>{r.amazonUpdatedAt ? formatFreshness(r.amazonUpdatedAt) : "No verified price update"}{r.amazonCheckedAt ? ` · Checked ${new Date(r.amazonCheckedAt).toLocaleDateString()}` : ""}</p>
                     </div>
                   </div>
                   <div className="border-b border-r border-slate-100 p-3">
@@ -2690,7 +2703,7 @@ export function EbayListingsTable({
                   </td>
                   <td className="min-w-[170px] px-4 py-4 text-sm text-slate-700">{r.source?.category ?? "—"}</td>
                   <td className="whitespace-nowrap px-4 py-4 text-right font-semibold tabular-nums">
-                    {r.source ? <>{formatCents(r.source.priceCents + r.source.shippingCostCents)}<p className="mt-0.5 text-[11px] font-normal text-slate-500">{formatCents(r.source.priceCents)}{r.source.shippingCostCents > 0 ? ` + ${formatCents(r.source.shippingCostCents)} shipping` : " · free shipping"}</p><p className="mt-0.5 text-[10px] font-normal text-slate-400">{r.amazonUpdatedAt ? formatFreshness(r.amazonUpdatedAt) : "Not checked yet"}</p></> : "—"}
+                    {r.source ? <>{formatCents(r.source.priceCents + r.source.shippingCostCents)}<p className="mt-0.5 text-[11px] font-normal text-slate-500">{formatCents(r.source.priceCents)}{r.source.shippingCostCents > 0 ? ` + ${formatCents(r.source.shippingCostCents)} shipping` : " · free shipping"}</p><p className="mt-0.5 text-[10px] font-normal text-slate-400" title={`Last attempted check: ${r.amazonCheckedAt ? new Date(r.amazonCheckedAt).toLocaleString() : "Not recorded"}. Attempts do not confirm the price.`}>{r.amazonUpdatedAt ? formatFreshness(r.amazonUpdatedAt) : "No verified price update"}{r.amazonCheckedAt ? ` · Checked ${new Date(r.amazonCheckedAt).toLocaleDateString()}` : ""}</p></> : "—"}
                   </td>
                   <td className="min-w-[310px] px-4 py-4">
                     <a href={r.url} target="_blank" rel="noreferrer" className="line-clamp-2 text-sm font-medium text-slate-800 hover:text-indigo-600">{r.title}</a>
