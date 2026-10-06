@@ -35,6 +35,8 @@ async function refreshStatus() {
     if (!response?.ok) return;
     renderMode("PRICE", response);
     renderMode("TRACKING", response);
+    const daily = await chrome.runtime.sendMessage({ type: "GET_DAILY_SETTINGS" });
+    if (daily?.ok) document.getElementById("daily-detail").textContent = `${daily.settings.status || "Ready"} · ${daily.settings.detail || "Daily scheduling is off until enabled."}`;
   } catch {
     document.querySelectorAll(".detail").forEach((element) => { element.textContent = "Helper status is temporarily unavailable."; });
   }
@@ -55,3 +57,21 @@ document.getElementById("stop-price").addEventListener("click", () => stop("PRIC
 document.getElementById("stop-tracking").addEventListener("click", () => stop("TRACKING"));
 void refreshStatus();
 setInterval(refreshStatus, 1000);
+
+void chrome.runtime.sendMessage({ type: "GET_DAILY_SETTINGS" }).then((response) => {
+  if (!response?.ok) return;
+  document.getElementById("daily-enabled").checked = response.settings.enabled;
+  document.getElementById("daily-time").value = response.settings.time;
+  document.getElementById("daily-mode").value = response.settings.mode || "ADMIN";
+});
+document.getElementById("save-daily").addEventListener("click", async () => {
+  const enabled = document.getElementById("daily-enabled").checked;
+  const time = document.getElementById("daily-time").value;
+  const mode = document.getElementById("daily-mode").value;
+  const response = await chrome.runtime.sendMessage({ type: "SAVE_DAILY_SETTINGS", enabled, time, mode });
+  document.getElementById("daily-detail").textContent = response?.ok ? (enabled ? `Scheduled daily at ${time} on this computer.` : "Daily schedule disabled.") : "Enter a valid start time.";
+});
+document.getElementById("run-daily").addEventListener("click", async () => {
+  await chrome.runtime.sendMessage({ type: "RUN_DAILY_NOW" });
+  await refreshStatus();
+});

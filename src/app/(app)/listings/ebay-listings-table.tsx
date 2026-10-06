@@ -928,7 +928,7 @@ export function EbayListingsTable({
         amazonPriceResolver.current = null;
         amazonPriceRejecter.current = null;
         setAmazonPriceProgress(null);
-        reject(new Error("The Chrome helper did not respond. Reload helper v1.3.7, refresh this Sellfinity tab, then try again."));
+        reject(new Error("The Chrome helper did not respond. Reload helper v1.4.0, refresh this Sellfinity tab, then try again."));
       }, 8_000);
       document.dispatchEvent(new CustomEvent("sellfinity:bulk-amazon-price-check", { detail: { requests } }));
     });
@@ -1365,12 +1365,13 @@ export function EbayListingsTable({
     });
   }
 
-  function syncListingHealth() {
-    if (!hasSelectedSmartSyncOption(smartSyncOptions)) {
+  function syncListingHealth(scheduled = false) {
+    const runOptions: SmartSyncOptions = scheduled ? { refreshEbayListings: true, refreshAmazonData: true, checkLiveAmazonPrices: false, applySuggestedPrices: true, updateListingImages: false, endUnavailableListings: true, relistRecoveredProducts: false } : smartSyncOptions;
+    if (!hasSelectedSmartSyncOption(runOptions)) {
       setNotice({ text: "Select at least one Smart Sync operation before starting.", error: true });
       return;
     }
-    if (smartSyncScope === "SELECTED" && selected.size === 0) {
+    if (!scheduled && smartSyncScope === "SELECTED" && selected.size === 0) {
       setNotice({ text: "Select at least one listing or change the Smart Sync scope to all listings.", error: true });
       return;
     }
@@ -1392,11 +1393,11 @@ export function EbayListingsTable({
     });
     startTransition(async () => {
       try {
-        const liveAmazonCheck = smartSyncOptions.checkLiveAmazonPrices
+        const liveAmazonCheck = runOptions.checkLiveAmazonPrices
           ? await checkLiveAmazonPrices(smartSyncTargetRows)
           : { availableIds: new Set<string>(), unavailableIds: new Set<string>(), skippedFresh: 0 };
-        const scopeIds = smartSyncScope === "SELECTED" ? [...selected] : undefined;
-        const started = await prepareConfigurableSmartSync(smartSyncOptions, retryLastSyncErrorsOnly, scopeIds);
+        const scopeIds = !scheduled && smartSyncScope === "SELECTED" ? [...selected] : undefined;
+        const started = await prepareConfigurableSmartSync(runOptions, scheduled ? false : retryLastSyncErrorsOnly, scopeIds, scheduled);
         if (started.error) throw new Error(started.error);
         const candidates = started.candidates;
         const syncTotal = candidates.length + (started.ebayRefresh ? 1 : 0);
@@ -1436,6 +1437,7 @@ export function EbayListingsTable({
           setSyncResults([...allResults]);
         }
         setSyncProgress({ stage: "running", total: syncTotal, ...totals });
+        if (scheduled) document.dispatchEvent(new CustomEvent("sellfinity:daily-user-progress", { detail: { total: syncTotal, ...totals } }));
 
         let cursor = 0;
         async function worker() {
@@ -1448,7 +1450,7 @@ export function EbayListingsTable({
             let result: SmartSyncItemResult;
             try {
               const liveUnavailable = Boolean(candidate.ebayListingId && liveAmazonCheck.unavailableIds.has(candidate.ebayListingId));
-              if (smartSyncOptions.checkLiveAmazonPrices
+              if (runOptions.checkLiveAmazonPrices
                 && !liveUnavailable
                 && (!candidate.ebayListingId || !liveAmazonCheck.availableIds.has(candidate.ebayListingId))) {
                 result = {
@@ -1465,9 +1467,10 @@ export function EbayListingsTable({
               } else {
                 result = await processConfigurableSmartSyncItem(
                   candidate.listingId,
-                  smartSyncOptions,
-                  smartSyncOptions.checkLiveAmazonPrices && !liveUnavailable,
+                  runOptions,
+                  runOptions.checkLiveAmazonPrices && !liveUnavailable,
                   liveUnavailable,
+                  scheduled,
                 );
               }
             } catch (error) {
@@ -1495,6 +1498,7 @@ export function EbayListingsTable({
 
             setSyncResults([...allResults]);
             setSyncProgress({ stage: "running", total: syncTotal, ...totals });
+            if (scheduled) document.dispatchEvent(new CustomEvent("sellfinity:daily-user-progress", { detail: { total: syncTotal, ...totals } }));
 
             if (result.ebayListingId && result.outcome === "ended") {
               setRows((current) => current.filter((row) => row.ebayListingId !== result.ebayListingId));
@@ -1523,10 +1527,11 @@ export function EbayListingsTable({
         if (changedPrices.length > 0) await recordSuggestedPriceActivity(changedPrices);
 
         setSyncProgress({ stage: "complete", total: syncTotal, ...totals });
+        if (scheduled) document.dispatchEvent(new CustomEvent("sellfinity:daily-user-complete", { detail: { total: syncTotal, ...totals } }));
         setNotice({
           text: syncTotal === 0
             ? "Smart Sync found no eligible listings for the selected operations."
-            : `${retryLastSyncErrorsOnly ? "Smart Sync retry" : "Smart Sync"} complete: ${totals.successful} successful, ${totals.needsAttention} need attention, and ${totals.errors} errors. ${totals.updated} updated, ${totals.ended} ended, and ${totals.relisted} relisted.${liveAmazonCheck.skippedFresh ? ` ${liveAmazonCheck.skippedFresh} recently checked Amazon listing${liveAmazonCheck.skippedFresh === 1 ? " was" : "s were"} reused.` : ""}${liveAmazonCheck.unavailableIds.size ? ` Amazon confirmed ${liveAmazonCheck.unavailableIds.size} unavailable listing${liveAmazonCheck.unavailableIds.size === 1 ? "" : "s"}; ${smartSyncOptions.endUnavailableListings ? "eligible listings were ended automatically" : "they were flagged for your review"}.` : ""}`,
+            : `${retryLastSyncErrorsOnly ? "Smart Sync retry" : "Smart Sync"} complete: ${totals.successful} successful, ${totals.needsAttention} need attention, and ${totals.errors} errors. ${totals.updated} updated, ${totals.ended} ended, and ${totals.relisted} relisted.${liveAmazonCheck.skippedFresh ? ` ${liveAmazonCheck.skippedFresh} recently checked Amazon listing${liveAmazonCheck.skippedFresh === 1 ? " was" : "s were"} reused.` : ""}${liveAmazonCheck.unavailableIds.size ? ` Amazon confirmed ${liveAmazonCheck.unavailableIds.size} unavailable listing${liveAmazonCheck.unavailableIds.size === 1 ? "" : "s"}; ${runOptions.endUnavailableListings ? "eligible listings were ended automatically" : "they were flagged for your review"}.` : ""}`,
           error: totals.errors > 0,
         });
         setSmartSyncOpen(false);
@@ -1535,9 +1540,22 @@ export function EbayListingsTable({
       } catch (error) {
         setSyncProgress((current) => current && ({ ...current, stage: "complete" }));
         setNotice({ text: error instanceof Error ? error.message : "Smart Sync could not start.", error: true });
+        if (scheduled) document.dispatchEvent(new CustomEvent("sellfinity:daily-user-error"));
       }
     });
   }
+
+  const dailyUserSync = useRef(syncListingHealth);
+  useEffect(() => { dailyUserSync.current = syncListingHealth; });
+  useEffect(() => {
+    const run = () => dailyUserSync.current(true);
+    document.addEventListener("sellfinity:daily-user-sync", run);
+    document.documentElement.dataset.sellfinityUserSyncReady = "true";
+    return () => {
+      document.removeEventListener("sellfinity:daily-user-sync", run);
+      delete document.documentElement.dataset.sellfinityUserSyncReady;
+    };
+  }, []);
 
   function cleanUp() {
     const toReprice = rows.filter((row) => !row.verifiedWinner && !row.priceLocked && canApplySuggestedPrice(row, sitewideDiscountBps, adRateBps));
@@ -1936,7 +1954,7 @@ export function EbayListingsTable({
               </div>
               <p className="mt-3 max-w-3xl text-xs leading-5 text-slate-600">Administrator data remains the normal shared source. Enable live Amazon checking when you want the signed-in Chrome helper to verify current item price and shipping before Smart Sync calculates profit.</p>
             </div>
-            <div className="flex flex-wrap items-center gap-2"><a href="/downloads/sellfinity-tracking-helper.zip?v=1.3.7" download className="text-xs font-semibold text-indigo-700 hover:underline">Chrome helper v1.3.7</a><Badge tone="indigo">{selectedSmartSyncOptionCount(smartSyncOptions)} selected</Badge></div>
+            <div className="flex flex-wrap items-center gap-2"><a href="/downloads/sellfinity-tracking-helper.zip?v=1.4.0" download className="text-xs font-semibold text-indigo-700 hover:underline">Chrome helper v1.4.0</a><Badge tone="indigo">{selectedSmartSyncOptionCount(smartSyncOptions)} selected</Badge></div>
           </div>
           <div className="border-b border-slate-100 bg-white/70 px-4 py-3 sm:px-5">
             <p className="mb-2 text-[10px] font-semibold uppercase tracking-[.1em] text-slate-400">Run on</p>
@@ -1989,7 +2007,7 @@ export function EbayListingsTable({
             <div className="flex flex-wrap items-center gap-2">
               <button type="button" disabled={pending} onClick={() => setSmartSyncOptions({ ...DEFAULT_SMART_SYNC_OPTIONS })} className="rounded-lg px-2.5 py-2 text-xs font-semibold text-slate-500 transition hover:bg-slate-100 hover:text-slate-800 disabled:opacity-50">Recommended</button>
               <button type="button" disabled={pending} onClick={() => setSmartSyncOptions({ refreshEbayListings: true, refreshAmazonData: true, checkLiveAmazonPrices: true, applySuggestedPrices: true, updateListingImages: true, endUnavailableListings: true, relistRecoveredProducts: true })} className="rounded-lg px-2.5 py-2 text-xs font-semibold text-slate-500 transition hover:bg-slate-100 hover:text-slate-800 disabled:opacity-50">Select all</button>
-              <Button disabled={pending || !hasSelectedSmartSyncOption(smartSyncOptions) || (smartSyncScope === "SELECTED" && selected.size === 0)} onClick={syncListingHealth} className="min-w-36 border-0 bg-gradient-to-r from-indigo-600 to-violet-600 text-white shadow-md shadow-indigo-200/70 hover:from-indigo-500 hover:to-violet-500">
+              <Button disabled={pending || !hasSelectedSmartSyncOption(smartSyncOptions) || (smartSyncScope === "SELECTED" && selected.size === 0)} onClick={() => syncListingHealth()} className="min-w-36 border-0 bg-gradient-to-r from-indigo-600 to-violet-600 text-white shadow-md shadow-indigo-200/70 hover:from-indigo-500 hover:to-violet-500">
                 <SmartSyncIcon spinning={pending} />
                 {pending ? "Syncing…" : retryLastSyncErrorsOnly ? "Retry last errors" : "Run Smart Sync"}
               </Button>

@@ -62,3 +62,33 @@ After updating the extension files, click the extension's **Reload** button on
 The extension does not use clipboard access. It only reads supported
 Amazon/carrier tracking pages opened from Sellfinity and submits tracking to
 the matching fulfillment row.
+
+## Daily unattended admin checks (v1.4.0)
+
+Install/reload this version on the dedicated computer. Sign in to Amazon and
+Sellfinity as an administrator using that Chrome profile. Open the helper popup,
+enable **Run automatically every day**, choose a local start time (default
+02:00), and click **Save daily schedule**. **Run catalog check now** starts the
+same scan immediately. Scheduled checks cover the entire non-archived admin
+catalog and save prices, shipping and confirmed unavailability to the shared
+database using the signed-in browser, without Rainforest credits.
+
+Leave Chrome running and keep the computer awake with a network connection.
+The schedule catches up after startup if today's time was missed. If Chrome
+closed mid-scan, the next startup checks remaining records, skipping records
+updated within the last 24 hours. Check progress and the last saved result in
+the popup. Stop price check cancels the current scan; disable the daily schedule
+to prevent the next day's run. Amazon CAPTCHA and expired sign-ins require
+manual attention. Unreadable or blocked pages do not mark items unavailable.
+
+For a seller's dedicated computer, select **User: sync prices and delist
+unavailable** in the popup, enable the schedule and save the time. This checks
+all active tracked listings against the shared admin catalog and applies the
+seller's pricing strategy, advertising rate and profit settings to eBay.
+No Amazon tabs or Rainforest requests are used for the user schedule. Missing
+admin records stay unchanged for review. Confirmed unavailable sources are
+delisted even for Verified Winners and price locks; those locks only prevent
+automatic price changes on available products. Relisting and image changes
+remain manual. Progress and results appear in Listings and Publishing History.
+Keep this Chrome profile signed in as the intended seller with eBay connected.
+Set the seller schedule after the admin computer normally finishes its scan.

@@ -15,9 +15,13 @@ export class NoUsableAmazonSourceError extends Error {
  * provider lookup. Rainforest's durable request lease deduplicates concurrent
  * first requests; the completed snapshot is then reused by every seller.
  */
-export async function getAdminAmazonSourceWithFallback(rawAsin: string) {
+export async function getAdminAmazonSourceWithFallback(rawAsin: string, storedOnly = false) {
   const asin = rawAsin.trim().toUpperCase();
   let source = await db.adminArbitrageProduct.findUnique({ where: { asin } });
+  if (storedOnly) {
+    if (source && (!source.amazonInStock || source.amazonPriceCents > 0)) return { ...source, sharedCatalogPopulated: false };
+    throw new Error(`Administrator Amazon data is not available for ASIN ${asin}. Daily sync left the listing unchanged.`);
+  }
   if (source && source.amazonPriceCents > 0) return { ...source, sharedCatalogPopulated: false };
 
   const populated = await getSharedAmazonProduct(asin, { providerOnCatalogMiss: true });

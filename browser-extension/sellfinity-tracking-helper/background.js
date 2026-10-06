@@ -6,6 +6,7 @@ const STATUS_KEY = "bulkRunStatuses";
 const MAX_REQUEST_AGE_MS = 12 * 60 * 60 * 1000;
 const FINISHED_STATUS_AGE_MS = 60 * 60 * 1000;
 const MAX_BULK_TABS = 4;
+importScripts("daily-check.js");
 
 async function runStatuses() {
   const stored = await chrome.storage.session.get(STATUS_KEY);
@@ -84,7 +85,7 @@ async function notifySource(request, message) {
       orderId: request.orderId,
       requestId: request.requestId
     });
-    await chrome.tabs.update(request.sourceTabId, { active: true });
+    if (!request.bulk) await chrome.tabs.update(request.sourceTabId, { active: true });
   } catch {
     // The originating Sellfinity tab may have been closed or reloaded.
   }

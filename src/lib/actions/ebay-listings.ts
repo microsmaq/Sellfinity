@@ -1391,6 +1391,7 @@ export async function prepareConfigurableSmartSync(
   options: SmartSyncOptions,
   retryLastErrorsOnly = false,
   selectedEbayListingIds?: string[],
+  scheduled = false,
 ): Promise<{ candidates: SmartSyncCandidate[]; ebayRefresh?: EbaySnapshotRefreshResult; error?: string }> {
   const user = await requireUser();
   if (!hasSelectedSmartSyncOption(options)) {
@@ -1450,7 +1451,7 @@ export async function prepareConfigurableSmartSync(
         },
         select: { id: true, ebayListingId: true, title: true },
         orderBy: [{ status: "asc" }, { publishedAt: "asc" }, { id: "asc" }],
-        take: 1_000,
+        ...(scheduled ? {} : { take: 1_000 }),
       })
     : [];
   return {
@@ -1534,6 +1535,7 @@ export async function processConfigurableSmartSyncItem(
   options: SmartSyncOptions,
   liveAmazonPriceChecked = false,
   liveAmazonUnavailableConfirmed = false,
+  storedAdminDataOnly = false,
 ): Promise<SmartSyncItemResult> {
   const user = await requireUser();
   if (!hasSelectedSmartSyncOption(options)) throw new Error("Select at least one Smart Sync action.");
@@ -1573,7 +1575,7 @@ export async function processConfigurableSmartSyncItem(
     const asin = listing.product.supplierProductId.trim().toUpperCase();
     let adminSource: Awaited<ReturnType<typeof getAdminAmazonSourceWithFallback>>;
     try {
-      adminSource = await getAdminAmazonSourceWithFallback(asin);
+      adminSource = await getAdminAmazonSourceWithFallback(asin, storedAdminDataOnly);
     } catch (error) {
       if (error instanceof NoUsableAmazonSourceError) {
         if (shouldEndUnavailableSourceListing({

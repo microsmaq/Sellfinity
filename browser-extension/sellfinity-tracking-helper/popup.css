@@ -20,3 +20,6 @@ button:disabled { cursor: default; opacity: .4; }
 details { margin-top: 12px; color: #475569; font-size: 11px; }
 summary { cursor: pointer; font-weight: 700; }
 .privacy { margin-top: 12px; padding-top: 10px; border-top: 1px solid #cbd5e1; color: #64748b; font-size: 11px; }
+label { display: block; margin: 10px 0; }
+input[type="time"] { margin-left: 8px; padding: 5px; border: 1px solid #cbd5e1; border-radius: 6px; }
+#save-daily, #run-daily { margin-top: 6px; color: #4338ca; border-color: #c7d2fe; }

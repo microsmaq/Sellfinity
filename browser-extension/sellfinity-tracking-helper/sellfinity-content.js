@@ -280,4 +280,38 @@
       }
     }
   });
+  chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+    if (message?.type === "START_DAILY_USER_SYNC") {
+      if (document.documentElement.dataset.sellfinityUserSyncReady !== "true") { sendResponse({ ok: false }); return; }
+      document.dispatchEvent(new CustomEvent("sellfinity:daily-user-sync"));
+      sendResponse({ ok: true });
+      return true;
+    }
+    if (message?.type !== "START_DAILY_ADMIN_CHECK") return;
+    if (document.documentElement.dataset.sellfinityAdminCheckerReady !== "true") {
+      sendResponse({ ok: false });
+      return;
+    }
+    document.dispatchEvent(new CustomEvent("sellfinity:daily-admin-check", { detail: { resume: Boolean(message.resume) } }));
+    sendResponse({ ok: true });
+    return true;
+  });
+  document.addEventListener("sellfinity:daily-check-complete", (event) => {
+    const detail = event.detail;
+    chrome.runtime.sendMessage({ type: "DAILY_CHECK_COMPLETE", detail: detail ? `${detail.updated} updated · ${detail.unavailable} unavailable · ${detail.failed} could not be verified` : "No remaining catalog products to check" }).catch(() => {});
+  });
+  document.addEventListener("sellfinity:daily-check-error", () => {
+    chrome.runtime.sendMessage({ type: "DAILY_CHECK_COMPLETE", failed: true, detail: "Catalog check could not start or save its results. Open the admin catalog to review the error, then Run now." }).catch(() => {});
+  });
+  document.addEventListener("sellfinity:daily-user-progress", (event) => {
+    const result = event.detail;
+    chrome.runtime.sendMessage({ type: "DAILY_USER_PROGRESS", detail: `${result.completed}/${result.total} processed · ${result.updated} updated · ${result.ended} delisted · ${result.needsAttention} need review · ${result.errors} errors` }).catch(() => {});
+  });
+  document.addEventListener("sellfinity:daily-user-complete", (event) => {
+    const result = event.detail;
+    chrome.runtime.sendMessage({ type: "DAILY_CHECK_COMPLETE", failed: result.errors > 0, detail: `${result.updated} updated · ${result.ended} delisted · ${result.needsAttention} need review · ${result.errors} errors` }).catch(() => {});
+  });
+  document.addEventListener("sellfinity:daily-user-error", () => {
+    chrome.runtime.sendMessage({ type: "DAILY_CHECK_COMPLETE", failed: true, detail: "User sync failed. Open Listings to review the error and reconnect eBay if needed." }).catch(() => {});
+  });
 })();

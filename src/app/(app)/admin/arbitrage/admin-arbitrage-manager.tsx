@@ -409,11 +409,15 @@ export function AdminArbitrageManager({
             error: failed > 0,
           });
           router.refresh();
+          document.dispatchEvent(new CustomEvent("sellfinity:daily-check-complete", { detail: { updated, unavailable, failed } }));
+        }).catch(() => {
+          setNotice({ text: "Some Amazon results could not be saved. Check your connection and run the check again.", error: true });
+          document.dispatchEvent(new CustomEvent("sellfinity:daily-check-error"));
         });
       } else if (detail.status === "cancelled") {
         setNotice({ text: `Live Amazon refresh stopped after ${detail.processed ?? 0}/${detail.total ?? 0} products. Completed updates were kept.`, error: false });
       } else if (detail.status === "error") {
-        setNotice({ text: "The Chrome helper could not start the admin Amazon refresh. Reload helper v1.3.7 and try again.", error: true });
+        setNotice({ text: "The Chrome helper could not start the admin Amazon refresh. Reload helper v1.4.0 and try again.", error: true });
       }
     }
     document.addEventListener("sellfinity:amazon-price-found", receiveAmazonPrice);
@@ -445,8 +449,8 @@ export function AdminArbitrageManager({
     });
   }
 
-  function startLiveAmazonRefresh() {
-    if (liveAmazonScope === "SELECTED" && selected.size === 0) {
+  function startLiveAmazonRefresh(scheduled = false, resume = false) {
+    if (!scheduled && liveAmazonScope === "SELECTED" && selected.size === 0) {
       setNotice({ text: "Select at least one catalog product or choose all catalog products.", error: true });
       return;
     }
@@ -454,13 +458,21 @@ export function AdminArbitrageManager({
     setScanProgress(null);
     setRefreshProgress(null);
     startTransition(async () => {
-      const prepared = await prepareAdminLiveAmazonRefresh(liveAmazonScope === "SELECTED" ? [...selected] : undefined, skipFreshAmazon);
+      let prepared: Awaited<ReturnType<typeof prepareAdminLiveAmazonRefresh>>;
+      try {
+        prepared = await prepareAdminLiveAmazonRefresh(!scheduled && liveAmazonScope === "SELECTED" ? [...selected] : undefined, scheduled ? resume : skipFreshAmazon);
+      } catch {
+        setNotice({ text: "Amazon catalog check could not start. Confirm your admin session and try again.", error: true });
+        if (scheduled) document.dispatchEvent(new CustomEvent("sellfinity:daily-check-error"));
+        return;
+      }
       liveAmazonSkippedFresh.current = prepared.skippedFresh;
       if (!prepared.requests.length) {
+        if (scheduled) document.dispatchEvent(new CustomEvent("sellfinity:daily-check-complete"));
         setNotice({ text: prepared.skippedFresh ? `Nothing to refresh. ${prepared.skippedFresh.toLocaleString()} product${prepared.skippedFresh === 1 ? " was" : "s were"} checked within the last 24 hours.` : "No eligible Amazon catalog products were found.", error: false });
         return;
       }
-      if (prepared.requests.length >= 250 && !window.confirm(`This will open and check ${prepared.requests.length.toLocaleString()} unique Amazon products and may take a long time. Continue?`)) return;
+      if (!scheduled && prepared.requests.length >= 250 && !window.confirm(`This will open and check ${prepared.requests.length.toLocaleString()} unique Amazon products and may take a long time. Continue?`)) return;
       liveAmazonSavePromises.current = [];
       liveAmazonUnavailableIds.current = new Set();
       liveAmazonUpdatedIds.current = new Set();
@@ -468,11 +480,25 @@ export function AdminArbitrageManager({
       await new Promise<void>((resolve) => window.requestAnimationFrame(() => window.requestAnimationFrame(() => resolve())));
       liveAmazonStartupTimer.current = window.setTimeout(() => {
         setLiveAmazonProgress((current) => current?.status === "starting" ? { ...current, status: "error" } : current);
-        setNotice({ text: "The Chrome helper did not respond. Reload helper v1.3.7, refresh this page, then try again.", error: true });
+        setNotice({ text: "The Chrome helper did not respond. Reload helper v1.4.0, refresh this page, then try again.", error: true });
       }, 8_000);
       document.dispatchEvent(new CustomEvent("sellfinity:bulk-amazon-price-check", { detail: { requests: prepared.requests } }));
     });
   }
+
+  const dailyRefresh = useRef(startLiveAmazonRefresh);
+  useEffect(() => {
+    dailyRefresh.current = startLiveAmazonRefresh;
+  });
+  useEffect(() => {
+    const start = (event: Event) => dailyRefresh.current(true, Boolean((event as CustomEvent<{ resume?: boolean }>).detail?.resume));
+    document.addEventListener("sellfinity:daily-admin-check", start);
+    document.documentElement.dataset.sellfinityAdminCheckerReady = "true";
+    return () => {
+      document.removeEventListener("sellfinity:daily-admin-check", start);
+      delete document.documentElement.dataset.sellfinityAdminCheckerReady;
+    };
+  }, []);
 
   function stopLiveAmazonRefresh() {
     document.dispatchEvent(new CustomEvent("sellfinity:stop-amazon-price-check"));
@@ -939,9 +965,9 @@ export function AdminArbitrageManager({
               <input type="checkbox" checked={skipFreshAmazon} disabled={pending || liveAmazonRunning} onChange={(event) => setSkipFreshAmazon(event.target.checked)} className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500" />
               Skip checked in last 24 hours
             </label>
-            <Button type="button" disabled={pending || liveAmazonRunning || (liveAmazonScope === "SELECTED" && selected.size === 0)} onClick={startLiveAmazonRefresh}>{liveAmazonRunning ? "Checking Amazon…" : "Check live prices & shipping"}</Button>
+            <Button type="button" disabled={pending || liveAmazonRunning || (liveAmazonScope === "SELECTED" && selected.size === 0)} onClick={() => startLiveAmazonRefresh()}>{liveAmazonRunning ? "Checking Amazon…" : "Check live prices & shipping"}</Button>
             {liveAmazonRunning && <Button type="button" variant="danger" onClick={stopLiveAmazonRefresh}>Stop</Button>}
-            <a href="/downloads/sellfinity-tracking-helper.zip?v=1.3.7" download className="text-xs font-semibold text-indigo-700 hover:underline">Chrome helper v1.3.7</a>
+            <a href="/downloads/sellfinity-tracking-helper.zip?v=1.4.0" download className="text-xs font-semibold text-indigo-700 hover:underline">Chrome helper v1.4.0</a>
           </div>
         </div>
       </Card>
