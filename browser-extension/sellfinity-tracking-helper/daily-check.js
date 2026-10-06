@@ -22,6 +22,7 @@ async function runDailyCheck(force = false, resume = false) {
   try {
     const settings = await dailySettings();
     const userSync = settings.mode === "USER";
+    if ((await catalogJob())?.status === "running") return;
     const now = new Date();
     const [hours, minutes] = settings.time.split(":").map(Number);
     if (!force && (!settings.enabled || settings.lastDay === localDay(now) || now.getHours() * 60 + now.getMinutes() < hours * 60 + minutes)) return;

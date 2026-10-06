@@ -20,6 +20,7 @@ function scheduler(settings: Record<string, unknown>, active = false) {
       alarms: { create: async () => {}, onAlarm: { addListener() {} } },
     },
     runStatuses: async () => active ? [{ mode: "PRICE", status: "running" }] : [],
+    catalogJob: async () => null,
     Date, setTimeout,
   };
   runInNewContext(readFileSync("browser-extension/sellfinity-tracking-helper/daily-check.js", "utf8"), context);

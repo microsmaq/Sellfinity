@@ -61,6 +61,8 @@ export function sharedAmazonSnapshotData(product: ScrapedProduct) {
     amazonTitle: product.title,
     amazonPriceCents: product.priceCents,
     amazonShippingCents: product.shippingCostCents,
+    amazonShippingVerified: true,
+    amazonImportDetailsJson: "{}",
     amazonUrl: product.sourceUrl,
     amazonImageUrl: product.imageUrls[0] ?? null,
     amazonBrand: product.brand,
@@ -98,6 +100,9 @@ export async function getSharedAmazonProduct(
 
   const existing = await db.adminArbitrageProduct.findUnique({ where: { asin } });
   if (existing) {
+    if (JSON.parse(existing.amazonImportDetailsJson || "{}").availability === "UNKNOWN" || (existing.amazonInStock && existing.amazonShippingVerified === false)) {
+      throw new Error("Imported Amazon availability or shipping needs manual verification before this product can be used.");
+    }
     const stored = sharedRowToScrapedProduct(existing);
     const usableSnapshot = stored.priceCents > 0 && stored.imageUrls.length > 0;
     if (usableSnapshot) return stored.inStock ? stored : null;

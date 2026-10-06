@@ -10,6 +10,23 @@
     <header><div><h1>Sellfinity Helper</h1><p id="version" class="version"></p></div><span class="live-dot" title="Extension is running"></span></header>
     <p class="intro">Amazon price and tracking activity appears here while Sellfinity is open.</p>
     <section class="run-card">
+      <strong>Import Amazon products</strong>
+      <p class="detail">Open an Amazon product or Best Sellers page, then capture it. New ASINs are saved as admin candidates; existing products are skipped.</p>
+      <button id="capture-product" type="button">Add Amazon product to Sellfinity</button>
+      <button id="capture-bestsellers" type="button">Collect this bestseller page</button>
+      <p id="catalog-detail" class="detail" role="status">No import running.</p>
+      <button id="stop-catalog" type="button">Stop import</button>
+      <button id="resume-catalog" type="button">Resume import</button>
+      <details><summary>Daily bestseller discovery</summary>
+        <label><input id="discovery-enabled" type="checkbox"> Discover new products daily</label>
+        <label>Local start time <input id="discovery-time" type="time" value="01:00"></label>
+        <label>New-product target <input id="discovery-limit" type="number" min="1" max="1000" value="100"></label>
+        <label>Amazon Best Sellers category URLs (one per line)<textarea id="discovery-pages" rows="4"></textarea></label>
+        <p class="detail">Checks the selected pages and skips saved ASINs. Stops at the target or when the selected pages are exhausted. New candidates require separate eBay research.</p>
+        <button id="save-discovery" type="button">Save discovery schedule</button>
+      </details>
+    </section>
+    <section class="run-card">
       <div class="run-heading"><strong>Daily automatic updates</strong></div>
       <label>Task <select id="daily-mode"><option value="ADMIN">Admin: check live Amazon catalog</option><option value="USER">User: sync prices and delist unavailable</option></select></label>
       <label><input id="daily-enabled" type="checkbox"> Run automatically every day</label>

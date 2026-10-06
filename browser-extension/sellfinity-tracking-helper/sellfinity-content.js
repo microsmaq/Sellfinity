@@ -1,4 +1,22 @@
 (() => {
+  chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+    if (message?.type !== "CATALOG_IMPORT_RPC") return;
+    if (document.documentElement.dataset.sellfinityCatalogImportReady !== "true") { sendResponse({ ok: false, notReady: true }); return; }
+    const requestId = crypto.randomUUID();
+    const receive = (event) => {
+      if (event.detail?.requestId !== requestId) return;
+      clearTimeout(timer);
+      document.removeEventListener("sellfinity:catalog-import-result", receive);
+      sendResponse(event.detail);
+    };
+    const timer = setTimeout(() => {
+      document.removeEventListener("sellfinity:catalog-import-result", receive);
+      sendResponse({ ok: false, error: "Catalog save timed out. Sign in as an administrator and retry." });
+    }, 60000);
+    document.addEventListener("sellfinity:catalog-import-result", receive);
+    document.dispatchEvent(new CustomEvent("sellfinity:catalog-import-request", { detail: { requestId, ...message.payload } }));
+    return true;
+  });
   const TOAST_ID = "sellfinity-tracking-helper-toast";
 
   function toast(message, tone = "info") {

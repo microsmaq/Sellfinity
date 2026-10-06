@@ -3,7 +3,7 @@ import { getAdminEbayProductByInput, researchAdminEbayMarket, searchAdminEbayPro
 import { estimateMargin } from "@/lib/fees";
 import { getScraper } from "@/lib/mirror";
 import { extractAsin } from "@/lib/mirror/scraper";
-import { sharedAmazonSnapshotData } from "@/lib/mirror/shared-catalog";
+import { sharedAmazonSnapshotData, sharedRowToScrapedProduct } from "@/lib/mirror/shared-catalog";
 import { arbitrageSuggestedPriceCents } from "./pricing";
 import {
   assessProductMatch,
@@ -63,8 +63,11 @@ export async function researchAdminCatalogProduct(id: string): Promise<void> {
   const item = await db.adminArbitrageProduct.findUnique({ where: { id } });
   if (!item) throw new Error("Catalog item no longer exists.");
 
-  // Refresh Amazon truth first so profitability never uses a stale variant.
-  const source = await getScraper().scrape(item.amazonUrl);
+  const imported = Boolean(JSON.parse(item.amazonImportDetailsJson || "{}").source);
+  if (imported && (item.amazonShippingVerified === false || !item.amazonInStock)) {
+    throw new Error("Verify imported Amazon availability and shipping before eBay research. Use the browser checker or manual import to correct it.");
+  }
+  const source = imported ? sharedRowToScrapedProduct(item) : await getScraper().scrape(item.amazonUrl);
   if (!source || !source.inStock || source.priceCents <= 0) {
     await db.adminArbitrageProduct.update({
       where: { id },
@@ -81,7 +84,7 @@ export async function researchAdminCatalogProduct(id: string): Promise<void> {
     });
     return;
   }
-  const sourceSnapshot = sharedAmazonSnapshotData(source);
+  const sourceSnapshot = { ...sharedAmazonSnapshotData(source), ...(imported && { amazonImportDetailsJson: item.amazonImportDetailsJson, amazonRefreshedAt: item.amazonRefreshedAt }) };
 
   const candidates = await searchAdminEbayProducts(source.title, 50);
   const attached = candidates.length
@@ -423,6 +426,7 @@ export async function approveAdminEbayCandidate(id: string): Promise<void> {
     throw new Error("Add or research an eBay candidate before approving the match.");
   }
   if (!item.amazonInStock) throw new Error("The Amazon source is unavailable and cannot be published.");
+  if (item.amazonShippingVerified === false) throw new Error("Verify Amazon shipping before approving this product.");
   await db.adminArbitrageProduct.update({
     where: { id },
     data: {

@@ -1,4 +1,5 @@
 import { requireAdmin } from "@/lib/auth";
+import Link from "next/link";
 import {
   listAdminCatalog,
   type AdminCatalogFilters,
@@ -93,6 +94,7 @@ export default async function AdminArbitragePage({
         title="Product intelligence"
         subtitle="Discover Amazon opportunities, verify equivalent eBay products, maintain shared market data, and control what sellers receive."
       />
+      <Link href="/admin/arbitrage/import" className="mb-4 inline-flex rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white">Import Amazon products · no paid research</Link>
       <AdminArbitrageManager
         data={data}
         filters={filters}

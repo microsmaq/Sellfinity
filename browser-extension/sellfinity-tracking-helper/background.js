@@ -7,6 +7,7 @@ const MAX_REQUEST_AGE_MS = 12 * 60 * 60 * 1000;
 const FINISHED_STATUS_AGE_MS = 60 * 60 * 1000;
 const MAX_BULK_TABS = 4;
 importScripts("daily-check.js");
+importScripts("catalog-import.js");
 
 async function runStatuses() {
   const stored = await chrome.storage.session.get(STATUS_KEY);

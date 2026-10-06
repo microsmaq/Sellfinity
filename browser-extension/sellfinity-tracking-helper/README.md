@@ -92,3 +92,30 @@ automatic price changes on available products. Relisting and image changes
 remain manual. Progress and results appear in Listings and Publishing History.
 Keep this Chrome profile signed in as the intended seller with eBay connected.
 Set the seller schedule after the admin computer normally finishes its scan.
+
+## No-credit catalog imports (v1.5.0)
+
+In Admin → Product intelligence, open **Import Amazon products**. Enter fields
+manually, upload/paste CSV using the template, or paste a JSON array. An AI
+computer-use agent can populate the same form. Review the preview and save.
+Blank shipping means unknown; 0 means verified free shipping. Existing ASINs
+are skipped unless you explicitly choose to replace them. Replacing returns
+the record to Pending review and clears previous eBay research.
+
+With an Amazon product tab open, click **Add Amazon product to Sellfinity** in
+the extension popup. It captures the selected ASIN, title, brand, variant,
+images, bullets, price, shipping and availability, then saves through your
+signed-in admin import page. **Collect this bestseller page** captures ranked
+cards on the open category page, skips ASINs already saved, and reads new
+product pages before saving. Bestseller rank is recorded with category, source
+URL and capture time; it is never treated as an exact sales count. Imports use
+no Rainforest, Countdown or eBay research calls and remain Pending review.
+
+For unattended discovery, expand **Daily bestseller discovery**, enter up to
+20 Amazon Best Sellers category/page URLs, set a time and a new-product target,
+then save. Include the page 2 URLs if you want those results too. The scan stops
+at the target or after exhausting those pages. The catalog import progress is
+saved across browser restarts; use Stop or Resume in the popup. Keep Chrome
+awake and signed in as an admin. CAPTCHA pauses the import with the Amazon tab
+left open for manual completion. Research and publish eBay matches separately
+from Product intelligence after reviewing captured information.

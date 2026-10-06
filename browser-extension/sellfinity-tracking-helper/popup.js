@@ -37,6 +37,13 @@ async function refreshStatus() {
     renderMode("TRACKING", response);
     const daily = await chrome.runtime.sendMessage({ type: "GET_DAILY_SETTINGS" });
     if (daily?.ok) document.getElementById("daily-detail").textContent = `${daily.settings.status || "Ready"} · ${daily.settings.detail || "Daily scheduling is off until enabled."}`;
+    const catalog = await chrome.runtime.sendMessage({ type: "GET_CATALOG_IMPORT_STATUS" });
+    if (catalog?.job) {
+      const job = catalog.job;
+      document.getElementById("catalog-detail").textContent = `${job.status} · ${job.added} added · ${job.skipped} skipped · ${job.failed} errors${job.detail ? ` · ${job.detail}` : ""}`;
+      document.getElementById("stop-catalog").disabled = job.status !== "running";
+      document.getElementById("resume-catalog").disabled = !["error", "cancelled"].includes(job.status);
+    }
   } catch {
     document.querySelectorAll(".detail").forEach((element) => { element.textContent = "Helper status is temporarily unavailable."; });
   }
@@ -74,4 +81,29 @@ document.getElementById("save-daily").addEventListener("click", async () => {
 document.getElementById("run-daily").addEventListener("click", async () => {
   await chrome.runtime.sendMessage({ type: "RUN_DAILY_NOW" });
   await refreshStatus();
+});
+
+async function catalogCommand(type, payload = {}) {
+  try {
+    const response = await chrome.runtime.sendMessage({ type, ...payload });
+    document.getElementById("catalog-detail").textContent = response?.ok ? "Request accepted." : response?.error || "Import could not start.";
+  } catch { document.getElementById("catalog-detail").textContent = "Reload the extension and the Amazon/Sellfinity tabs."; }
+}
+document.getElementById("capture-product").addEventListener("click", () => catalogCommand("IMPORT_CURRENT_AMAZON"));
+document.getElementById("capture-bestsellers").addEventListener("click", () => catalogCommand("IMPORT_CURRENT_BESTSELLERS"));
+document.getElementById("stop-catalog").addEventListener("click", () => catalogCommand("STOP_CATALOG_IMPORT"));
+document.getElementById("resume-catalog").addEventListener("click", () => catalogCommand("RESUME_CATALOG_IMPORT"));
+document.getElementById("save-discovery").addEventListener("click", () => catalogCommand("SAVE_DISCOVERY_SCHEDULE", {
+  enabled: document.getElementById("discovery-enabled").checked,
+  time: document.getElementById("discovery-time").value,
+  limit: Number(document.getElementById("discovery-limit").value),
+  pages: document.getElementById("discovery-pages").value.split(/\r?\n/).map((line) => line.trim()).filter(Boolean),
+}));
+void chrome.runtime.sendMessage({ type: "GET_CATALOG_IMPORT_STATUS" }).then((response) => {
+  const schedule = response?.schedule;
+  if (!schedule) return;
+  document.getElementById("discovery-enabled").checked = schedule.enabled;
+  document.getElementById("discovery-time").value = schedule.time;
+  document.getElementById("discovery-limit").value = schedule.limit;
+  document.getElementById("discovery-pages").value = schedule.pages.join("\n");
 });

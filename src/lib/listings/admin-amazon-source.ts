@@ -18,6 +18,12 @@ export class NoUsableAmazonSourceError extends Error {
 export async function getAdminAmazonSourceWithFallback(rawAsin: string, storedOnly = false) {
   const asin = rawAsin.trim().toUpperCase();
   let source = await db.adminArbitrageProduct.findUnique({ where: { asin } });
+  if (source?.amazonImportDetailsJson && JSON.parse(source.amazonImportDetailsJson).availability === "UNKNOWN") {
+    throw new Error("Amazon availability is unverified. Review the imported product before syncing.");
+  }
+  if (source?.amazonInStock && source.amazonShippingVerified === false) {
+    throw new Error("Amazon shipping is unverified. Review the imported shipping charge before pricing.");
+  }
   if (storedOnly) {
     if (source && (!source.amazonInStock || source.amazonPriceCents > 0)) return { ...source, sharedCatalogPopulated: false };
     throw new Error(`Administrator Amazon data is not available for ASIN ${asin}. Daily sync left the listing unchanged.`);

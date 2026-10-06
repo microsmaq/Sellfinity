@@ -60,6 +60,8 @@ export type AdminCatalogRow = {
   amazonTitle: string;
   amazonPriceCents: number;
   amazonShippingCents: number;
+  amazonShippingVerified?: boolean;
+  amazonImportDetailsJson?: string;
   amazonInStock: boolean;
   amazonRefreshedAt: string | null;
   amazonUrl: string;
@@ -310,7 +312,7 @@ export async function listAdminCatalog(params: {
 
   return {
     rows: items.map((item) => {
-      const suggestedPrice = suggestedPriceFor(item);
+      const suggestedPrice = item.amazonShippingVerified === false ? null : suggestedPriceFor(item);
       const margin = suggestedPrice
         ? estimateMargin(
             suggestedPrice,
@@ -341,6 +343,7 @@ export async function listAdminCatalog(params: {
  * Finder without disrupting its publishing, hiding, sorting, or export flows. */
 export async function publishCatalogProductToUsers(id: string): Promise<void> {
   const item = await db.adminArbitrageProduct.findUnique({ where: { id } });
+  if (item?.amazonShippingVerified === false || !item?.amazonInStock) throw new Error("Verify Amazon availability and shipping before publishing.");
   if (
     !item ||
     !item.ebayItemId ||

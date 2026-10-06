@@ -16,4 +16,14 @@ describe("daily user sync saved Amazon data", () => {
     await expect(getAdminAmazonSourceWithFallback("B012345678", true)).rejects.toThrow("left the listing unchanged");
     expect(mocks.lookup).not.toHaveBeenCalled();
   });
+  it("does not treat unverified imported availability as a reason to delist", async () => {
+    mocks.findUnique.mockResolvedValue({ amazonInStock: false, amazonPriceCents: 1299, amazonImportDetailsJson: '{"availability":"UNKNOWN"}' });
+    await expect(getAdminAmazonSourceWithFallback("B012345678", true)).rejects.toThrow("availability is unverified");
+    expect(mocks.lookup).not.toHaveBeenCalled();
+  });
+  it("does not price imported products with unknown shipping", async () => {
+    mocks.findUnique.mockResolvedValue({ amazonInStock: true, amazonPriceCents: 1299, amazonShippingVerified: false });
+    await expect(getAdminAmazonSourceWithFallback("B012345678", true)).rejects.toThrow("shipping is unverified");
+    expect(mocks.lookup).not.toHaveBeenCalled();
+  });
 });

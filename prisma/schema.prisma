@@ -173,6 +173,8 @@ model AdminArbitrageProduct {
   amazonTitle                 String
   amazonPriceCents            Int
   amazonShippingCents         Int       @default(0)
+  amazonShippingVerified      Boolean   @default(true)
+  amazonImportDetailsJson     String    @default("{}")
   amazonUrl                   String
   amazonImageUrl              String?
   // Complete shared Amazon snapshot. The first admin or seller lookup saves

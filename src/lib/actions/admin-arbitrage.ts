@@ -124,6 +124,8 @@ export async function adminUpdateAmazonCostsFromBrowser(
         data: {
           amazonPriceCents: priceCents,
           amazonShippingCents: nextShipping,
+          ...(shippingCents !== null && { amazonShippingVerified: true }),
+          amazonImportDetailsJson: JSON.stringify({ ...JSON.parse(row.amazonImportDetailsJson || "{}"), availability: "AVAILABLE" }),
           amazonInStock: true,
           amazonRefreshedAt: new Date(),
           suggestedPriceCents: suggested,
@@ -153,14 +155,15 @@ export async function adminUpdateAmazonCostsFromBrowser(
 export async function adminMarkAmazonUnavailableFromBrowser(rawIds: string[]): Promise<{ updatedIds: string[] } | { error: string }> {
   await requireAdmin();
   const ids = z.array(z.string().min(1).max(100)).min(1).max(100).parse([...new Set(rawIds)]);
-  const result = await db.adminArbitrageProduct.updateMany({
-    where: { id: { in: ids } },
-    data: { amazonInStock: false, amazonRefreshedAt: new Date() },
-  });
-  if (!result.count) return { error: "No matching admin catalog products were found." };
+  const rows = await db.adminArbitrageProduct.findMany({ where: { id: { in: ids } } });
+  if (!rows.length) return { error: "No matching admin catalog products were found." };
+  await db.$transaction(rows.map((row) => db.adminArbitrageProduct.update({
+    where: { id: row.id },
+    data: { amazonInStock: false, amazonRefreshedAt: new Date(), amazonImportDetailsJson: JSON.stringify({ ...JSON.parse(row.amazonImportDetailsJson || "{}"), availability: "UNAVAILABLE" }) },
+  })));
   revalidatePath("/admin/arbitrage");
   revalidatePath("/arbitrage");
-  return { updatedIds: ids };
+  return { updatedIds: rows.map((row) => row.id) };
 }
 
 export async function adminAddAmazonItem(
