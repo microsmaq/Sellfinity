@@ -41,6 +41,7 @@ import { generateMirrorDescription } from "@/lib/mirror/seo";
 import { recordListingActivity } from "@/lib/listings/activity-history";
 import { failedSmartSyncListingIds, SMART_SYNC_RECOVERABLE_END_REASONS, shouldEndUnavailableSourceListing } from "@/lib/listings/smart-sync-policy";
 import { hasSelectedSmartSyncOption, type SmartSyncOptions } from "@/lib/listings/smart-sync-options";
+import { classifySmartSyncError, type SyncErrorAdvice } from "@/lib/ai/jev-workflows";
 import { getAdminAmazonSourceWithFallback, NoUsableAmazonSourceError } from "@/lib/listings/admin-amazon-source";
 import { applyShippingStrategyToDescription, applyShippingStrategyToTitle } from "@/lib/ebay/description";
 import { resolveTargetProfitCents } from "@/lib/listings/target-profit";
@@ -1313,6 +1314,7 @@ export type SmartSyncItemResult = {
   originalPriceCents: number;
   newPriceCents: number;
   error?: string;
+  errorAdvice?: SyncErrorAdvice;
 };
 
 async function refreshEbayListingSnapshotsForUser(userId: string): Promise<EbaySnapshotRefreshResult> {
@@ -1793,6 +1795,7 @@ export async function processConfigurableSmartSyncItem(
       actions,
       newPriceCents: listing.priceCents,
       error: message.slice(0, 500),
+      errorAdvice: await classifySmartSyncError(message),
     };
   }
 }
@@ -1825,7 +1828,7 @@ export async function recordSmartSyncActivity(
         sourcePriceCents: listing.product.costCents,
         listingPriceCents: item.newPriceCents,
         ok: item.status !== "error",
-        error: item.error ?? null,
+        error: item.error ? [item.error, item.errorAdvice?.guidance].filter(Boolean).join(" · ") : null,
       }];
     }),
   });

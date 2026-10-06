@@ -1,4 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+vi.mock("server-only", () => ({}));
+vi.mock("@/lib/db", () => ({ db: {} }));
+vi.mock("@/lib/ai/jev", async (importOriginal) => {
+  const original = await importOriginal<typeof import("@/lib/ai/jev")>();
+  return { ...original, screenProductPairWithJev: vi.fn().mockResolvedValue(null) };
+});
+import { screenProductPairWithJev } from "@/lib/ai/jev";
 import {
   assessProductMatch,
   assessProductMatchRules,
@@ -8,6 +15,20 @@ import {
 describe("arbitrage product identity", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
+    vi.mocked(screenProductPairWithJev).mockResolvedValue(null);
+  });
+
+  it("keeps strong Jev conflicts out of approval without a visual API call", async () => {
+    vi.mocked(screenProductPairWithJev).mockResolvedValue({ sameProductProbability: 0.001, conflictProbability: 0.999, route: "REJECT", durationMs: 10 });
+    const fetcher = vi.fn();
+    vi.stubGlobal("fetch", fetcher);
+    const result = await assessProductMatch(
+      { title: "Acme Cotton Black Knee Strap Support" },
+      { title: "Acme Silicone Red Knee Strap Support" },
+    );
+    expect(result).toMatchObject({ verdict: "REJECTED", method: "JEV" });
+    expect(isApprovedProductMatch(result)).toBe(false);
+    expect(fetcher).not.toHaveBeenCalled();
   });
 
   it("approves the same product with reordered marketplace wording", () => {

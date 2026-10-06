@@ -1,6 +1,7 @@
 import "server-only";
 import { db } from "@/lib/db";
 import { researchAdminCatalogProduct } from "./admin-research";
+import { prioritizeCatalogReview } from "@/lib/ai/jev-workflows";
 
 export async function catalogReviewSettings() {
   return db.adminCatalogReviewAutomation.upsert({ where: { id: "main" }, create: { id: "main" }, update: {} });
@@ -26,9 +27,10 @@ export async function runAutomaticCatalogReview(force = false) {
     };
     const candidates = await db.adminArbitrageProduct.findMany({
       where, orderBy: { createdAt: "asc" }, take: settings.dailyLimit,
-      select: { id: true, asin: true },
+      select: { id: true, asin: true, amazonTitle: true, ebayTitle: true },
     });
-    for (const candidate of candidates) {
+    const prioritized = await prioritizeCatalogReview(candidates);
+    for (const candidate of prioritized) {
       if (Date.now() + 90_000 > deadline) break;
       try {
         await researchAdminCatalogProduct(candidate.id, { automatic: true });

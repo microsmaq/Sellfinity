@@ -6,6 +6,8 @@ import { Badge, Card, PageHeader } from "@/components/ui";
 import { countdownConfigured } from "@/lib/ebay/countdown";
 import { catalogReviewSettings } from "@/lib/arbitrage/automatic-review";
 import { CatalogReviewPreferences } from "./catalog-review-preferences";
+import { jevConfiguration } from "@/lib/ai/jev";
+import { JevStatus } from "./jev-status";
 
 export const metadata = { title: "Admin settings — Sellfinity" };
 export const maxDuration = 300;
@@ -18,6 +20,7 @@ export default async function AdminSettingsPage() {
   const summary = JSON.parse(review.lastSummaryJson) as { processed?: number; published?: number; review?: number; failed?: number };
   return <div className="space-y-5"><PageHeader title="Admin settings" subtitle="Platform-wide sourcing, publishing, provider, and data-governance rules. Seller pricing preferences are intentionally excluded." />
     <div className="grid gap-5 xl:grid-cols-2">
+      <JevStatus {...jevConfiguration()} />
       <CatalogReviewPreferences enabled={review.enabled} dailyLimit={review.dailyLimit} lastRun={review.lastRunAt?.toISOString() ?? null} summary={`${summary.processed ?? 0} processed, ${summary.published ?? 0} published, ${summary.review ?? 0} need review, ${summary.failed ?? 0} failed`} />
       <Card className="p-5"><div className="flex items-center justify-between"><h2 className="font-bold text-slate-950">Automated product discovery</h2><Badge tone="green">Enabled</Badge></div><dl className="mt-5 space-y-3 text-sm"><div className="flex justify-between gap-4"><dt className="text-slate-500">Daily opportunity target</dt><dd className="font-semibold">{ARBITRAGE_DAILY_TARGET}</dd></div><div className="flex justify-between gap-4"><dt className="text-slate-500">Amazon refresh</dt><dd className="text-right font-semibold">{AMAZON_REFRESH_CRON_HOUR}:00 · {ARBITRAGE_CRON_TIME_ZONE}</dd></div><div className="flex justify-between gap-4"><dt className="text-slate-500">Arbitrage scan</dt><dd className="text-right font-semibold">03:00 · {ARBITRAGE_CRON_TIME_ZONE}</dd></div></dl><p className="mt-4 text-xs leading-5 text-slate-500">Amazon costs refresh before discovery so published profitability does not rely on stale landed costs.</p></Card>
       <Card className="p-5"><h2 className="font-bold text-slate-950">Publishing quality gates</h2><dl className="mt-5 space-y-3 text-sm"><div className="flex justify-between"><dt className="text-slate-500">Minimum match confidence</dt><dd className="font-semibold">{AUTO_PUBLISH_MIN_MATCH_CONFIDENCE}%</dd></div><div className="flex justify-between"><dt className="text-slate-500">Minimum margin</dt><dd className="font-semibold">{AUTO_PUBLISH_MIN_MARGIN_PCT}%</dd></div><div className="flex justify-between"><dt className="text-slate-500">Shared catalog required</dt><dd><Badge tone="green">Yes</Badge></dd></div><div className="flex justify-between"><dt className="text-slate-500">Seller Rainforest usage</dt><dd><Badge tone="green">Shared cache first</Badge></dd></div></dl></Card>

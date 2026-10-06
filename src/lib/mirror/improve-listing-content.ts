@@ -1,5 +1,6 @@
 import { EBAY_TITLE_MAX } from "@/lib/listings/generate";
 import type { ScrapedProduct } from "./scraper";
+import { checkGeneratedListingCopy } from "@/lib/ai/jev-workflows";
 
 export type ImprovedListingContent = {
   title: string;
@@ -139,6 +140,10 @@ export async function improveListingContent(
     }
     const text = responseText(await response.json());
     const content = text ? parseContent(text) : null;
+    if (content) {
+      const concern = await checkGeneratedListingCopy(source, content);
+      if (concern) return { ok: false, error: concern };
+    }
     return content
       ? { ok: true, content }
       : { ok: false, error: "AI returned unusable listing copy." };

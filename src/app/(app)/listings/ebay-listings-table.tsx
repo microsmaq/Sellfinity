@@ -403,6 +403,7 @@ function SmartSyncStatus({
                   {result.actions.length > 0 && <p className="mt-0.5 text-xs leading-5 text-slate-600">{result.actions.join(" · ")}</p>}
                   {result.originalPriceCents !== result.newPriceCents && <p className="mt-0.5 text-xs font-medium tabular-nums text-slate-600">{formatCents(result.originalPriceCents)} <span className="px-1 text-slate-400">→</span> {formatCents(result.newPriceCents)}</p>}
                   {result.error && <p className={cx("mt-1 whitespace-normal break-words text-xs leading-5", result.status === "error" ? "text-red-700" : "text-amber-700")}>{result.error}</p>}
+                  {result.errorAdvice && <p className="mt-1 text-xs leading-5 text-slate-600">{result.errorAdvice.guidance}{result.errorAdvice.method === "JEV" ? " · AI suggestion" : ""}</p>}
                 </div>
                 <span className={cx("shrink-0 text-[11px] font-semibold capitalize", result.status === "success" ? "text-emerald-700" : result.status === "error" ? "text-red-700" : "text-amber-700")}>{result.outcome.replace("_", " ")}</span>
               </div>
