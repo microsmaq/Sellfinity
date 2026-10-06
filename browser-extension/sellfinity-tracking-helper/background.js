@@ -260,7 +260,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         .sort((left, right) => right.createdAt - left.createdAt)[0];
       if (!matching) return sendResponse({ ok: false });
       if (matching.mode === "PRICE") return sendResponse({ ok: false });
-      if (message.blocked) { await pauseAmazonWork("Amazon verification or access check required. Complete it in the open Amazon tab, then resume.", true); return sendResponse({ ok: true }); }
+      if (message.blocked) { await pauseAmazonWork("Amazon verification required. Checking the existing tab hourly; manual verification may still be needed.", true, sender.tab.id); return sendResponse({ ok: true }); }
 
       await notifySource(matching, message.type === "TRACKING_FOUND"
         ? { type: "FILL_TRACKING", trackingNumber: message.trackingNumber, carrier: message.carrier, autoSave: !!matching.bulk }
@@ -284,7 +284,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         .filter((request) => request.mode === "PRICE" && request.destinationTabId === sender.tab.id)
         .sort((left, right) => right.createdAt - left.createdAt)[0];
       if (!matching) return sendResponse({ ok: false });
-      if (message.blocked) { await pauseAmazonWork("Amazon verification or access check required. Complete it in the open Amazon tab, then resume.", true); return sendResponse({ ok: true }); }
+      if (message.blocked) { await pauseAmazonWork("Amazon verification required. Checking the existing tab hourly; manual verification may still be needed.", true, sender.tab.id); return sendResponse({ ok: true }); }
       await notifySource(matching, message.type === "AMAZON_PRICE_FOUND"
         ? { type: "FILL_AMAZON_PRICE", unitPriceCents: message.unitPriceCents, shippingCents: message.shippingCents, orderIds: matching.orderIds }
         : { type: "AMAZON_PRICE_LOOKUP_FAILED", reason: message.reason, unavailable: Boolean(message.unavailable), orderIds: matching.orderIds });

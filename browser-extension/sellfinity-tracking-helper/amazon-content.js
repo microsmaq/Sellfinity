@@ -44,6 +44,17 @@
   }), 45_000);
 
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+    if (message?.type === "CHECK_AMAZON_VERIFICATION") {
+      const availability = globalThis.sellfinityAmazonAvailabilityFromPage?.(document);
+      const readable = availability !== "BLOCKED" && document.readyState === "complete" && Boolean(
+        globalThis.sellfinityAmazonPriceFromPage?.(document) ||
+        globalThis.sellfinityTrackingFromPage(location.href, visibleContent()) ||
+        availability === "UNAVAILABLE" ||
+        (/\/zgbs|\/Best-Sellers/i.test(location.pathname) && document.querySelector('a[href*="/dp/"]'))
+      );
+      sendResponse({ readable });
+      return;
+    }
     if (message?.type === "INSPECT_AMAZON_TRACKING") {
       if (finished) {
         finished = false;

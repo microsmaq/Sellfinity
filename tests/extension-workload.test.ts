@@ -6,6 +6,8 @@ function workload() {
   const state: Record<string, unknown> = {};
   let now = Date.parse("2026-10-06T12:00:00Z");
   let pending: { bulk: boolean; destinationTabId: number | null }[] = [];
+  let readable = false;
+  let inspections = 0;
   class Clock extends Date { constructor(...args: [] | [number]) { super(args.length ? args[0]! : now); } static now() { return now; } }
   let listener: (message: unknown, sender: unknown, respond: (value: unknown) => void) => void;
   const context = {
@@ -16,7 +18,7 @@ function workload() {
       storage: { local: { get: async () => state, set: async (value: object) => Object.assign(state, value) } },
       runtime: { onMessage: { addListener: (fn: typeof listener) => { listener = fn; } }, onStartup: { addListener: () => {} } },
       alarms: { create: async () => {}, onAlarm: { addListener: () => {} } },
-      tabs: { sendMessage: async () => {} },
+      tabs: { sendMessage: async (_id: number, message: { type: string }) => { if (message.type === "CHECK_AMAZON_VERIFICATION") { inspections++; return { readable }; } } },
     },
   };
   runInNewContext(readFileSync("browser-extension/sellfinity-tracking-helper/workload.js", "utf8"), context);
@@ -24,10 +26,37 @@ function workload() {
     run: (code: string) => runInNewContext(code, context) as Promise<Record<string, unknown>>,
     advance: (ms: number) => { now += ms; },
     activePage: () => { pending = [{ bulk: true, destinationTabId: 42 }]; },
+    readablePage: () => { readable = true; },
+    inspections: () => inspections,
     message: (message: object) => new Promise<Record<string, unknown>>((resolve) => listener(message, {}, (value) => resolve(value as Record<string, unknown>))),
   };
 }
 describe("Amazon workload controls", () => {
+  it("inspects a verification tab hourly and only resumes when it is readable", async () => {
+    const w = workload();
+    await w.run('pauseAmazonWork("Verification required", true, 42)');
+    await w.run("checkVerificationPause()");
+    expect(w.inspections()).toBe(0);
+    w.advance(60 * 60_000);
+    await w.run("checkVerificationPause()");
+    expect(w.inspections()).toBe(1);
+    expect(await w.run("workloadState()")).toMatchObject({ paused: true, verification: true });
+    w.readablePage();
+    await w.run("checkVerificationPause()");
+    expect(w.inspections()).toBe(1);
+    w.advance(60 * 60_000);
+    await w.run("checkVerificationPause()");
+    expect(await w.run("workloadState()")).toMatchObject({ paused: false, verification: false });
+  });
+  it("never automatically resumes a user pause", async () => {
+    const w = workload();
+    await w.run('pauseAmazonWork("Paused by user")');
+    w.readablePage();
+    w.advance(24 * 60 * 60_000);
+    await w.run("checkVerificationPause()");
+    expect(w.inspections()).toBe(0);
+    expect(await w.run("workloadState()")).toMatchObject({ paused: true });
+  });
   it("never opens a second helper page while another bulk page is open", async () => {
     const w = workload();
     w.activePage();
@@ -64,13 +93,20 @@ describe("Amazon workload controls", () => {
     expect(await w.message({ type: "RESUME_AMAZON_WORK", verificationCompleted: true })).toMatchObject({ ok: true });
     expect(await w.run("reserveAmazonPage()")).toMatchObject({ ok: true });
   });
-  it("backs off errors and stops after three consecutive failures", async () => {
+  it("backs off errors and continues automatically after repeated failures", async () => {
     const w = workload();
     await w.run("noteAmazonRead(false)");
     expect(await w.run("reserveAmazonPage()")).toMatchObject({ ok: false });
     await w.run("noteAmazonRead(false)");
     await w.run("noteAmazonRead(false)");
-    expect(await w.run("workloadState()")).toMatchObject({ paused: true });
+    expect(await w.run("workloadState()")).toMatchObject({ failures: 3 });
+    expect(await w.run("workloadState()")).not.toHaveProperty("paused", true);
+    w.advance(4 * 60_000);
+    expect(await w.run("reserveAmazonPage()")).toMatchObject({ ok: true });
+    for (let i = 0; i < 30; i++) await w.run("noteAmazonRead(false)");
+    expect(await w.run("workloadState()")).not.toHaveProperty("paused", true);
+    w.advance(15 * 60_000);
+    expect(await w.run("reserveAmazonPage()")).toMatchObject({ ok: true });
   });
   it("does not count confirmed unavailability as a read failure", async () => {
     const w = workload();

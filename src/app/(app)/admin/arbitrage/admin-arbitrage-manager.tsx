@@ -419,7 +419,7 @@ export function AdminArbitrageManager({
       } else if (detail.status === "cancelled") {
         setNotice({ text: `Live Amazon refresh stopped after ${detail.processed ?? 0}/${detail.total ?? 0} products. Completed updates were kept.`, error: false });
       } else if (detail.status === "error") {
-        setNotice({ text: "The Chrome helper could not start the admin Amazon refresh. Reload helper v1.6.0 and try again.", error: true });
+        setNotice({ text: "The Chrome helper could not start the admin Amazon refresh. Reload helper v1.6.1 and try again.", error: true });
       }
     }
     document.addEventListener("sellfinity:amazon-price-found", receiveAmazonPrice);
@@ -482,7 +482,7 @@ export function AdminArbitrageManager({
       await new Promise<void>((resolve) => window.requestAnimationFrame(() => window.requestAnimationFrame(() => resolve())));
       liveAmazonStartupTimer.current = window.setTimeout(() => {
         setLiveAmazonProgress((current) => current?.status === "starting" ? { ...current, status: "error" } : current);
-        setNotice({ text: "The Chrome helper did not respond. Reload helper v1.6.0, refresh this page, then try again.", error: true });
+        setNotice({ text: "The Chrome helper did not respond. Reload helper v1.6.1, refresh this page, then try again.", error: true });
       }, 8_000);
       document.dispatchEvent(new CustomEvent("sellfinity:bulk-amazon-price-check", { detail: { requests: prepared.requests } }));
     });
@@ -969,7 +969,7 @@ export function AdminArbitrageManager({
             </label>
             <Button type="button" disabled={pending || liveAmazonRunning || (liveAmazonScope === "SELECTED" && selected.size === 0)} onClick={() => startLiveAmazonRefresh()}>{liveAmazonRunning ? "Checking Amazon…" : "Check live prices & shipping"}</Button>
             {liveAmazonRunning && <Button type="button" variant="danger" onClick={stopLiveAmazonRefresh}>Stop</Button>}
-            <a href="/downloads/sellfinity-tracking-helper.zip?v=1.6.0" download className="text-xs font-semibold text-indigo-700 hover:underline">Chrome helper v1.6.0</a>
+            <a href="/downloads/sellfinity-tracking-helper.zip?v=1.6.1" download className="text-xs font-semibold text-indigo-700 hover:underline">Chrome helper v1.6.1</a>
           </div>
         </div>
       </Card>

@@ -48,7 +48,7 @@ async function readCatalogPage(url, type, job) {
     throw new Error(reason);
   } catch (error) {
     preserveTab = /CAPTCHA|verification|access denied|sign.in/i.test(error.message);
-    if (preserveTab) { await pauseAmazonWork("Amazon verification required for catalog import. Complete it manually, then resume.", true); error.workloadPause = true; }
+    if (preserveTab) { await pauseAmazonWork("Amazon verification required for catalog import. Checking the existing tab hourly; manual verification may still be needed.", true, tab.id); error.workloadPause = true; }
     throw error;
   } finally { if (!preserveTab) try { await chrome.tabs.remove(tab.id); } catch { /* Already closed. */ } }
 }

@@ -63,7 +63,7 @@ The extension does not use clipboard access. It only reads supported
 Amazon/carrier tracking pages opened from Sellfinity and submits tracking to
 the matching fulfillment row.
 
-## Amazon workload controls (v1.6.0)
+## Amazon workload controls (v1.6.1)
 
 The popup provides editable limits for page spacing, a daily cap, batch size and
 scheduled breaks. Defaults: one helper-opened Amazon page at a time, 60 seconds
@@ -79,13 +79,17 @@ originating Sellfinity tab open; if it is closed, stop that old run and restart
 the task in Sellfinity (freshness filtering preserves completed updates).
 
 CAPTCHA, account verification and access-denied pages pause Amazon work and
-preserve the challenged tab. Complete the check yourself, then use Resume saved
-work. No automatic timer clears verification pauses. Blocked pages never change
-price/availability or trigger delisting. Temporary read failures back off; three
-consecutive failed reads require manual resume. The page reader retains its
+preserve the challenged tab. Every hour the helper inspects that existing tab
+without reloading it or opening more Amazon pages. Work resumes only if the page
+is readable again; otherwise it stays paused. CAPTCHA is never solved or bypassed.
+If Amazon requires human verification, complete it yourself and use Resume saved
+work. Keep the challenged tab open. Blocked pages never change
+price/availability or trigger delisting. Temporary read failures back off for up
+to 15 minutes, then remaining items continue automatically, even after repeated
+failures. User pauses always require manual resume. The page reader retains its
 bounded startup retries; failed products are not retried indefinitely.
 
-Reload the unpacked helper after replacing it with v1.6.0, then refresh the
+Reload the unpacked helper after replacing it with v1.6.1, then refresh the
 Sellfinity tab. Existing daily schedules are retained. Browser-local page limits
 are not a coordinated cap across multiple computers.
 

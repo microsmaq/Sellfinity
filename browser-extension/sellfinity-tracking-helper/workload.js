@@ -14,12 +14,28 @@ async function saveWorkload(patch) {
   await chrome.storage.local.set({ [WORKLOAD_KEY]: state });
   return state;
 }
-async function pauseAmazonWork(reason, verification = false) {
-  await saveWorkload({ paused: true, verification, reason, nextAt: 0 });
+async function pauseAmazonWork(reason, verification = false, verificationTabId = null) {
+  await saveWorkload({ paused: true, verification, verificationTabId, verificationCheckAt: verification ? Date.now() + 60 * 60_000 : 0, reason, nextAt: 0 });
   const requests = await pendingRequests();
   for (const sourceTabId of new Set(requests.filter((r) => r.bulk).map((r) => r.sourceTabId))) {
     try { await chrome.tabs.sendMessage(sourceTabId, { type: "AMAZON_WORKLOAD_STATUS", paused: true, reason }); } catch { /* Page closed. */ }
   }
+}
+async function checkVerificationPause() {
+  const state = await workloadState();
+  if (!state.paused || !state.verification || !state.verificationTabId || Date.now() < state.verificationCheckAt) return;
+  // Inspect the existing page only. Never reload, solve, submit, or bypass a challenge.
+  await saveWorkload({ verificationCheckAt: Date.now() + 60 * 60_000 });
+  try {
+    const result = await chrome.tabs.sendMessage(state.verificationTabId, { type: "CHECK_AMAZON_VERIFICATION" });
+    const current = await workloadState();
+    if (result?.readable === true && current.paused && current.verification && current.verificationTabId === state.verificationTabId) {
+      await saveWorkload({ paused: false, verification: false, verificationTabId: null, failures: 0, reason: "Amazon page is readable again. Continuing saved work." });
+      for (const request of (await pendingRequests()).filter((r) => r.destinationTabId === state.verificationTabId)) {
+        await chrome.tabs.sendMessage(state.verificationTabId, { type: request.mode === "PRICE" ? "INSPECT_AMAZON_PRICE" : "INSPECT_AMAZON_TRACKING" });
+      }
+    }
+  } catch { /* A missing or unreadable page remains paused for human review. */ }
 }
 async function reserveAmazonPage() {
   const state = await workloadState();
@@ -35,9 +51,8 @@ async function reserveAmazonPage() {
 async function noteAmazonRead(success, unavailable = false) {
   if (success || unavailable) return saveWorkload({ failures: 0 });
   const failures = ((await workloadState()).failures || 0) + 1;
-  if (failures >= 3) return pauseAmazonWork("Three consecutive page reads failed. Check Amazon and your connection, then resume manually.");
   const state = await workloadState();
-  return saveWorkload({ failures, nextAt: Math.max(state.nextAt || 0, Date.now() + Math.min(15, 2 ** (failures - 1)) * 60_000), reason: "Temporary read failure. Backing off before the next page." });
+  return saveWorkload({ failures, nextAt: Math.max(state.nextAt || 0, Date.now() + Math.min(15, 2 ** Math.min(failures - 1, 4)) * 60_000), reason: "Temporary read failure. Remaining items will continue automatically after a short wait." });
 }
 chrome.runtime.onMessage.addListener((message, _sender, respond) => {
   if (!["GET_WORKLOAD_SETTINGS", "SAVE_WORKLOAD_SETTINGS", "PAUSE_AMAZON_WORK", "RESUME_AMAZON_WORK"].includes(message?.type)) return;
@@ -74,6 +89,7 @@ chrome.runtime.onMessage.addListener((message, _sender, respond) => {
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name !== WORKLOAD_ALARM) return;
   void (async () => {
+    await checkVerificationPause();
     if ((await workloadState()).paused) return;
     const job = await catalogJob();
     if (job?.status === "paused") { await saveCatalogJob({ ...job, status: "running" }); void processCatalogImport(); }
