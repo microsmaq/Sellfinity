@@ -5,6 +5,15 @@ export function shouldSkipRecentlyCheckedAmazon(scheduled: boolean, manualSkipFr
   return scheduled || manualSkipFresh;
 }
 
+/** Never-checked/invalid timestamps first, then oldest checks. Preserve ties. */
+export function oldestAmazonChecksFirst<T>(items: readonly T[], checkedAt: (item: T) => string | Date | null | undefined): T[] {
+  return items.map((item, index) => {
+    const value = checkedAt(item);
+    const time = value instanceof Date ? value.getTime() : value ? Date.parse(value) : NaN;
+    return { item, index, time: Number.isFinite(time) ? time : -Infinity };
+  }).sort((a, b) => a.time - b.time || a.index - b.index).map(({ item }) => item);
+}
+
 export function isAmazonDataFresh(
   value: string | Date | null | undefined,
   now = Date.now(),

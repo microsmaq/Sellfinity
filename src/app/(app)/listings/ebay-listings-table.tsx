@@ -45,7 +45,7 @@ import {
   selectedSmartSyncOptionCount,
   type SmartSyncOptions,
 } from "@/lib/listings/smart-sync-options";
-import { isAmazonDataFresh } from "@/lib/amazon/freshness";
+import { isAmazonDataFresh, oldestAmazonChecksFirst } from "@/lib/amazon/freshness";
 
 export type EbayRow = {
   ebayListingId: string;
@@ -892,7 +892,7 @@ export function EbayListingsTable({
   async function checkLiveAmazonPrices(targetRows: EbayRow[]): Promise<{ availableIds: Set<string>; unavailableIds: Set<string>; skippedFresh: number }> {
     const freshRows = skipFreshAmazon ? targetRows.filter((row) => isAmazonDataFresh(row.amazonUpdatedAt)) : [];
     const freshIds = new Set(freshRows.map((row) => row.ebayListingId));
-    const rowsToCheck = targetRows.filter((row) => !freshIds.has(row.ebayListingId));
+    const rowsToCheck = oldestAmazonChecksFirst(targetRows.filter((row) => !freshIds.has(row.ebayListingId)), (row) => row.amazonUpdatedAt);
     const grouped = new Map<string, { requestKey: string; amazonUrl: string; orderIds: string[] }>();
     for (const row of rowsToCheck) {
       if (!row.match?.amazonUrl || !row.match.sku) continue;

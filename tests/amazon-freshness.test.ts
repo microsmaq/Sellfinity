@@ -1,8 +1,25 @@
 import { describe, expect, it } from "vitest";
-import { AMAZON_FRESHNESS_WINDOW_MS, isAmazonDataFresh, shouldSkipRecentlyCheckedAmazon } from "../src/lib/amazon/freshness";
+import { AMAZON_FRESHNESS_WINDOW_MS, isAmazonDataFresh, shouldSkipRecentlyCheckedAmazon, oldestAmazonChecksFirst } from "../src/lib/amazon/freshness";
 
 describe("Amazon data freshness", () => {
   const now = Date.parse("2026-09-02T12:00:00.000Z");
+
+  it("prioritizes never-checked products before the oldest updated products", () => {
+    const rows = [
+      { id: "new", checked: "2026-09-02T10:00:00Z" },
+      { id: "old", checked: "2026-08-01T10:00:00Z" },
+      { id: "never", checked: null },
+      { id: "invalid", checked: "invalid" },
+    ];
+    expect(oldestAmazonChecksFirst(rows, (row) => row.checked).map((row) => row.id)).toEqual(["never", "invalid", "old", "new"]);
+    expect(rows.map((row) => row.id)).toEqual(["new", "old", "never", "invalid"]);
+  });
+
+  it("preserves ordering for ties and supports stored Date values", () => {
+    const first = { id: "first", checked: new Date(now) };
+    const second = { id: "second", checked: new Date(now) };
+    expect(oldestAmazonChecksFirst([first, second], (row) => row.checked)).toEqual([first, second]);
+  });
 
   it("treats data within 24 hours as fresh", () => {
     expect(isAmazonDataFresh(new Date(now - AMAZON_FRESHNESS_WINDOW_MS + 1), now)).toBe(true);
