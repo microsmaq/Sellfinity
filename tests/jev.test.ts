@@ -84,3 +84,21 @@ it("batches named decisions and caches the full question/state combination", asy
   await evaluateJevDecision({ title: "Lamp" }, questions);
   expect(fetcher).toHaveBeenCalledTimes(1);
 });
+
+it("reports provider diagnostics without exposing credentials", async () => {
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue(Response.json({ error: { message: "Invalid request with test-key and Bearer sensitive-token" } }, { status: 400 })));
+  const { screenProductPairWithJev } = await import("@/lib/ai/jev");
+  const report = vi.fn();
+  expect(await screenProductPairWithJev("A", "B", true, report)).toBeNull();
+  expect(report).toHaveBeenCalledWith(expect.stringContaining("HTTP 400"));
+  expect(report.mock.calls[0][0]).not.toContain("test-key");
+  expect(report.mock.calls[0][0]).not.toContain("sensitive-token");
+});
+
+it("distinguishes unexpected response schemas from credential failures", async () => {
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue(Response.json({ answers: {} })));
+  const { screenProductPairWithJev } = await import("@/lib/ai/jev");
+  const report = vi.fn();
+  await screenProductPairWithJev("A", "B", true, report);
+  expect(report).toHaveBeenCalledWith(expect.stringContaining("unexpected response format"));
+});
