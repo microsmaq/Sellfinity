@@ -287,6 +287,9 @@
       finishAmazonPriceItem(false);
       toast(message.reason || "Amazon did not show a current price for this product.", "error");
     }
+    if (message?.type === "AMAZON_WORKLOAD_STATUS") {
+      toast(message.reason || "Amazon browsing paused. Resume from the extension popup.", "error");
+    }
     if (message?.type === "BULK_RUN_CANCELLED") {
       if (!message.mode || message.mode === "PRICE") {
         reportAmazonPriceProgress("cancelled");

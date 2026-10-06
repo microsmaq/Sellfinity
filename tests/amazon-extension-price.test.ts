@@ -71,4 +71,9 @@ describe("Amazon extension price extraction", () => {
       title: "Amazon verification",
     })).toBe("BLOCKED");
   });
+
+  it("treats access denial as blocked without treating ordinary sign-in navigation as unavailable", () => {
+    expect(parseAmazonAvailability({ querySelectorAll() { return []; }, body: { innerText: "Access denied" }, title: "Amazon" })).toBe("BLOCKED");
+    expect(parseAmazonAvailability({ querySelectorAll() { return []; }, body: { innerText: "Hello, sign in. Product details" }, title: "Amazon product" })).toBe("UNKNOWN");
+  });
 });

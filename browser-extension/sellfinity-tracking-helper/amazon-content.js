@@ -29,6 +29,7 @@
   }
 
   function inspect() {
+    if (globalThis.sellfinityAmazonAvailabilityFromPage?.(document) === "BLOCKED") { void finish({ type: "TRACKING_NOT_FOUND", blocked: true, reason: "Amazon verification required." }); return; }
     const tracking = globalThis.sellfinityTrackingFromPage(location.href, visibleContent());
     if (tracking) void finish({ type: "TRACKING_FOUND", ...tracking });
   }
@@ -44,6 +45,11 @@
 
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (message?.type === "INSPECT_AMAZON_TRACKING") {
+      if (finished) {
+        finished = false;
+        observer?.observe(document.documentElement, { subtree: true, childList: true, characterData: true });
+        timer = setTimeout(() => void finish({ type: "TRACKING_NOT_FOUND", reason: "No supported carrier tracking number appeared after resuming." }), 45_000);
+      }
       inspect();
       sendResponse({ ok: true });
       return true;
@@ -60,6 +66,7 @@
       chrome.runtime.sendMessage(result).catch(() => {});
     };
     const inspectPrice = () => {
+      if (globalThis.sellfinityAmazonAvailabilityFromPage?.(document) === "BLOCKED") { finishPrice({ type: "AMAZON_PRICE_NOT_FOUND", blocked: true, unavailable: false, reason: "Amazon verification required." }); return; }
       const result = globalThis.sellfinityAmazonPriceFromPage?.(document);
       if (result) finishPrice({ type: "AMAZON_PRICE_FOUND", ...result });
     };
@@ -72,6 +79,7 @@
         finishPrice({
           type: "AMAZON_PRICE_NOT_FOUND",
           unavailable: availability === "UNAVAILABLE",
+          blocked: availability === "BLOCKED",
           reason: availability === "UNAVAILABLE"
             ? "Amazon confirms that this product is unavailable or no longer has a product page."
             : availability === "BLOCKED"

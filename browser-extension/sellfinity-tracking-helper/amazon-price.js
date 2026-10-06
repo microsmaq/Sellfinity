@@ -63,7 +63,7 @@ globalThis.sellfinityAmazonAvailabilityFromPage = function amazonAvailabilityFro
   const pageText = String(doc.body?.innerText || doc.documentElement?.innerText || "").replace(/\s+/g, " ").slice(0, 12_000);
   const title = String(doc.title || "");
 
-  if (/enter the characters you see below|not a robot|captcha|sign[- ]?in/i.test(`${title} ${pageText}`)) return "BLOCKED";
+  if (/enter the characters you see below|not a robot|captcha|verify (?:you are|your identity)|verification required|access denied|automated access|robot check/i.test(`${title} ${pageText}`) || /amazon.*sign[- ]?in|sign[- ]?in.*amazon/i.test(title) || doc.querySelector?.('#authportal-main-section, #ap_signin_form, #cvf-page-content')) return "BLOCKED";
   if (/currently unavailable|temporarily out of stock|we don(?:'|’)t know when or if this item will be back in stock/i.test(availabilityText)) return "UNAVAILABLE";
   if (/sorry! we couldn(?:'|’)t find that page|page not found/i.test(`${title} ${pageText}`)) return "UNAVAILABLE";
   return "UNKNOWN";

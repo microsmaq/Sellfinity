@@ -1,25 +1,24 @@
 const PENDING_KEY = "pendingTrackingRequests";
 const STATUS_KEY = "bulkRunStatuses";
-// A full admin catalog can contain several thousand products. Four Amazon tabs
-// may need multiple hours when pages are slow or occasionally wait for the
-// 30-second reader timeout, so active work must outlive the old 45-minute cap.
-const MAX_REQUEST_AGE_MS = 12 * 60 * 60 * 1000;
+// Workload pauses can span days. Queues are retained locally for seven days.
+const MAX_REQUEST_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 const FINISHED_STATUS_AGE_MS = 60 * 60 * 1000;
-const MAX_BULK_TABS = 4;
+const MAX_BULK_TABS = 1;
+importScripts("workload.js");
 importScripts("daily-check.js");
 importScripts("catalog-import.js");
 
 async function runStatuses() {
-  const stored = await chrome.storage.session.get(STATUS_KEY);
+  const stored = await chrome.storage.local.get(STATUS_KEY);
   const now = Date.now();
   return (stored[STATUS_KEY] || []).filter((status) => {
     const age = now - (status.updatedAt || status.startedAt);
-    return age < (status.status === "running" ? MAX_REQUEST_AGE_MS : FINISHED_STATUS_AGE_MS);
+    return age < (["running", "paused"].includes(status.status) ? MAX_REQUEST_AGE_MS : FINISHED_STATUS_AGE_MS);
   });
 }
 
 async function saveRunStatuses(statuses) {
-  await chrome.storage.session.set({ [STATUS_KEY]: statuses });
+  await chrome.storage.local.set({ [STATUS_KEY]: statuses });
 }
 
 function requestMode(request) {
@@ -69,13 +68,13 @@ async function cancelRuns(sourceTabId, mode) {
 }
 
 async function pendingRequests() {
-  const stored = await chrome.storage.session.get(PENDING_KEY);
+  const stored = await chrome.storage.local.get(PENDING_KEY);
   const now = Date.now();
   return (stored[PENDING_KEY] || []).filter((request) => now - request.createdAt < MAX_REQUEST_AGE_MS);
 }
 
 async function savePending(requests) {
-  await chrome.storage.session.set({ [PENDING_KEY]: requests });
+  await chrome.storage.local.set({ [PENDING_KEY]: requests });
 }
 
 async function notifySource(request, message) {
@@ -93,11 +92,19 @@ async function notifySource(request, message) {
 }
 
 async function processBulkQueue(sourceTabId) {
+  if (queueProcessing) return;
+  queueProcessing = true;
+  try {
+  try { await chrome.tabs.get(sourceTabId); } catch { return; }
+  const catalog = await catalogJob();
+  if (catalog?.status === "running") return;
   const initialRequests = await pendingRequests();
   const active = initialRequests.filter((request) => request.bulk && request.sourceTabId === sourceTabId && request.destinationTabId !== null);
   const waiting = initialRequests.filter((request) => request.bulk && request.sourceTabId === sourceTabId && request.destinationTabId === null);
   const available = Math.max(0, MAX_BULK_TABS - active.length);
   for (const request of waiting.slice(0, available)) {
+    const permit = await reserveAmazonPage();
+    if (!permit.ok) return;
     let openedTabId = null;
     try {
       // Register the destination before loading Amazon. A fast cached page can
@@ -115,6 +122,12 @@ async function processBulkQueue(sourceTabId) {
       }
       liveRequest.destinationTabId = openedTabId;
       await savePending(latest);
+      if ((await workloadState()).paused) {
+        liveRequest.destinationTabId = null;
+        await savePending(latest);
+        if (openedTabId) await chrome.tabs.remove(openedTabId);
+        return;
+      }
       if (tab.id) await chrome.tabs.update(tab.id, { url: request.amazonUrl });
     } catch {
       const isPrice = requestMode(request) === "PRICE";
@@ -122,6 +135,7 @@ async function processBulkQueue(sourceTabId) {
         ? { type: "AMAZON_PRICE_LOOKUP_FAILED", reason: "The Amazon product page could not be opened.", orderIds: request.orderIds }
         : { type: "TRACKING_LOOKUP_FAILED", reason: "Amazon tracking could not be opened." });
       await advanceRun(request.sourceTabId, requestMode(request), false);
+      await noteAmazonRead(false);
       const latest = await pendingRequests();
       await savePending(latest.filter((candidate) => candidate.requestId !== request.requestId));
       if (openedTabId) {
@@ -129,6 +143,7 @@ async function processBulkQueue(sourceTabId) {
       }
     }
   }
+  } finally { queueProcessing = false; }
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -245,11 +260,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         .sort((left, right) => right.createdAt - left.createdAt)[0];
       if (!matching) return sendResponse({ ok: false });
       if (matching.mode === "PRICE") return sendResponse({ ok: false });
+      if (message.blocked) { await pauseAmazonWork("Amazon verification or access check required. Complete it in the open Amazon tab, then resume.", true); return sendResponse({ ok: true }); }
 
       await notifySource(matching, message.type === "TRACKING_FOUND"
         ? { type: "FILL_TRACKING", trackingNumber: message.trackingNumber, carrier: message.carrier, autoSave: !!matching.bulk }
         : { type: "TRACKING_LOOKUP_FAILED", reason: message.reason, autoSave: !!matching.bulk });
       if (matching.bulk) await advanceRun(matching.sourceTabId, "TRACKING", message.type === "TRACKING_FOUND");
+      if (matching.bulk) await noteAmazonRead(message.type === "TRACKING_FOUND");
       await savePending(requests.filter((request) => request.requestId !== matching.requestId));
       if (matching.bulk) {
         try { await chrome.tabs.remove(sender.tab.id); } catch { /* The tracking tab may already be closed. */ }
@@ -267,10 +284,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         .filter((request) => request.mode === "PRICE" && request.destinationTabId === sender.tab.id)
         .sort((left, right) => right.createdAt - left.createdAt)[0];
       if (!matching) return sendResponse({ ok: false });
+      if (message.blocked) { await pauseAmazonWork("Amazon verification or access check required. Complete it in the open Amazon tab, then resume.", true); return sendResponse({ ok: true }); }
       await notifySource(matching, message.type === "AMAZON_PRICE_FOUND"
         ? { type: "FILL_AMAZON_PRICE", unitPriceCents: message.unitPriceCents, shippingCents: message.shippingCents, orderIds: matching.orderIds }
         : { type: "AMAZON_PRICE_LOOKUP_FAILED", reason: message.reason, unavailable: Boolean(message.unavailable), orderIds: matching.orderIds });
       await advanceRun(matching.sourceTabId, "PRICE", message.type === "AMAZON_PRICE_FOUND");
+      await noteAmazonRead(message.type === "AMAZON_PRICE_FOUND", Boolean(message.unavailable));
       await savePending(requests.filter((request) => request.requestId !== matching.requestId));
       try { await chrome.tabs.remove(sender.tab.id); } catch { /* The product tab may already be closed. */ }
       await processBulkQueue(matching.sourceTabId);
@@ -322,6 +341,7 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
       orderIds: failed.orderIds
     });
     await advanceRun(failed.sourceTabId, "PRICE", false);
+    await noteAmazonRead(false);
     await savePending(latest.filter((candidate) => candidate.requestId !== failed.requestId));
     try { await chrome.tabs.remove(tabId); } catch { /* The product tab may already be closed. */ }
     await processBulkQueue(failed.sourceTabId);
@@ -338,5 +358,15 @@ chrome.tabs.onCreated.addListener((tab) => {
     if (!request) return;
     request.destinationTabId = tab.id;
     await savePending(requests);
+  })();
+});
+
+chrome.tabs.onRemoved.addListener((tabId) => {
+  void (async () => {
+    const requests = await pendingRequests();
+    const affected = requests.filter((r) => r.bulk && r.destinationTabId === tabId);
+    if (!affected.length) return;
+    await savePending(requests.map((r) => r.destinationTabId === tabId ? { ...r, destinationTabId: null } : r));
+    if (!(await workloadState()).paused) await noteAmazonRead(false);
   })();
 });

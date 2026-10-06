@@ -1,6 +1,6 @@
 globalThis.sellfinityCaptureCatalogProduct = function captureCatalogProduct(doc = document, url = location.href) {
   const pageText = (doc.body?.innerText || "").slice(0, 15000);
-  if (/enter the characters you see below|not a robot|robot check/i.test(`${doc.title} ${pageText}`)) throw new Error("Amazon requires CAPTCHA verification. Complete it manually before retrying.");
+  if (globalThis.sellfinityAmazonAvailabilityFromPage?.(doc) === "BLOCKED" || /enter the characters you see below|not a robot|robot check/i.test(`${doc.title} ${pageText}`)) throw new Error("Amazon requires CAPTCHA verification. Complete it manually before retrying.");
   const asin = doc.querySelector('input#ASIN')?.value || url.match(/\/(?:dp|gp\/product)\/([A-Z0-9]{10})/i)?.[1];
   const title = doc.querySelector("#productTitle")?.textContent?.trim();
   if (!asin || !title) throw new Error("Open a complete Amazon product page first. Sign in if required.");

@@ -21,6 +21,7 @@ async function runDailyCheck(force = false, resume = false) {
   dailyStarting = true;
   try {
     const settings = await dailySettings();
+    if (typeof workloadState === "function" && (await workloadState()).paused) return;
     const userSync = settings.mode === "USER";
     if ((await catalogJob())?.status === "running") return;
     const now = new Date();

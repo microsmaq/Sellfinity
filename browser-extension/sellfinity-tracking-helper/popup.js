@@ -14,7 +14,10 @@ function renderMode(mode, response) {
   const detailElement = document.getElementById(`${meta.prefix}-detail`);
   const bar = document.getElementById(`${meta.prefix}-bar`);
   const button = document.getElementById(`stop-${meta.prefix}`);
-  const state = status?.status || "idle";
+  const work = response.workload;
+  const state = status?.status === "running" && remaining > 0 && work?.paused ? "paused"
+    : status?.status === "running" && remaining > 0 && !open && ((work?.nextAt || 0) > Date.now() || (work?.used || 0) >= work?.dailyLimit) ? "waiting"
+      : status?.status || "idle";
   statusElement.textContent = state;
   statusElement.className = `status ${state}`;
   if (!status) {
@@ -33,6 +36,14 @@ async function refreshStatus() {
   try {
     const response = await chrome.runtime.sendMessage({ type: "GET_HELPER_STATUS" });
     if (!response?.ok) return;
+    const workload = await chrome.runtime.sendMessage({ type: "GET_WORKLOAD_SETTINGS" });
+    if (workload?.ok) {
+      response.workload = workload.settings;
+      const state = workload.settings;
+      document.getElementById("work-detail").textContent = `${state.used || 0}/${state.dailyLimit} pages today · ${state.paused ? state.reason : (state.nextAt > Date.now() ? `${state.reason} Next check after ${new Date(state.nextAt).toLocaleTimeString()}.` : "Ready")}`;
+      document.getElementById("pause-work").disabled = !!state.paused;
+      document.getElementById("resume-work").disabled = !state.paused;
+    }
     renderMode("PRICE", response);
     renderMode("TRACKING", response);
     const daily = await chrome.runtime.sendMessage({ type: "GET_DAILY_SETTINGS" });
@@ -64,6 +75,24 @@ document.getElementById("stop-price").addEventListener("click", () => stop("PRIC
 document.getElementById("stop-tracking").addEventListener("click", () => stop("TRACKING"));
 void refreshStatus();
 setInterval(refreshStatus, 1000);
+
+void chrome.runtime.sendMessage({ type: "GET_WORKLOAD_SETTINGS" }).then((response) => {
+  if (!response?.ok) return;
+  const state = response.settings;
+  for (const [id, field] of [["interval", "intervalSeconds"], ["limit", "dailyLimit"], ["batch", "batchSize"], ["break", "breakMinutes"]]) document.getElementById(`work-${id}`).value = state[field];
+});
+document.getElementById("save-work").addEventListener("click", async () => {
+  const settings = Object.fromEntries([["interval", "intervalSeconds"], ["limit", "dailyLimit"], ["batch", "batchSize"], ["break", "breakMinutes"]].map(([id, field]) => [field, Number(document.getElementById(`work-${id}`).value)]));
+  const result = await chrome.runtime.sendMessage({ type: "SAVE_WORKLOAD_SETTINGS", settings });
+  document.getElementById("work-detail").textContent = result?.ok ? "Limits saved." : "Enter whole numbers within the displayed limits.";
+});
+document.getElementById("pause-work").addEventListener("click", async () => { await chrome.runtime.sendMessage({ type: "PAUSE_AMAZON_WORK" }); await refreshStatus(); });
+document.getElementById("resume-work").addEventListener("click", async () => {
+  const { settings } = await chrome.runtime.sendMessage({ type: "GET_WORKLOAD_SETTINGS" });
+  if (settings.verification && !confirm("Complete Amazon verification or sign-in manually in the open tab first. Have you completed it?")) return;
+  await chrome.runtime.sendMessage({ type: "RESUME_AMAZON_WORK", verificationCompleted: !!settings.verification });
+  await refreshStatus();
+});
 
 void chrome.runtime.sendMessage({ type: "GET_DAILY_SETTINGS" }).then((response) => {
   if (!response?.ok) return;

@@ -31,6 +31,7 @@ import { assessPriceCompetitiveness } from "@/lib/arbitrage/price-competitivenes
 import { formatCents } from "@/lib/money";
 import { Badge, Button, Card, Input, StatCard, cx } from "@/components/ui";
 import { PremiumProgress } from "@/components/premium-progress";
+import { shouldSkipRecentlyCheckedAmazon } from "@/lib/amazon/freshness";
 
 type AdminScanProgress = {
   target: number;
@@ -418,7 +419,7 @@ export function AdminArbitrageManager({
       } else if (detail.status === "cancelled") {
         setNotice({ text: `Live Amazon refresh stopped after ${detail.processed ?? 0}/${detail.total ?? 0} products. Completed updates were kept.`, error: false });
       } else if (detail.status === "error") {
-        setNotice({ text: "The Chrome helper could not start the admin Amazon refresh. Reload helper v1.5.0 and try again.", error: true });
+        setNotice({ text: "The Chrome helper could not start the admin Amazon refresh. Reload helper v1.6.0 and try again.", error: true });
       }
     }
     document.addEventListener("sellfinity:amazon-price-found", receiveAmazonPrice);
@@ -450,7 +451,7 @@ export function AdminArbitrageManager({
     });
   }
 
-  function startLiveAmazonRefresh(scheduled = false, resume = false) {
+  function startLiveAmazonRefresh(scheduled = false) {
     if (!scheduled && liveAmazonScope === "SELECTED" && selected.size === 0) {
       setNotice({ text: "Select at least one catalog product or choose all catalog products.", error: true });
       return;
@@ -461,7 +462,7 @@ export function AdminArbitrageManager({
     startTransition(async () => {
       let prepared: Awaited<ReturnType<typeof prepareAdminLiveAmazonRefresh>>;
       try {
-        prepared = await prepareAdminLiveAmazonRefresh(!scheduled && liveAmazonScope === "SELECTED" ? [...selected] : undefined, scheduled ? resume : skipFreshAmazon);
+        prepared = await prepareAdminLiveAmazonRefresh(!scheduled && liveAmazonScope === "SELECTED" ? [...selected] : undefined, shouldSkipRecentlyCheckedAmazon(scheduled, skipFreshAmazon));
       } catch {
         setNotice({ text: "Amazon catalog check could not start. Confirm your admin session and try again.", error: true });
         if (scheduled) document.dispatchEvent(new CustomEvent("sellfinity:daily-check-error"));
@@ -481,7 +482,7 @@ export function AdminArbitrageManager({
       await new Promise<void>((resolve) => window.requestAnimationFrame(() => window.requestAnimationFrame(() => resolve())));
       liveAmazonStartupTimer.current = window.setTimeout(() => {
         setLiveAmazonProgress((current) => current?.status === "starting" ? { ...current, status: "error" } : current);
-        setNotice({ text: "The Chrome helper did not respond. Reload helper v1.5.0, refresh this page, then try again.", error: true });
+        setNotice({ text: "The Chrome helper did not respond. Reload helper v1.6.0, refresh this page, then try again.", error: true });
       }, 8_000);
       document.dispatchEvent(new CustomEvent("sellfinity:bulk-amazon-price-check", { detail: { requests: prepared.requests } }));
     });
@@ -492,7 +493,7 @@ export function AdminArbitrageManager({
     dailyRefresh.current = startLiveAmazonRefresh;
   });
   useEffect(() => {
-    const start = (event: Event) => dailyRefresh.current(true, Boolean((event as CustomEvent<{ resume?: boolean }>).detail?.resume));
+    const start = () => dailyRefresh.current(true);
     document.addEventListener("sellfinity:daily-admin-check", start);
     document.documentElement.dataset.sellfinityAdminCheckerReady = "true";
     return () => {
@@ -968,7 +969,7 @@ export function AdminArbitrageManager({
             </label>
             <Button type="button" disabled={pending || liveAmazonRunning || (liveAmazonScope === "SELECTED" && selected.size === 0)} onClick={() => startLiveAmazonRefresh()}>{liveAmazonRunning ? "Checking Amazon…" : "Check live prices & shipping"}</Button>
             {liveAmazonRunning && <Button type="button" variant="danger" onClick={stopLiveAmazonRefresh}>Stop</Button>}
-            <a href="/downloads/sellfinity-tracking-helper.zip?v=1.5.0" download className="text-xs font-semibold text-indigo-700 hover:underline">Chrome helper v1.5.0</a>
+            <a href="/downloads/sellfinity-tracking-helper.zip?v=1.6.0" download className="text-xs font-semibold text-indigo-700 hover:underline">Chrome helper v1.6.0</a>
           </div>
         </div>
       </Card>

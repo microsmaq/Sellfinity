@@ -11,6 +11,10 @@ ol { margin: 10px 0; padding-left: 20px; }
 .status.running { color: #4338ca; background: #e0e7ff; }
 .status.complete { color: #047857; background: #d1fae5; }
 .status.cancelled { color: #b45309; background: #fef3c7; }
+.status.paused, .status.waiting { color: #b45309; background: #fef3c7; }
+input[type="number"] { box-sizing: border-box; width: 100%; padding: 6px; border: 1px solid #cbd5e1; border-radius: 6px; }
+#save-work, #resume-work { margin-top: 6px; color: #4338ca; border-color: #c7d2fe; }
+#pause-work { margin-top: 6px; }
 .progress { height: 6px; margin-top: 10px; overflow: hidden; border-radius: 999px; background: #e2e8f0; }
 .progress span { display: block; width: 0; height: 100%; border-radius: inherit; background: linear-gradient(90deg, #4f46e5, #8b5cf6); transition: width .3s ease; }
 .detail { min-height: 20px; color: #64748b; font-size: 11px; }

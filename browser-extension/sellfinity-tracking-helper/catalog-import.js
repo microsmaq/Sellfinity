@@ -28,6 +28,8 @@ async function catalogRpc(tabId, payload) {
 }
 
 async function readCatalogPage(url, type, job) {
+  const permit = await reserveAmazonPage();
+  if (!permit.ok) { const error = new Error(permit.reason); error.workloadPause = true; throw error; }
   const tab = await chrome.tabs.create({ url, active: false });
   await saveCatalogJob({ ...job, productTabId: tab.id });
   let preserveTab = false;
@@ -45,7 +47,8 @@ async function readCatalogPage(url, type, job) {
     }
     throw new Error(reason);
   } catch (error) {
-    preserveTab = /CAPTCHA/i.test(error.message);
+    preserveTab = /CAPTCHA|verification|access denied|sign.in/i.test(error.message);
+    if (preserveTab) { await pauseAmazonWork("Amazon verification required for catalog import. Complete it manually, then resume.", true); error.workloadPause = true; }
     throw error;
   } finally { if (!preserveTab) try { await chrome.tabs.remove(tab.id); } catch { /* Already closed. */ } }
 }
@@ -107,7 +110,7 @@ async function processCatalogImport() {
           const saved = await catalogRpc(job.adminTabId, { operation: "save", rows: [{ ...product, source: "BESTSELLER_BROWSER", bestsellerRank: candidate.bestsellerRank, bestsellerCategory: candidate.bestsellerCategory, bestsellerUrl: candidate.bestsellerUrl }] });
           job.added += saved.added; job.skipped += saved.skipped;
         } catch (error) {
-          if (/CAPTCHA|administrator|Catalog save|Catalog request|Import stopped/i.test(error.message)) throw error;
+          if (error.workloadPause || /CAPTCHA|administrator|Catalog save|Catalog request|Import stopped/i.test(error.message)) throw error;
           job.failed++; job.errors = [...job.errors, `${candidate.asin}: ${error.message}`].slice(-20);
         }
         if ((await catalogJob())?.status !== "running") return;
@@ -118,7 +121,7 @@ async function processCatalogImport() {
     await saveCatalogJob({ ...job, status: "complete", detail: job.added >= job.limit ? "Target reached" : "Selected pages exhausted" });
   } catch (error) {
     const job = await catalogJob();
-    if (job?.status === "running") await saveCatalogJob({ ...job, status: "error", detail: error.message });
+    if (job?.status === "running") await saveCatalogJob({ ...job, status: error.workloadPause ? "paused" : "error", detail: error.message });
   } finally { catalogWorkerActive = false; }
 }
 
@@ -160,6 +163,7 @@ chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name !== "catalog-discovery") return;
   void (async () => {
     const job = await catalogJob();
+    if (job?.status === "paused" || (await workloadState()).paused) return;
     if (job?.status === "running") { await processCatalogImport(); return; }
     const settings = (await chrome.storage.local.get(DISCOVERY_KEY))[DISCOVERY_KEY];
     const now = new Date();

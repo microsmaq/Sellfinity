@@ -63,14 +63,42 @@ The extension does not use clipboard access. It only reads supported
 Amazon/carrier tracking pages opened from Sellfinity and submits tracking to
 the matching fulfillment row.
 
+## Amazon workload controls (v1.6.0)
+
+The popup provides editable limits for page spacing, a daily cap, batch size and
+scheduled breaks. Defaults: one helper-opened Amazon page at a time, 60 seconds
+between starts, 100 pages per local day, and a 15-minute break every 20 pages.
+These limits apply to bulk prices/tracking and automated catalog discovery.
+They reduce load, but do not disguise automation or guarantee Amazon access.
+Manually opened quick-check pages are not rate-controlled by the helper.
+
+Pause/Resume saves the queue without discarding completed results. Scheduled
+waits and daily-cap waits continue through Chrome alarms while Chrome stays
+open. Queued bulk work is retained locally for up to seven days. Keep the
+originating Sellfinity tab open; if it is closed, stop that old run and restart
+the task in Sellfinity (freshness filtering preserves completed updates).
+
+CAPTCHA, account verification and access-denied pages pause Amazon work and
+preserve the challenged tab. Complete the check yourself, then use Resume saved
+work. No automatic timer clears verification pauses. Blocked pages never change
+price/availability or trigger delisting. Temporary read failures back off; three
+consecutive failed reads require manual resume. The page reader retains its
+bounded startup retries; failed products are not retried indefinitely.
+
+Reload the unpacked helper after replacing it with v1.6.0, then refresh the
+Sellfinity tab. Existing daily schedules are retained. Browser-local page limits
+are not a coordinated cap across multiple computers.
+
 ## Daily unattended admin checks (v1.4.0)
 
 Install/reload this version on the dedicated computer. Sign in to Amazon and
 Sellfinity as an administrator using that Chrome profile. Open the helper popup,
 enable **Run automatically every day**, choose a local start time (default
 02:00), and click **Save daily schedule**. **Run catalog check now** starts the
-same scan immediately. Scheduled checks cover the entire non-archived admin
-catalog and save prices, shipping and confirmed unavailability to the shared
+same scan immediately. Scheduled checks cover stale or never-checked products
+in the non-archived admin catalog, always skipping data checked within the last
+24 hours (including resumed runs), regardless of the manual checkbox. They
+save prices, shipping and confirmed unavailability to the shared
 database using the signed-in browser, without Rainforest credits.
 
 Leave Chrome running and keep the computer awake with a network connection.
