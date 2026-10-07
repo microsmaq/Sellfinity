@@ -2,7 +2,7 @@ import { titleTokens } from "@/lib/mirror/match";
 import { screenProductPairWithJev, shouldSkipVisualVerification } from "@/lib/ai/jev";
 
 export type ProductMatchVerdict = "MATCH" | "LIKELY" | "REVIEW" | "REJECTED";
-export type ProductMatchMethod = "RULES" | "AI" | "JEV";
+export type ProductMatchMethod = "RULES" | "AI" | "JEV" | "DECISIONS";
 
 export type ProductMatchAssessment = {
   verdict: ProductMatchVerdict;
@@ -264,7 +264,7 @@ export async function assessProductMatch(
   if (rules.verdict === "REJECTED") return rules;
   const screening = await screenProductPairWithJev(amazon.title, ebay.title);
   if (screening && shouldSkipVisualVerification(screening)) {
-    return { verdict: "REJECTED", confidence: Math.floor(screening.conflictProbability * 100), reason: "Jev's fast text screening found strong evidence of an incompatible product or variant. Manual review remains available.", method: "JEV" };
+    return { verdict: "REJECTED", confidence: Math.floor(screening.conflictProbability * 100), reason: "OpenAI Decisions screening found strong evidence of an incompatible product or variant. Manual review remains available.", method: "DECISIONS" };
   }
   return (await assessWithAi(ebay, amazon)) ?? rules;
 }

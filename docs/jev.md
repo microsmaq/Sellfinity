@@ -1,62 +1,35 @@
-# Jev fast product screening
-
-Sellfinity uses `typesafe-ai/jev` through Vercel AI Gateway's decision endpoint,
-`POST https://ai-gateway.vercel.sh/v1/evaluate`. Jev is a text decision model,
-not a replacement for image-aware product verification or profit calculations.
+# OpenAI Decisions (replaces Jev)
+All former Jev advisory workflows now call POST https://api.openai.com/v1/decisions.
+The compatibility filenames and function names remain to avoid breaking imports; no Jev Gateway requests are made.
 
 ## Configuration
+- OPENAI_API_KEY: an OpenAI project key with access and billing for the Decisions beta.
+- OPENAI_DECISIONS_ENABLED=false disables these advisory calls.
+- OPENAI_DECISIONS_MODEL defaults to gpt-6-luna.
+- AI_GATEWAY_API_KEY and VERCEL_OIDC_TOKEN are never sent to OpenAI and do not authenticate this API.
+- Admin Settings → Test Decisions connection verifies the configured provider. Missing authentication, refusals, malformed results, timeout or access failures preserve existing rules/visual-AI fallback.
 
-- Prefer the deployment-provided `VERCEL_OIDC_TOKEN` on Vercel, or set
-  `AI_GATEWAY_API_KEY` in the project's environment settings.
-- Service access and Gateway balance must be available on the Vercel account.
-  Go to **Admin Settings → Test Jev connection** to verify access. Seeing
-  authentication available does not by itself confirm successful access.
-- Set `JEV_ENABLED=false` to disable screening without changing matching rules.
-- No database migration or new package is required.
+## Safeguards
+Input and questions are bounded, cached for one hour, and results are strictly validated.
+Questions use predicate probabilities or supplied choice values; refusals never mean approval.
+Five-second advisory timeouts and a one-minute failure cooldown bound unnecessary calls.
+No customer/account data is supplied. Error-classification input is sanitized.
+Title decisions only reject strong explicit conflicts; all plausible or uncertain pairs continue through existing image-aware verification.
+Queue prioritization never adds, drops or publishes rows. Error guidance cannot perform mutations.
+Generated-copy checks cannot change price locks, fees, source availability or shipping policy.
 
-## Behavior and safety
+## Bulk equivalent research
+Product Intelligence → Research all pending or Research selected.
+One product at a time; progress, stop-after-current-product, and collapsed activity details.
+Uses eBay Browse application authentication, not a seller login, and stored Amazon catalog data.
+No Rainforest or Countdown calls for this workflow.
+Requires saved available Amazon source, verified shipping, and a positive price.
+Searches up to 50 fixed-price candidates, verifies up to three plausible pairs and saves comparison/market fields.
+Candidates are always held for administrator review; this button never publishes to users.
+All-pending targets the full catalog, not the visible table page, and skips successful records on the next run.
+Selected research can retry Needs review records; published/archived records are skipped.
+eBay connection/rate-limit/provider errors pause a run to avoid repeated failed API calls.
+Keep the page open while the bulk run is active; completed results are saved independently.
+The existing opt-in daily safe-approval queue also uses eBay Browse and Decisions, with its existing stricter publication rules.
 
-Hard identity rules run first, without an AI request. Other pairs receive a
-title-only screen (no buyer/order information). Only a REJECT route with conflict
-probability at least 0.995 and same-product probability at most 0.005 skips the
-existing visual verifier. These are conservative routing thresholds, not a claim
-of calibrated accuracy or guaranteed correctness. Manually review false negatives.
-
-All other results continue through existing verification. Jev cannot approve or
-publish items, override manual decisions, change prices, or bypass availability,
-shipping, fee, price-lock or automatic-review requirements. The existing manual
-review and publication workflow is unchanged.
-
-Identical title pairs are cached in memory for one hour (up to 250 pairs per
-server process). Requests time out after 2.5 seconds. Invalid responses, provider
-errors and missing authentication fall back to existing verification; failures
-start a one-minute per-process cooldown. Connection tests bypass the cache and
-cooldown. Screening consumes Gateway credits, not Rainforest credits.
-
-Official API reference: https://vercel.com/docs/ai-gateway/modalities/decision
-
-## Additional integrated workflows
-
-- Automatic catalog review: one batched request prioritizes the existing bounded
-  oldest-first queue. No candidates are dropped or added; a tie or service failure
-  keeps original ordering. All availability and publication gates remain unchanged.
-- Smart Sync: familiar errors use local rules first. Unfamiliar errors receive a
-  sanitized text evaluation with a fixed category and fixed advice. Advice appears
-  only in expanded item activity and is retained in activity-history error text.
-  The model never triggers retries, reconnects, edits or delisting.
-- AI-generated listing copy: a local shipping-claim check runs first; Jev then
-  checks source facts against generated claims. Identity conflicts or unsupported
-  claims at probability 0.99 or higher discard the generated improvement so callers
-  preserve original copy. Seller-authored listings are not bulk rewritten. Missing
-  service access preserves the previous improvement workflow.
-
-Named decisions share a bounded one-hour in-memory cache and one-minute failure
-cooldown with product screening. Requests time out after 2.5 seconds and are limited
-to 25 questions and 40,000 serialized characters. Pricing and stock changes remain
-deterministic, never controlled by model classification.
-
-## Further evaluation
-
-Evaluate against manually reviewed examples before widening routing thresholds.
-Keep retry policies, pricing arithmetic, stock decisions
-and external account mutations governed by deterministic rules and confirmations.
+Official API reference: https://developers.openai.com/api/reference/resources/decisions/methods/create

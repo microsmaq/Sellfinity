@@ -33,7 +33,7 @@ export async function runAutomaticCatalogReview(force = false) {
     for (const candidate of prioritized) {
       if (Date.now() + 90_000 > deadline) break;
       try {
-        await researchAdminCatalogProduct(candidate.id, { automatic: true });
+        await researchAdminCatalogProduct(candidate.id, { automatic: true, ebayOnly: true });
         const result = await db.adminArbitrageProduct.findUnique({ where: { id: candidate.id }, select: { status: true, matchReason: true } });
         const published = result?.status === "PUBLISHED";
         if (published) summary.published++; else summary.review++;

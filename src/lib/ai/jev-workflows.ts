@@ -16,7 +16,7 @@ export async function prioritizeCatalogReview<T extends { amazonTitle: string; e
   return items.map((item, index) => ({ item, index })).sort((a, b) => score(b.index) - score(a.index) || a.index - b.index).map(({ item }) => item);
 }
 
-export type SyncErrorAdvice = { category: "WAIT" | "CONNECTION" | "CONTENT" | "SOURCE" | "REVIEW"; guidance: string; method: "RULES" | "JEV" };
+export type SyncErrorAdvice = { category: "WAIT" | "CONNECTION" | "CONTENT" | "SOURCE" | "REVIEW"; guidance: string; method: "RULES" | "DECISIONS" };
 const guidance: Record<SyncErrorAdvice["category"], string> = {
   WAIT: "Wait before retrying; eBay may be busy or rate-limited.",
   CONNECTION: "Check your eBay connection in Settings before retrying.",
@@ -40,7 +40,7 @@ export async function classifySmartSyncError(message: string): Promise<SyncError
   });
   const route = answers?.route;
   const selected = route?.type === "choice" ? route.choice as SyncErrorAdvice["category"] : "REVIEW";
-  return { category: selected, guidance: guidance[selected], method: answers ? "JEV" : "RULES" };
+  return { category: selected, guidance: guidance[selected], method: answers ? "DECISIONS" : "RULES" };
 }
 
 export type ListingCopyFacts = { title: string; brand?: string | null; description: string; bulletPoints?: string[] };
@@ -57,7 +57,7 @@ export async function checkGeneratedListingCopy(source: ListingCopyFacts, copy: 
   });
   for (const [key, reason] of [["identityConflict", "product identity"], ["unsupportedClaims", "unsupported claims"]]) {
     const answer = answers?.[key];
-    if (answer?.type === "boolean" && answer.probability >= 0.99) return `Jev flagged ${reason} in generated copy. The original supplier copy was preserved.`;
+    if (answer?.type === "boolean" && answer.probability >= 0.99) return `OpenAI Decisions flagged ${reason} in generated copy. The original supplier copy was preserved.`;
   }
   return null;
 }

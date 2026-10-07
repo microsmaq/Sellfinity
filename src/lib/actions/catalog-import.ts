@@ -4,6 +4,7 @@ import { db } from "@/lib/db";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { catalogImportSchema } from "@/lib/arbitrage/catalog-import";
+import { catalogStringArray } from "@/lib/arbitrage/catalog-content";
 
 export async function filterCatalogImportAsins(rawAsins: string[]) {
   await requireAdmin();
@@ -21,17 +22,32 @@ export async function importCatalogProducts(rawRows: unknown[], updateExisting =
     // concurrent manual, browser and scheduled imports of the same ASIN.
     const outcome = await db.$transaction(async (tx) => {
       const existing = await tx.adminArbitrageProduct.findUnique({ where: { asin: row.asin } });
-      if (existing && !updateExisting) return "skipped";
+      if (existing && !updateExisting) {
+        // Enrich content only. Never reset an approved match, prices or stock.
+        const oldImages = catalogStringArray(existing.amazonImageUrlsJson);
+        const images = [...new Set([...oldImages, ...(existing.amazonImageUrl ? [existing.amazonImageUrl] : []), ...row.images])].slice(0, 12);
+        const description = existing.amazonDescription?.trim() && existing.amazonDescription.trim() !== existing.amazonTitle?.trim() ? existing.amazonDescription : row.description;
+        const bullets = catalogStringArray(existing.amazonBulletPointsJson).length ? catalogStringArray(existing.amazonBulletPointsJson) : row.bulletPoints;
+        const changed = Boolean(description && description !== existing.amazonDescription) || (bullets.length > 0 && JSON.stringify(bullets) !== (existing.amazonBulletPointsJson || "[]")) || images.some((image) => !oldImages.includes(image));
+        if (!changed) return "skipped";
+        await tx.adminArbitrageProduct.update({ where: { asin: row.asin }, data: {
+          amazonDescription: description || existing.amazonDescription || "",
+          amazonBulletPointsJson: JSON.stringify(bullets),
+          amazonImageUrl: existing.amazonImageUrl || images[0] || null,
+          amazonImageUrlsJson: JSON.stringify(images),
+        } });
+        return "updated";
+      }
       const data = {
         amazonTitle: row.title, amazonBrand: row.brand, category: row.category,
         amazonUrl: `https://www.amazon.com/dp/${row.asin}`,
         amazonPriceCents: row.priceCents, amazonShippingCents: row.shippingCents ?? 0,
         amazonShippingVerified: row.shippingCents !== null,
         amazonInStock: row.availability === "AVAILABLE",
-        amazonImageUrl: row.images[0] ?? null,
-        amazonImageUrlsJson: JSON.stringify(row.images),
-        amazonDescription: row.description,
-        amazonBulletPointsJson: JSON.stringify(row.bulletPoints),
+        amazonImageUrl: row.images[0] ?? existing?.amazonImageUrl ?? null,
+        amazonImageUrlsJson: JSON.stringify(row.images.length ? row.images : catalogStringArray(existing?.amazonImageUrlsJson)),
+        amazonDescription: row.description || existing?.amazonDescription || "",
+        amazonBulletPointsJson: JSON.stringify(row.bulletPoints.length ? row.bulletPoints : catalogStringArray(existing?.amazonBulletPointsJson)),
         amazonRefreshedAt: new Date(),
         isAmazonBestSeller: Boolean(row.bestsellerRank && row.bestsellerUrl),
         amazonImportDetailsJson: JSON.stringify({ ...row, importedAt: new Date().toISOString(), importedBy: admin.id }),

@@ -51,7 +51,7 @@ async function refreshStatus() {
     const catalog = await chrome.runtime.sendMessage({ type: "GET_CATALOG_IMPORT_STATUS" });
     if (catalog?.job) {
       const job = catalog.job;
-      document.getElementById("catalog-detail").textContent = `${job.status} · ${job.added} added · ${job.skipped} skipped · ${job.failed} errors${job.detail ? ` · ${job.detail}` : ""}`;
+      document.getElementById("catalog-detail").textContent = `${job.status} · ${job.added} added · ${job.updated || 0} enriched · ${job.skipped} skipped · ${job.failed} errors${job.detail ? ` · ${job.detail}` : ""}`;
       document.getElementById("stop-catalog").disabled = job.status !== "running";
       document.getElementById("resume-catalog").disabled = !["error", "cancelled"].includes(job.status);
     }

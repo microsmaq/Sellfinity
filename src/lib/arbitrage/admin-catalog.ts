@@ -3,6 +3,7 @@ import { db } from "@/lib/db";
 import { estimateMargin } from "@/lib/fees";
 import type { ArbitrageOpportunity } from "./scanner";
 import { arbitrageSuggestedPriceCents } from "./pricing";
+import { catalogContentWarnings, requireCatalogContent } from "./catalog-content";
 import {
   assessPriceCompetitiveness,
   isCompetitivelyPriced,
@@ -67,6 +68,7 @@ export type AdminCatalogRow = {
   amazonCheckedAt?: string | null;
   amazonUrl: string;
   amazonImageUrl: string | null;
+  contentWarnings?: string[];
   category: string;
   isAmazonBestSeller: boolean;
   status: string;
@@ -323,6 +325,7 @@ export async function listAdminCatalog(params: {
         : null;
       return {
         ...item,
+        contentWarnings: catalogContentWarnings(item),
         suggestedPriceCents: suggestedPrice,
         estimatedProfitCents: margin?.estimatedProfitCents ?? null,
         marginPct: margin ? Math.round(margin.marginPct) : null,
@@ -345,6 +348,7 @@ export async function listAdminCatalog(params: {
  * Finder without disrupting its publishing, hiding, sorting, or export flows. */
 export async function publishCatalogProductToUsers(id: string): Promise<void> {
   const item = await db.adminArbitrageProduct.findUnique({ where: { id } });
+  if (item?.amazonImportDetailsJson && item.amazonImportDetailsJson !== "{}") requireCatalogContent(item);
   if (item?.amazonShippingVerified === false || !item?.amazonInStock) throw new Error("Verify Amazon availability and shipping before publishing.");
   if (
     !item ||

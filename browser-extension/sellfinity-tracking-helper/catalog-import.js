@@ -58,7 +58,7 @@ async function beginCatalogImport(candidates = [], pages = [], limit = 100, prod
   if (current?.status === "running") throw new Error("A catalog import is already running. Stop it before starting another.");
   if ((await runStatuses()).some((run) => run.status === "running" && run.mode === "PRICE")) throw new Error("Finish or stop the live price check before importing products.");
   const adminTab = await chrome.tabs.create({ url: "https://www.sellfinity.app/admin/arbitrage/import", active: false });
-  await saveCatalogJob({ status: "running", adminTabId: adminTab.id, candidates, pages, pageCursor: 0, cursor: 0, limit, added: 0, skipped: 0, failed: 0, errors: [], product, startedAt: Date.now() });
+  await saveCatalogJob({ status: "running", adminTabId: adminTab.id, candidates, pages, pageCursor: 0, cursor: 0, limit, added: 0, updated: 0, skipped: 0, failed: 0, errors: [], product, startedAt: Date.now() });
   void processCatalogImport();
 }
 
@@ -80,7 +80,7 @@ async function processCatalogImport() {
     await catalogRpc(job.adminTabId, { operation: "filter", asins: [] });
     if (job.product) {
       const saved = await catalogRpc(job.adminTabId, { operation: "save", rows: [job.product] });
-      await saveCatalogJob({ ...job, status: "complete", added: saved.added, skipped: saved.skipped, product: null });
+      await saveCatalogJob({ ...job, status: "complete", added: saved.added, updated: saved.updated || 0, skipped: saved.skipped, product: null });
       return;
     }
     while (job.status === "running" && job.added < job.limit) {
@@ -108,7 +108,7 @@ async function processCatalogImport() {
           // A redirected variant cannot inherit another ASIN's bestseller rank.
           if (product.asin !== candidate.asin) throw new Error("Amazon redirected to a different ASIN. Review this product manually.");
           const saved = await catalogRpc(job.adminTabId, { operation: "save", rows: [{ ...product, source: "BESTSELLER_BROWSER", bestsellerRank: candidate.bestsellerRank, bestsellerCategory: candidate.bestsellerCategory, bestsellerUrl: candidate.bestsellerUrl }] });
-          job.added += saved.added; job.skipped += saved.skipped;
+          job.added += saved.added; job.updated = (job.updated || 0) + (saved.updated || 0); job.skipped += saved.skipped;
         } catch (error) {
           if (error.workloadPause || /CAPTCHA|administrator|Catalog save|Catalog request|Import stopped/i.test(error.message)) throw error;
           job.failed++; job.errors = [...job.errors, `${candidate.asin}: ${error.message}`].slice(-20);

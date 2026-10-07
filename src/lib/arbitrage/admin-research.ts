@@ -14,6 +14,8 @@ import {
 import { estimatedSales30d } from "./demand";
 import { publishCatalogProductToUsers } from "./admin-catalog";
 import { automaticReviewDecision } from "./automatic-review-policy";
+import { searchEbayProducts, researchEbayMarket } from "@/lib/ebay/market";
+import { requireCatalogContent } from "./catalog-content";
 
 export async function addAmazonCatalogProduct(input: string): Promise<string> {
   const trimmed = input.trim();
@@ -60,16 +62,21 @@ function rankAssessment(assessment: ProductMatchAssessment): number {
   return verdictWeight + assessment.confidence;
 }
 
-export async function researchAdminCatalogProduct(id: string, options: { automatic?: boolean } = {}): Promise<void> {
+export async function researchAdminCatalogProduct(id: string, options: { automatic?: boolean; storedSource?: boolean; ebayOnly?: boolean; reviewOnly?: boolean } = {}): Promise<void> {
   const item = await db.adminArbitrageProduct.findUnique({ where: { id } });
   if (!item) throw new Error("Catalog item no longer exists.");
 
+  if (options.reviewOnly && !["PENDING", "NO_MATCH"].includes(item.status)) throw new Error("This product is already approved or no longer eligible for pending research.");
+
   const imported = Boolean(JSON.parse(item.amazonImportDetailsJson || "{}").source);
+  let contentHold = "";
+  if (imported) { try { requireCatalogContent(item); } catch (error) { contentHold = error instanceof Error ? error.message : "Product content needs review."; } }
   if (imported && (item.amazonShippingVerified === false || !item.amazonInStock)) {
     throw new Error("Verify imported Amazon availability and shipping before eBay research. Use the browser checker or manual import to correct it.");
   }
   if (options.automatic && (!item.amazonInStock || item.amazonShippingVerified === false)) throw new Error("Verify availability and shipping before automatic review.");
-  const source = imported || options.automatic ? sharedRowToScrapedProduct(item) : await getScraper().scrape(item.amazonUrl);
+  if (options.storedSource && (!item.amazonInStock || item.amazonShippingVerified === false || item.amazonPriceCents <= 0)) throw new Error("Check the Amazon price, availability and shipping before eBay research.");
+  const source = imported || options.automatic || options.storedSource ? sharedRowToScrapedProduct(item) : await getScraper().scrape(item.amazonUrl);
   if (!source || !source.inStock || source.priceCents <= 0) {
     await db.adminArbitrageProduct.update({
       where: { id },
@@ -86,9 +93,9 @@ export async function researchAdminCatalogProduct(id: string, options: { automat
     });
     return;
   }
-  const sourceSnapshot = { ...sharedAmazonSnapshotData(source), ...((imported || options.automatic) && { amazonImportDetailsJson: item.amazonImportDetailsJson, amazonRefreshedAt: item.amazonRefreshedAt }) };
+  const sourceSnapshot = { ...sharedAmazonSnapshotData(source), ...((imported || options.automatic || options.storedSource) && { amazonImportDetailsJson: item.amazonImportDetailsJson, amazonRefreshedAt: item.amazonRefreshedAt, amazonDescription: item.amazonDescription }) };
 
-  const candidates = await searchAdminEbayProducts(source.title, 50);
+  const candidates = await (options.ebayOnly ? searchEbayProducts : searchAdminEbayProducts)(source.title, 50);
   const attached = candidates.length
     ? await db.adminArbitrageProduct.findMany({
         where: {
@@ -107,7 +114,7 @@ export async function researchAdminCatalogProduct(id: string, options: { automat
     }))
     .filter(({ rules }) => rules.verdict !== "REJECTED")
     .sort((a, b) => rankAssessment(b.rules) - rankAssessment(a.rules))
-    .slice(0, options.automatic ? 3 : 8);
+    .slice(0, options.automatic || options.reviewOnly ? 3 : 8);
 
   let best:
     | {
@@ -130,8 +137,8 @@ export async function researchAdminCatalogProduct(id: string, options: { automat
   }
 
   if (!best) {
-    await db.adminArbitrageProduct.update({
-      where: { id },
+    const saved = await db.adminArbitrageProduct.updateMany({
+      where: { id, ...(options.reviewOnly && { status: item.status, updatedAt: item.updatedAt }) },
       data: {
         ...sourceSnapshot,
         status: "NO_MATCH",
@@ -154,10 +161,11 @@ export async function researchAdminCatalogProduct(id: string, options: { automat
         lastResearchedAt: new Date(),
       },
     });
+    if (!saved.count) throw new Error("This product changed during research. Review the current record before trying again.");
     return;
   }
 
-  const market = await researchAdminEbayMarket(
+  const market = await (options.ebayOnly ? researchEbayMarket : researchAdminEbayMarket)(
     best.candidate.title,
     best.candidate.itemId,
   );
@@ -190,10 +198,10 @@ export async function researchAdminCatalogProduct(id: string, options: { automat
     hasMarketEvidence: Boolean(metrics && metrics.competitorCount && metrics.estimatedSales30d > 0),
     profitCents: margin.estimatedProfitCents, marginPct: margin.marginPct,
   }) : null;
-  const approved = automaticDecision ? automaticDecision.publish : isApprovedProductMatch(best.assessment);
+  const approved = !contentHold && !options.reviewOnly && (automaticDecision ? automaticDecision.publish : isApprovedProductMatch(best.assessment));
 
   const savedReview = await db.adminArbitrageProduct.updateMany({
-    where: { id, ...(options.automatic && { status: "PENDING", updatedAt: item.updatedAt }) },
+    where: { id, ...((options.automatic || options.reviewOnly) && { status: item.status, updatedAt: item.updatedAt }) },
     data: {
       ...sourceSnapshot,
       category: source.category || best.candidate.category || item.category,
@@ -205,7 +213,7 @@ export async function researchAdminCatalogProduct(id: string, options: { automat
       ebayImageUrl: best.candidate.imageUrl || null,
       matchVerdict: best.assessment.verdict,
       matchConfidence: best.assessment.confidence,
-      matchReason: automaticDecision ? `${best.assessment.reason} ${automaticDecision.reason}`.slice(0, 1000) : best.assessment.reason,
+      matchReason: [best.assessment.reason, automaticDecision?.reason, contentHold].filter(Boolean).join(" ").slice(0, 1000),
       matchMethod: best.assessment.method,
       estimatedSales30d:
         metrics?.estimatedSales30d ??
@@ -438,6 +446,7 @@ export async function attachAdminEbayCandidate(id: string, input: string): Promi
 
 export async function approveAdminEbayCandidate(id: string): Promise<void> {
   const item = await db.adminArbitrageProduct.findUnique({ where: { id } });
+  if (item?.amazonImportDetailsJson && item.amazonImportDetailsJson !== "{}") requireCatalogContent(item);
   if (!item?.ebayItemId || !item.ebayTitle || !item.ebayPriceCents || !item.ebayUrl) {
     throw new Error("Add or research an eBay candidate before approving the match.");
   }

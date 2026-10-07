@@ -33,6 +33,7 @@ import { Badge, Button, Card, Input, StatCard, cx } from "@/components/ui";
 import { PremiumProgress } from "@/components/premium-progress";
 import { shouldSkipRecentlyCheckedAmazon } from "@/lib/amazon/freshness";
 import { recordAmazonCheckAttempt } from "@/lib/actions/amazon-checks";
+import { CatalogEquivalentResearch } from "./catalog-equivalent-research";
 
 type AdminScanProgress = {
   target: number;
@@ -195,8 +196,10 @@ function CatalogRow({
             <div className="mt-1 flex gap-1.5">
               <Badge tone={statusTone(row.status)}>{row.status.replace("_", " ")}</Badge>
               {row.isAmazonBestSeller && <Badge tone="indigo">Amazon bestseller</Badge>}
+              {!!row.contentWarnings?.length && <Badge tone="amber">Content incomplete</Badge>}
               {!row.amazonInStock && <Badge tone="red">{row.amazonImportDetailsJson?.includes('"availability":"UNKNOWN"') ? "Availability unverified" : "Amazon unavailable"}</Badge>}
             </div>
+            {!!row.contentWarnings?.length && <p className="mt-1 text-[11px] text-amber-700">{row.contentWarnings.join(" · ")}</p>}
           </div>
         </div>
       </td>
@@ -354,7 +357,9 @@ export function AdminArbitrageManager({
   const [skipFreshAmazon, setSkipFreshAmazon] = useState(true);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [expanded, setExpanded] = useState(false);
-  const [pending, startTransition] = useTransition();
+  const [transitionPending, startTransition] = useTransition();
+  const [equivalentResearchRunning, setEquivalentResearchRunning] = useState(false);
+  const pending = transitionPending || equivalentResearchRunning;
   const stopScanRequested = useRef(false);
   const stopRefreshRequested = useRef(false);
   const liveAmazonSavePromises = useRef<Promise<void>[]>([]);
@@ -420,7 +425,7 @@ export function AdminArbitrageManager({
       } else if (detail.status === "cancelled") {
         setNotice({ text: `Live Amazon refresh stopped after ${detail.processed ?? 0}/${detail.total ?? 0} products. Completed updates were kept.`, error: false });
       } else if (detail.status === "error") {
-        setNotice({ text: "The Chrome helper could not start the admin Amazon refresh. Reload helper v1.6.3 and try again.", error: true });
+        setNotice({ text: "The Chrome helper could not start the admin Amazon refresh. Reload helper v1.6.4 and try again.", error: true });
       }
     }
     function receiveAmazonAttempt(event: Event) {
@@ -489,7 +494,7 @@ export function AdminArbitrageManager({
       await new Promise<void>((resolve) => window.requestAnimationFrame(() => window.requestAnimationFrame(() => resolve())));
       liveAmazonStartupTimer.current = window.setTimeout(() => {
         setLiveAmazonProgress((current) => current?.status === "starting" ? { ...current, status: "error" } : current);
-        setNotice({ text: "The Chrome helper did not respond. Reload helper v1.6.3, refresh this page, then try again.", error: true });
+        setNotice({ text: "The Chrome helper did not respond. Reload helper v1.6.4, refresh this page, then try again.", error: true });
       }, 8_000);
       document.dispatchEvent(new CustomEvent("sellfinity:bulk-amazon-price-check", { detail: { requests: prepared.requests } }));
     });
@@ -858,6 +863,7 @@ export function AdminArbitrageManager({
       </Card>
 
       <Card className="overflow-hidden">
+        <CatalogEquivalentResearch selectedIds={[...selected]} disabled={pending || liveAmazonRunning} onRunningChange={setEquivalentResearchRunning} />
         <div className="grid gap-5 bg-gradient-to-r from-slate-950 to-indigo-950 px-6 py-5 text-white lg:grid-cols-[1fr_auto]">
           <div>
             <h2 className="text-base font-semibold">Add an Amazon bestseller</h2>
@@ -976,7 +982,7 @@ export function AdminArbitrageManager({
             </label>
             <Button type="button" disabled={pending || liveAmazonRunning || (liveAmazonScope === "SELECTED" && selected.size === 0)} onClick={() => startLiveAmazonRefresh()}>{liveAmazonRunning ? "Checking Amazon…" : "Check live prices & shipping"}</Button>
             {liveAmazonRunning && <Button type="button" variant="danger" onClick={stopLiveAmazonRefresh}>Stop</Button>}
-            <a href="/downloads/sellfinity-tracking-helper.zip?v=1.6.3" download className="text-xs font-semibold text-indigo-700 hover:underline">Chrome helper v1.6.3</a>
+            <a href="/downloads/sellfinity-tracking-helper.zip?v=1.6.4" download className="text-xs font-semibold text-indigo-700 hover:underline">Chrome helper v1.6.4</a>
           </div>
         </div>
       </Card>

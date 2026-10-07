@@ -26,7 +26,7 @@ describe("arbitrage product identity", () => {
       { title: "Acme Cotton Black Knee Strap Support" },
       { title: "Acme Silicone Red Knee Strap Support" },
     );
-    expect(result).toMatchObject({ verdict: "REJECTED", method: "JEV" });
+    expect(result).toMatchObject({ verdict: "REJECTED", method: "DECISIONS" });
     expect(isApprovedProductMatch(result)).toBe(false);
     expect(fetcher).not.toHaveBeenCalled();
   });

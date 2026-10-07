@@ -10,7 +10,7 @@ function captureRuntime(price: unknown = { unitPriceCents: 1299, shippingCents: 
   };
   runInNewContext(readFileSync("browser-extension/sellfinity-tracking-helper/catalog-capture.js", "utf8"), context);
   return context as typeof context & {
-    sellfinityCaptureCatalogProduct: (doc: unknown, url: string) => { asin: string; shippingCents: number | null; availability: string };
+    sellfinityCaptureCatalogProduct: (doc: unknown, url: string) => { asin: string; shippingCents: number | null; availability: string; images: string[]; description: string; bulletPoints: string[] };
     sellfinityCaptureBestsellers: (doc: unknown, url: string) => Array<{ asin: string; bestsellerRank: number }>;
   };
 }
@@ -30,5 +30,17 @@ describe("browser catalog capture", () => {
     const products = captureRuntime().sellfinityCaptureBestsellers(doc, "https://www.amazon.com/Best-Sellers/zgbs/home-garden");
     expect(products).toHaveLength(1);
     expect(products[0]).toMatchObject({ asin: "B012345678", bestsellerRank: 3 });
+  });
+  it("captures A+ text and deduplicates standard descriptions", () => {
+    const doc = { title: "Product", body: { innerText: "Available" }, querySelector: (selector: string) => selector === "input#ASIN" ? { value: "B012345678" } : selector === "#productTitle" ? { textContent: "Test product" } : null,
+      querySelectorAll: (selector: string) => selector.includes("#productDescription") ? [{ textContent: "Observed description" }, { textContent: "Observed description. A+ material specifications." }] : [] };
+    expect(captureRuntime().sellfinityCaptureCatalogProduct(doc, "https://www.amazon.com/dp/B012345678").description).toBe("Observed description. A+ material specifications.");
+  });
+  it("uses original-resolution gallery images, deduplicates resizes and rejects unsafe URLs", () => {
+    const image = (attributes: Record<string, string>) => ({ getAttribute: (name: string) => attributes[name] ?? null });
+    const main = image({ "data-a-dynamic-image": JSON.stringify({ "https://m.media-amazon.com/images/I/abc._AC_SX1000_.jpg": [1000, 1000] }), src: "https://m.media-amazon.com/images/I/abc._AC_US40_.jpg" });
+    const doc = { title: "Product", body: { innerText: "Available" }, querySelector: (selector: string) => selector === "input#ASIN" ? { value: "B012345678" } : selector === "#productTitle" ? { textContent: "Test product" } : selector.includes("#landingImage") ? main : null,
+      querySelectorAll: (selector: string) => selector === "#altImages img" ? [image({ src: "https://m.media-amazon.com/images/I/def._AC_US40_.jpg" }), image({ src: "https://evil.example/image.jpg" }), image({ src: "not a URL" })] : [] };
+    expect(captureRuntime().sellfinityCaptureCatalogProduct(doc, "https://www.amazon.com/dp/B012345678").images).toEqual(["https://m.media-amazon.com/images/I/abc.jpg", "https://m.media-amazon.com/images/I/def.jpg"]);
   });
 });

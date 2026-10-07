@@ -405,7 +405,7 @@ function SmartSyncStatus({
                   {result.actions.length > 0 && <p className="mt-0.5 text-xs leading-5 text-slate-600">{result.actions.join(" · ")}</p>}
                   {result.originalPriceCents !== result.newPriceCents && <p className="mt-0.5 text-xs font-medium tabular-nums text-slate-600">{formatCents(result.originalPriceCents)} <span className="px-1 text-slate-400">→</span> {formatCents(result.newPriceCents)}</p>}
                   {result.error && <p className={cx("mt-1 whitespace-normal break-words text-xs leading-5", result.status === "error" ? "text-red-700" : "text-amber-700")}>{result.error}</p>}
-                  {result.errorAdvice && <p className="mt-1 text-xs leading-5 text-slate-600">{result.errorAdvice.guidance}{result.errorAdvice.method === "JEV" ? " · AI suggestion" : ""}</p>}
+                  {result.errorAdvice && <p className="mt-1 text-xs leading-5 text-slate-600">{result.errorAdvice.guidance}{result.errorAdvice.method === "DECISIONS" ? " · AI suggestion" : ""}</p>}
                 </div>
                 <span className={cx("shrink-0 text-[11px] font-semibold capitalize", result.status === "success" ? "text-emerald-700" : result.status === "error" ? "text-red-700" : "text-amber-700")}>{result.outcome.replace("_", " ")}</span>
               </div>
@@ -942,7 +942,7 @@ export function EbayListingsTable({
         amazonPriceResolver.current = null;
         amazonPriceRejecter.current = null;
         setAmazonPriceProgress(null);
-        reject(new Error("The Chrome helper did not respond. Reload helper v1.6.3, refresh this Sellfinity tab, then try again."));
+        reject(new Error("The Chrome helper did not respond. Reload helper v1.6.4, refresh this Sellfinity tab, then try again."));
       }, 8_000);
       document.dispatchEvent(new CustomEvent("sellfinity:bulk-amazon-price-check", { detail: { requests } }));
     });
@@ -1968,7 +1968,7 @@ export function EbayListingsTable({
               </div>
               <p className="mt-3 max-w-3xl text-xs leading-5 text-slate-600">Administrator data remains the normal shared source. Enable live Amazon checking when you want the signed-in Chrome helper to verify current item price and shipping before Smart Sync calculates profit.</p>
             </div>
-            <div className="flex flex-wrap items-center gap-2"><a href="/downloads/sellfinity-tracking-helper.zip?v=1.6.3" download className="text-xs font-semibold text-indigo-700 hover:underline">Chrome helper v1.6.3</a><Badge tone="indigo">{selectedSmartSyncOptionCount(smartSyncOptions)} selected</Badge></div>
+            <div className="flex flex-wrap items-center gap-2"><a href="/downloads/sellfinity-tracking-helper.zip?v=1.6.4" download className="text-xs font-semibold text-indigo-700 hover:underline">Chrome helper v1.6.4</a><Badge tone="indigo">{selectedSmartSyncOptionCount(smartSyncOptions)} selected</Badge></div>
           </div>
           <div className="border-b border-slate-100 bg-white/70 px-4 py-3 sm:px-5">
             <p className="mb-2 text-[10px] font-semibold uppercase tracking-[.1em] text-slate-400">Run on</p>

@@ -22,4 +22,8 @@ describe("no-credit catalog import", () => {
     expect(() => parseCatalogCsv('asin,title\nB012345678,"Unclosed')).toThrow("unclosed");
     expect(() => parseCatalogCsv("title,title\nA,B")).toThrow("duplicate");
   });
+  it("imports description and multiple feature bullets from CSV", () => {
+    const rows = catalogCsvInputs('asin,title,category,price,availability,description,bulletPoints\nB012345678,Test product,Home,12.99,AVAILABLE,"Line one\nLine two",Feature A|Feature B');
+    expect(rows[0]).toMatchObject({ description: "Line one\nLine two", bulletPoints: ["Feature A", "Feature B"] });
+  });
 });

@@ -65,6 +65,7 @@ export function catalogCsvInputs(text: string): CatalogImportInput[] {
     source: "CSV",
     sourceUrl: row.sourceUrl || `https://www.amazon.com/dp/${row.asin?.trim().toUpperCase()}`,
     images: row.images ? row.images.split("|").filter(Boolean) : [],
+    bulletPoints: row.bulletPoints ? row.bulletPoints.split("|").map((value) => value.trim()).filter(Boolean) : [],
     bestsellerRank: row.bestsellerRank ? Number(row.bestsellerRank) : null,
     bestsellerUrl: row.bestsellerUrl || null,
   }));

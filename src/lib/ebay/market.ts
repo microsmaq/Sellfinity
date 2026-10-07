@@ -61,7 +61,7 @@ async function browseSearch(title: string, limit = 50): Promise<{
   items: BrowseSummary[];
 }> {
   const config = ebayEnvConfig();
-  if (!config) return { total: 0, items: [] };
+  if (!config) throw new Error("eBay Browse API is not configured.");
   const query = marketSearchQuery(title);
   if (!query) return { total: 0, items: [] };
   const token = await appAccessToken(config);
@@ -77,6 +77,7 @@ async function browseSearch(title: string, limit = 50): Promise<{
         Authorization: `Bearer ${token}`,
         "X-EBAY-C-MARKETPLACE-ID": "EBAY_US",
       },
+      signal: AbortSignal.timeout(25_000),
     },
   );
   if (!response.ok) throw new Error(`eBay market search failed (${response.status})`);

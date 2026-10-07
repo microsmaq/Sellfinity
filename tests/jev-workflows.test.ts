@@ -30,7 +30,7 @@ describe("Jev advisory workflows", () => {
   it("sanitizes unknown errors and returns advice, not an action", async () => {
     evaluate.mockResolvedValue({ route: { type: "choice", choice: "REVIEW" } });
     const result = await classifySmartSyncError("Unexpected response for buyer@example.com at https://example.com/private/123456789");
-    expect(result).toMatchObject({ category: "REVIEW", method: "JEV" });
+    expect(result).toMatchObject({ category: "REVIEW", method: "DECISIONS" });
     const state = JSON.stringify(evaluate.mock.calls[0][0]);
     expect(state).not.toContain("buyer@example.com");
     expect(state).not.toContain("example.com/private");
