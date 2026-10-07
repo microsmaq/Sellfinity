@@ -4,6 +4,8 @@ import { getAdminPlatformOverview } from "@/lib/admin/reporting";
 import { formatCents } from "@/lib/money";
 import { Badge, Card, cx, PageHeader, StatCard } from "@/components/ui";
 import { ProfitChart } from "../dashboard/profit-chart";
+import { getAdminCatalogHealth } from "@/lib/admin/catalog-reporting";
+import { CatalogHealth } from "./catalog-health";
 
 export const metadata = { title: "Admin dashboard — Sellfinity" };
 
@@ -13,7 +15,7 @@ function percentage(part: number, total: number): string {
 
 export default async function AdminDashboardPage() {
   await requireAdmin();
-  const overview = await getAdminPlatformOverview(30);
+  const [overview, catalogHealth] = await Promise.all([getAdminPlatformOverview(30), getAdminCatalogHealth()]);
   const { totals, catalog, health } = overview;
   const alerts = [
     health.openIssues ? { label: `${health.openIssues} open listing issue${health.openIssues === 1 ? "" : "s"}`, href: "/admin/data", tone: "amber" as const } : null,
@@ -57,6 +59,8 @@ export default async function AdminDashboardPage() {
         <StatCard label="Actual eBay fees" value={percentage(totals.actualFinancialOrders, totals.orders)} sub={`${totals.actualFinancialOrders}/${totals.orders} orders finalized`} />
         <StatCard label="Verified Amazon cost" value={percentage(totals.verifiedCostOrders, totals.orders)} sub={`${totals.verifiedCostOrders}/${totals.orders} purchases matched`} />
       </section>
+
+      <CatalogHealth data={catalogHealth} />
 
       {alerts.length > 0 && (
         <Card className="overflow-hidden border-amber-200 bg-amber-50/60 p-4 sm:p-5">

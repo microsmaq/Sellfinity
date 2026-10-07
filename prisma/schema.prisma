@@ -221,6 +221,21 @@ model AdminArbitrageProduct {
 // A durable direct-to-eBay publishing run. The browser advances one item at a
 // time so progress survives serverless request limits and every outcome is
 // retained for the seller's audit history.
+model AdminCatalogDailyActivity {
+  asin       String
+  day        DateTime @db.Date
+  added      Int      @default(0)
+  refreshed  Int      @default(0)
+  checked    Int      @default(0)
+  @@id([asin, day])
+  @@index([day])
+}
+
+model AdminCatalogActivityTracking {
+  id        String   @id @default("main")
+  startedAt DateTime @default(now())
+}
+
 model AdminCatalogReviewAutomation {
   id              String    @id @default("main")
   enabled         Boolean   @default(false)
