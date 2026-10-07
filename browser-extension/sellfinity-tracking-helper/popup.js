@@ -34,9 +34,9 @@ function renderMode(mode, response) {
 
 async function refreshStatus() {
   try {
-    const response = await chrome.runtime.sendMessage({ type: "GET_HELPER_STATUS" });
-    if (!response?.ok) return;
-    const workload = await chrome.runtime.sendMessage({ type: "GET_WORKLOAD_SETTINGS" });
+    const response = await chrome.runtime.sendMessage({ type: "GET_HELPER_STATUS" }).catch(() => null) || { statuses: [] };
+    if (!Array.isArray(response.statuses)) response.statuses = [];
+    const workload = await chrome.runtime.sendMessage({ type: "GET_WORKLOAD_SETTINGS" }).catch(() => null);
     if (workload?.ok) {
       response.workload = workload.settings;
       const state = workload.settings;
@@ -46,19 +46,21 @@ async function refreshStatus() {
     }
     renderMode("PRICE", response);
     renderMode("TRACKING", response);
-    const daily = await chrome.runtime.sendMessage({ type: "GET_DAILY_SETTINGS" });
+    const daily = await chrome.runtime.sendMessage({ type: "GET_DAILY_SETTINGS" }).catch(() => null);
     if (daily?.ok) document.getElementById("daily-detail").textContent = `${daily.settings.status || "Ready"} · ${daily.settings.detail || "Daily scheduling is off until enabled."}`;
     const catalog = await chrome.runtime.sendMessage({ type: "GET_CATALOG_IMPORT_STATUS" });
-    if (catalog?.job) {
-      const job = catalog.job;
-      document.getElementById("catalog-detail").textContent = `${job.status} · ${job.added} added · ${job.updated || 0} enriched · ${job.skipped} skipped · ${job.failed} errors${job.detail ? ` · ${job.detail}` : ""}`;
-      document.getElementById("stop-catalog").disabled = job.status !== "running";
-      document.getElementById("resume-catalog").disabled = !["error", "cancelled"].includes(job.status);
+    const activity = catalog?.activity;
+    if (activity) {
+      document.getElementById("catalog-status").textContent = activity.state;
+      document.getElementById("catalog-status").className = `status ${activity.state}`;
+      document.getElementById("catalog-detail").textContent = `${activity.reason}\n${activity.processed}/${activity.total} products processed · ${activity.added} added · ${activity.enriched} enriched · ${activity.skipped} skipped · ${activity.failed} errors\n${activity.pagesChecked}/${activity.pagesTotal} category pages scanned${activity.currentAsin ? ` · ASIN ${activity.currentAsin}` : ""}`;
+      document.getElementById("catalog-bar").style.width = `${activity.total ? Math.min(100, activity.processed / activity.total * 100) : 0}%`;
+      document.getElementById("catalog-next").textContent = [activity.nextAt ? `Next opportunity: ${new Date(activity.nextAt).toLocaleString()}` : "", activity.currentUrl, activity.updatedAt ? `Last activity: ${new Date(activity.updatedAt).toLocaleTimeString()}` : "", activity.continuous ? "Continuous discovery enabled." : activity.enabled ? "Daily discovery enabled." : "Discovery schedule off."].filter(Boolean).join("\n");
+      document.getElementById("catalog-errors").textContent = activity.errors.length ? activity.errors.join("\n") : "No product errors recorded for this batch.";
+      document.getElementById("stop-catalog").disabled = !activity.continuous && !["running", "waiting", "paused"].includes(activity.state);
+      document.getElementById("resume-catalog").disabled = !["error", "cancelled"].includes(catalog?.job?.status);
     }
-    if (catalog?.schedule?.enabled && catalog.schedule.continuous) {
-      document.getElementById("stop-catalog").disabled = false;
-      document.getElementById("catalog-detail").textContent += " · Continuous discovery enabled; uses saved workload limits. May wait for the next category/page allowance.";
-    }
+
   } catch {
     document.querySelectorAll(".detail:not(#work-feedback)").forEach((element) => { element.textContent = "Helper status is temporarily unavailable."; });
   }

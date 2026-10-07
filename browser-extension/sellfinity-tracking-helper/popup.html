@@ -24,11 +24,14 @@
       <p id="work-detail" class="detail" role="status"></p>
     </section>
     <section class="run-card">
-      <strong>Import Amazon products</strong>
+      <div class="run-heading"><strong>Amazon discovery & imports</strong><span id="catalog-status" class="status idle">idle</span></div>
       <p class="detail">Open an Amazon product or Best Sellers page, then capture it. New ASINs are saved as admin candidates; existing products are skipped.</p>
       <button id="capture-product" type="button">Add Amazon product to Sellfinity</button>
       <button id="capture-bestsellers" type="button">Collect this bestseller page</button>
       <p id="catalog-detail" class="detail" role="status">No import running.</p>
+      <div class="progress"><span id="catalog-bar" style="width:0%"></span></div>
+      <p id="catalog-next" class="detail" role="status"></p>
+      <details><summary>Discovery activity and errors</summary><p id="catalog-errors" class="detail"></p></details>
       <button id="stop-catalog" type="button">Stop import</button>
       <button id="resume-catalog" type="button">Resume import</button>
       <details><summary>Repair missing catalog content</summary>

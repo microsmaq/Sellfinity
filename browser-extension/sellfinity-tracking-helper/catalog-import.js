@@ -19,15 +19,48 @@ async function continueDiscovery() {
     if (!page) return;
     await beginCatalogImport([], [page], 1000);
     const latest = (await chrome.storage.local.get(DISCOVERY_KEY))[DISCOVERY_KEY];
-    if (latest?.enabled && latest.continuous) await chrome.storage.local.set({ [DISCOVERY_KEY]: { ...latest, pageVisits: { ...(latest.pageVisits || {}), [page]: Date.now() } } });
+    if (latest?.enabled && latest.continuous) await chrome.storage.local.set({ [DISCOVERY_KEY]: { ...latest, lastError: "", pageVisits: { ...(latest.pageVisits || {}), [page]: Date.now() } } });
+  } catch (error) {
+    const settings = (await chrome.storage.local.get(DISCOVERY_KEY))[DISCOVERY_KEY];
+    if (settings?.enabled) await chrome.storage.local.set({ [DISCOVERY_KEY]: { ...settings, lastError: error.message || "Discovery could not start. Check admin sign-in." } });
+    throw error;
   } finally { continuousStarting = false; }
 }
 
 async function catalogJob() { return (await chrome.storage.local.get(CATALOG_JOB_KEY))[CATALOG_JOB_KEY]; }
+async function catalogActivity() {
+  const job = await catalogJob();
+  const settings = (await chrome.storage.local.get(DISCOVERY_KEY))[DISCOVERY_KEY];
+  const work = await workloadState();
+  const enabled = Boolean(settings?.enabled);
+  let state = job?.status || (enabled ? "waiting" : "off");
+  let reason = job?.stage || job?.detail || "Discovery is off. Start continuous discovery or save a daily schedule.";
+  let nextAt = null;
+  const tomorrow = () => { const date = new Date(); date.setHours(24, 0, 0, 0); return date.getTime(); };
+  if (work.paused && (enabled || ["running", "paused"].includes(job?.status))) { state = "paused"; reason = work.reason || "Browsing is paused. Check workload controls."; nextAt = work.verificationCheckAt || null; }
+  else if (job?.status === "error") { state = "error"; reason = job.detail || "Discovery needs attention. Resume after correcting the error."; }
+  else if ((enabled || ["running", "paused"].includes(job?.status)) && (work.used || 0) >= work.dailyLimit) { state = "waiting"; reason = "Daily page allowance reached. Resumes tomorrow without changing your limits."; nextAt = tomorrow(); }
+  else if (["running", "paused"].includes(job?.status)) {
+    if (job.status === "paused" || (!job.productTabId && (work.nextAt || 0) > Date.now())) { state = "waiting"; reason = job.detail || work.reason || "Waiting for the next slow-drip page slot."; nextAt = work.nextAt > Date.now() ? work.nextAt : Date.now() + 60_000; }
+  } else if (enabled) {
+    state = "waiting";
+    if (settings.lastError) { reason = settings.lastError; nextAt = Date.now() + 60_000; }
+    else if (settings.continuous) {
+      const eligible = settings.pages.some((page) => !settings.pageVisits?.[page] || Date.now() - settings.pageVisits[page] >= 86_400_000);
+      reason = eligible ? "Waiting for the next scheduler tick or for another browsing task to finish." : "All category pages were checked recently. Waiting before the next pass.";
+      nextAt = eligible ? Math.max(Date.now() + 60_000, work.nextAt || 0) : Math.min(...settings.pages.map((page) => settings.pageVisits[page] + 86_400_000));
+    } else {
+      const date = new Date(); const [hour, minute] = settings.time.split(":").map(Number); date.setHours(hour, minute, 0, 0);
+      if (settings.lastDay === localDay(new Date())) date.setDate(date.getDate() + 1);
+      nextAt = Math.max(date.getTime(), Date.now() + 60_000); reason = `Daily discovery enabled at ${settings.time} on this computer.`;
+    }
+  }
+  return { state, reason, nextAt, continuous: Boolean(enabled && settings.continuous), enabled, currentUrl: job?.currentUrl || "", currentAsin: job?.currentAsin || "", processed: job?.cursor || 0, total: job?.candidates?.length || 0, pagesChecked: job?.pageCursor || 0, pagesTotal: job?.pages?.length || 0, added: job?.added || 0, enriched: job?.updated || 0, skipped: job?.skipped || 0, failed: job?.failed || 0, errors: job?.errors || [], updatedAt: job?.updatedAt || null };
+}
 async function saveCatalogJob(job, resume = false) {
   const current = await catalogJob();
   if (!resume && current?.startedAt === job.startedAt && current.status === "cancelled" && job.status !== "cancelled") return;
-  await chrome.storage.local.set({ [CATALOG_JOB_KEY]: { ...job, updatedAt: Date.now() } });
+  await chrome.storage.local.set({ [CATALOG_JOB_KEY]: { ...(current?.startedAt === job.startedAt ? current : {}), ...job, updatedAt: Date.now() } });
 }
 
 function validBestsellerUrl(value) {
@@ -52,7 +85,7 @@ async function readCatalogPage(url, type, job) {
   const permit = await reserveAmazonPage();
   if (!permit.ok) { const error = new Error(permit.reason); error.workloadPause = true; throw error; }
   const tab = await chrome.tabs.create({ url, active: false });
-  await saveCatalogJob({ ...job, productTabId: tab.id });
+  await saveCatalogJob({ ...job, productTabId: tab.id, currentUrl: url, currentAsin: type === "CAPTURE_CATALOG_PRODUCT" ? job.candidates[job.cursor]?.asin || "" : "", stage: type === "CAPTURE_CATALOG_PRODUCT" ? "Reading Amazon product details" : "Scanning bestseller category" });
   let preserveTab = false;
   try {
     if (job.repair) {
@@ -106,6 +139,7 @@ async function processCatalogImport() {
       const tab = await chrome.tabs.create({ url: "https://www.sellfinity.app/admin/arbitrage/import", active: false });
       job.adminTabId = tab.id;
     }
+    await saveCatalogJob({ ...job, stage: "Connecting to the admin database" });
     await catalogRpc(job.adminTabId, { operation: "filter", asins: [] });
     if (job.repair && !job.prepared) {
       const queue = await catalogRpc(job.adminTabId, { operation: "repairQueue", limit: job.limit });
@@ -141,6 +175,7 @@ async function processCatalogImport() {
           const product = await readCatalogPage(candidate.amazonUrl, "CAPTURE_CATALOG_PRODUCT", job);
           // A redirected variant cannot inherit another ASIN's bestseller rank.
           if (product.asin !== candidate.asin) throw new Error("Amazon redirected to a different ASIN. Review this product manually.");
+          await saveCatalogJob({ ...job, stage: "Saving product to admin database", currentAsin: candidate.asin });
           const saved = await catalogRpc(job.adminTabId, { operation: "save", rows: [{ ...product, source: "BESTSELLER_BROWSER", bestsellerRank: candidate.bestsellerRank, bestsellerCategory: candidate.bestsellerCategory, bestsellerUrl: candidate.bestsellerUrl }] });
           job.added += saved.added; job.updated = (job.updated || 0) + (saved.updated || 0); job.skipped += saved.skipped;
         } catch (error) {
@@ -149,10 +184,10 @@ async function processCatalogImport() {
         }
         if ((await catalogJob())?.status !== "running") return;
         job.cursor++; job.productTabId = null;
-        await saveCatalogJob(job);
+        await saveCatalogJob({ ...job, stage: "Preparing next product", currentAsin: "", currentUrl: "" });
       }
     }
-    await saveCatalogJob({ ...job, status: "complete", detail: job.repair ? `${job.cursor} incomplete products checked. Missing content may still need manual review.` : job.added >= job.limit ? "Target reached" : "Selected pages exhausted" });
+    await saveCatalogJob({ ...job, status: "complete", stage: "Batch complete", currentAsin: "", currentUrl: "", detail: job.repair ? `${job.cursor} incomplete products checked. Missing content may still need manual review.` : job.added >= job.limit ? "Target reached" : "Selected pages exhausted" });
   } catch (error) {
     const job = await catalogJob();
     if (job?.status === "running") await saveCatalogJob({ ...job, status: error.workloadPause ? "paused" : "error", detail: error.message });
@@ -164,7 +199,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   void (async () => {
     try {
       if (message.type === "GET_CATALOG_IMPORT_STATUS") {
-        sendResponse({ ok: true, job: await catalogJob(), schedule: (await chrome.storage.local.get(DISCOVERY_KEY))[DISCOVERY_KEY], repairSchedule: (await chrome.storage.local.get(REPAIR_KEY))[REPAIR_KEY] }); return;
+        sendResponse({ ok: true, job: await catalogJob(), activity: await catalogActivity(), schedule: (await chrome.storage.local.get(DISCOVERY_KEY))[DISCOVERY_KEY], repairSchedule: (await chrome.storage.local.get(REPAIR_KEY))[REPAIR_KEY] }); return;
       }
       if (message.type === "STOP_CATALOG_IMPORT") {
         const settings = (await chrome.storage.local.get(DISCOVERY_KEY))[DISCOVERY_KEY];
@@ -235,8 +270,11 @@ chrome.alarms.onAlarm.addListener((alarm) => {
     if (now.getHours() * 60 + now.getMinutes() < hours * 60 + minutes) return;
     try {
       await beginCatalogImport([], settings.pages, settings.limit);
-      await chrome.storage.local.set({ [DISCOVERY_KEY]: { ...settings, lastDay: localDay(now) } });
-    } catch { /* Wait until any existing price-check run finishes. */ }
+      await chrome.storage.local.set({ [DISCOVERY_KEY]: { ...settings, lastError: "", lastDay: localDay(now) } });
+    } catch (error) {
+      const latest = (await chrome.storage.local.get(DISCOVERY_KEY))[DISCOVERY_KEY];
+      if (latest?.enabled) await chrome.storage.local.set({ [DISCOVERY_KEY]: { ...latest, lastError: error.message || "Discovery could not start. Check admin sign-in." } });
+    }
   })();
 });
 void chrome.alarms.create("catalog-discovery", { periodInMinutes: 1 });
