@@ -1,5 +1,6 @@
 const CATALOG_JOB_KEY = "catalogImportJob";
 const DISCOVERY_KEY = "catalogDiscoverySchedule";
+const REPAIR_KEY = "catalogContentRepairSchedule";
 let catalogWorkerActive = false;
 
 async function catalogJob() { return (await chrome.storage.local.get(CATALOG_JOB_KEY))[CATALOG_JOB_KEY]; }
@@ -34,6 +35,10 @@ async function readCatalogPage(url, type, job) {
   await saveCatalogJob({ ...job, productTabId: tab.id });
   let preserveTab = false;
   try {
+    if (job.repair) {
+      const candidate = job.candidates[job.cursor];
+      if (candidate?.id) await catalogRpc(job.adminTabId, { operation: "contentCheck", id: candidate.id });
+    }
     let reason = "Amazon page could not be read.";
     for (let attempt = 0; attempt < 30; attempt++) {
       if ((await catalogJob())?.status !== "running") throw new Error("Import stopped.");
@@ -53,12 +58,12 @@ async function readCatalogPage(url, type, job) {
   } finally { if (!preserveTab) try { await chrome.tabs.remove(tab.id); } catch { /* Already closed. */ } }
 }
 
-async function beginCatalogImport(candidates = [], pages = [], limit = 100, product = null) {
+async function beginCatalogImport(candidates = [], pages = [], limit = 100, product = null, repair = false) {
   const current = await catalogJob();
   if (current?.status === "running") throw new Error("A catalog import is already running. Stop it before starting another.");
   if ((await runStatuses()).some((run) => run.status === "running" && run.mode === "PRICE")) throw new Error("Finish or stop the live price check before importing products.");
   const adminTab = await chrome.tabs.create({ url: "https://www.sellfinity.app/admin/arbitrage/import", active: false });
-  await saveCatalogJob({ status: "running", adminTabId: adminTab.id, candidates, pages, pageCursor: 0, cursor: 0, limit, added: 0, updated: 0, skipped: 0, failed: 0, errors: [], product, startedAt: Date.now() });
+  await saveCatalogJob({ status: "running", adminTabId: adminTab.id, candidates, pages, pageCursor: 0, cursor: 0, limit, added: 0, updated: 0, skipped: 0, failed: 0, errors: [], product, repair, startedAt: Date.now() });
   void processCatalogImport();
 }
 
@@ -78,12 +83,17 @@ async function processCatalogImport() {
       job.adminTabId = tab.id;
     }
     await catalogRpc(job.adminTabId, { operation: "filter", asins: [] });
+    if (job.repair && !job.prepared) {
+      const queue = await catalogRpc(job.adminTabId, { operation: "repairQueue", limit: job.limit });
+      job.candidates = queue.candidates; job.prepared = true;
+      await saveCatalogJob(job);
+    }
     if (job.product) {
       const saved = await catalogRpc(job.adminTabId, { operation: "save", rows: [job.product] });
       await saveCatalogJob({ ...job, status: "complete", added: saved.added, updated: saved.updated || 0, skipped: saved.skipped, product: null });
       return;
     }
-    while (job.status === "running" && job.added < job.limit) {
+    while (job.status === "running" && (job.repair ? job.cursor < job.limit : job.added < job.limit)) {
       if (job.cursor >= job.candidates.length) {
         if (job.pageCursor >= job.pages.length) break;
         const page = job.pages[job.pageCursor];
@@ -97,11 +107,11 @@ async function processCatalogImport() {
       // Filter a page-sized group before opening product tabs. Existing ASINs
       // never trigger redundant product reads or paid provider requests.
       const next = job.candidates.slice(job.cursor, job.cursor + 50);
-      const result = await catalogRpc(job.adminTabId, { operation: "filter", asins: next.map((row) => row.asin) });
+      const result = job.repair ? { existing: [] } : await catalogRpc(job.adminTabId, { operation: "filter", asins: next.map((row) => row.asin) });
       const existing = new Set(result.existing);
       for (const candidate of next) {
         if ((await catalogJob())?.status !== "running") return;
-        if (job.added >= job.limit) break;
+        if (job.repair ? job.cursor >= job.limit : job.added >= job.limit) break;
         if (existing.has(candidate.asin)) { job.skipped++; job.cursor++; await saveCatalogJob(job); continue; }
         try {
           const product = await readCatalogPage(candidate.amazonUrl, "CAPTURE_CATALOG_PRODUCT", job);
@@ -118,7 +128,7 @@ async function processCatalogImport() {
         await saveCatalogJob(job);
       }
     }
-    await saveCatalogJob({ ...job, status: "complete", detail: job.added >= job.limit ? "Target reached" : "Selected pages exhausted" });
+    await saveCatalogJob({ ...job, status: "complete", detail: job.repair ? `${job.cursor} incomplete products checked. Missing content may still need manual review.` : job.added >= job.limit ? "Target reached" : "Selected pages exhausted" });
   } catch (error) {
     const job = await catalogJob();
     if (job?.status === "running") await saveCatalogJob({ ...job, status: error.workloadPause ? "paused" : "error", detail: error.message });
@@ -126,11 +136,11 @@ async function processCatalogImport() {
 }
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-  if (!["GET_CATALOG_IMPORT_STATUS", "IMPORT_CURRENT_AMAZON", "IMPORT_CURRENT_BESTSELLERS", "STOP_CATALOG_IMPORT", "SAVE_DISCOVERY_SCHEDULE", "RESUME_CATALOG_IMPORT"].includes(message?.type)) return;
+  if (!["GET_CATALOG_IMPORT_STATUS", "IMPORT_CURRENT_AMAZON", "IMPORT_CURRENT_BESTSELLERS", "STOP_CATALOG_IMPORT", "SAVE_DISCOVERY_SCHEDULE", "RESUME_CATALOG_IMPORT", "SAVE_CONTENT_REPAIR_SCHEDULE", "REPAIR_CATALOG_CONTENT"].includes(message?.type)) return;
   void (async () => {
     try {
       if (message.type === "GET_CATALOG_IMPORT_STATUS") {
-        sendResponse({ ok: true, job: await catalogJob(), schedule: (await chrome.storage.local.get(DISCOVERY_KEY))[DISCOVERY_KEY] }); return;
+        sendResponse({ ok: true, job: await catalogJob(), schedule: (await chrome.storage.local.get(DISCOVERY_KEY))[DISCOVERY_KEY], repairSchedule: (await chrome.storage.local.get(REPAIR_KEY))[REPAIR_KEY] }); return;
       }
       if (message.type === "STOP_CATALOG_IMPORT") {
         const job = await catalogJob();
@@ -141,6 +151,11 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       } else if (message.type === "RESUME_CATALOG_IMPORT") {
         const job = await catalogJob();
         if (job && job.status !== "running") { await saveCatalogJob({ ...job, status: "running" }, true); void processCatalogImport(); }
+      } else if (message.type === "REPAIR_CATALOG_CONTENT") {
+        await beginCatalogImport([], [], Math.max(1, Math.min(1000, Number(message.limit) || 100)), null, true);
+      } else if (message.type === "SAVE_CONTENT_REPAIR_SCHEDULE") {
+        if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(message.time)) throw new Error("Choose a valid time.");
+        await chrome.storage.local.set({ [REPAIR_KEY]: { enabled: Boolean(message.enabled), time: message.time, limit: Math.max(1, Math.min(1000, Number(message.limit) || 100)) } });
       } else if (message.type === "SAVE_DISCOVERY_SCHEDULE") {
         const pages = (message.pages || []).filter(Boolean);
         if (!pages.length || pages.length > 20 || pages.some((url) => !validBestsellerUrl(url))) throw new Error("Enter 1–20 Amazon Best Sellers category/page URLs.");
@@ -165,6 +180,18 @@ chrome.alarms.onAlarm.addListener((alarm) => {
     const job = await catalogJob();
     if (job?.status === "paused" || (await workloadState()).paused) return;
     if (job?.status === "running") { await processCatalogImport(); return; }
+    const repair = (await chrome.storage.local.get(REPAIR_KEY))[REPAIR_KEY];
+    const localNow = new Date();
+    if (repair?.enabled && repair.lastDay !== localDay(localNow)) {
+      const [hour, minute] = repair.time.split(":").map(Number);
+      if (localNow.getHours() * 60 + localNow.getMinutes() >= hour * 60 + minute) {
+        try {
+          await beginCatalogImport([], [], repair.limit, null, true);
+          await chrome.storage.local.set({ [REPAIR_KEY]: { ...repair, lastDay: localDay(localNow) } });
+        } catch { /* Retry when a price check or import finishes. */ }
+        return;
+      }
+    }
     const settings = (await chrome.storage.local.get(DISCOVERY_KEY))[DISCOVERY_KEY];
     const now = new Date();
     if (!settings?.enabled || settings.lastDay === localDay(now)) return;

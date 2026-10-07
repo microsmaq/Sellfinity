@@ -141,6 +141,12 @@ async function catalogCommand(type, payload = {}) {
   } catch { document.getElementById("catalog-detail").textContent = "Reload the extension and the Amazon/Sellfinity tabs."; }
 }
 document.getElementById("capture-product").addEventListener("click", () => catalogCommand("IMPORT_CURRENT_AMAZON"));
+document.getElementById("save-repair").addEventListener("click", () => catalogCommand("SAVE_CONTENT_REPAIR_SCHEDULE", {
+  enabled: document.getElementById("repair-enabled").checked,
+  time: document.getElementById("repair-time").value,
+  limit: Number(document.getElementById("repair-limit").value),
+}));
+document.getElementById("run-repair").addEventListener("click", () => catalogCommand("REPAIR_CATALOG_CONTENT", { limit: Number(document.getElementById("repair-limit").value) }));
 document.getElementById("capture-bestsellers").addEventListener("click", () => catalogCommand("IMPORT_CURRENT_BESTSELLERS"));
 document.getElementById("stop-catalog").addEventListener("click", () => catalogCommand("STOP_CATALOG_IMPORT"));
 document.getElementById("resume-catalog").addEventListener("click", () => catalogCommand("RESUME_CATALOG_IMPORT"));
@@ -151,6 +157,12 @@ document.getElementById("save-discovery").addEventListener("click", () => catalo
   pages: document.getElementById("discovery-pages").value.split(/\r?\n/).map((line) => line.trim()).filter(Boolean),
 }));
 void chrome.runtime.sendMessage({ type: "GET_CATALOG_IMPORT_STATUS" }).then((response) => {
+  const repair = response?.repairSchedule;
+  if (repair) {
+    document.getElementById("repair-enabled").checked = repair.enabled;
+    document.getElementById("repair-time").value = repair.time;
+    document.getElementById("repair-limit").value = repair.limit;
+  }
   const schedule = response?.schedule;
   if (!schedule) return;
   document.getElementById("discovery-enabled").checked = schedule.enabled;

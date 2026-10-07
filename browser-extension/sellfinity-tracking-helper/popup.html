@@ -31,6 +31,14 @@
       <p id="catalog-detail" class="detail" role="status">No import running.</p>
       <button id="stop-catalog" type="button">Stop import</button>
       <button id="resume-catalog" type="button">Resume import</button>
+      <details><summary>Repair missing catalog content</summary>
+        <label><input id="repair-enabled" type="checkbox"> Repair descriptions, bullets and images daily</label>
+        <label>Local start time <input id="repair-time" type="time" value="04:00"></label>
+        <label>Products per run <input id="repair-limit" type="number" min="1" max="1000" value="100"></label>
+        <p class="detail">Revisits incomplete saved products, never-checked first. Fills missing content only; prices, stock and approved matches remain unchanged. Uses the existing page limits and verification pauses.</p>
+        <button id="save-repair" type="button">Save repair schedule</button>
+        <button id="run-repair" type="button">Repair missing content now</button>
+      </details>
       <details><summary>Daily bestseller discovery</summary>
         <label><input id="discovery-enabled" type="checkbox"> Discover new products daily</label>
         <label>Local start time <input id="discovery-time" type="time" value="01:00"></label>

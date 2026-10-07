@@ -4,7 +4,25 @@ import { db } from "@/lib/db";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { catalogImportSchema } from "@/lib/arbitrage/catalog-import";
-import { catalogStringArray } from "@/lib/arbitrage/catalog-content";
+import { catalogStringArray, catalogContentWarnings } from "@/lib/arbitrage/catalog-content";
+
+export async function prepareCatalogContentRepair(limit: number) {
+  await requireAdmin();
+  const take = z.number().int().min(1).max(1000).parse(limit);
+  const rows = await db.adminArbitrageProduct.findMany({ where: { status: { not: "ARCHIVED" } }, select: { id: true, asin: true, amazonTitle: true, amazonDescription: true, amazonBulletPointsJson: true, amazonImageUrlsJson: true, amazonImageUrl: true, amazonImportDetailsJson: true, createdAt: true } });
+  const attempted = (value: string) => { try { return Date.parse(JSON.parse(value || "{}").contentCheckedAt) || 0; } catch { return 0; } };
+  return { candidates: rows.filter((row) => catalogContentWarnings(row).length > 0).sort((a, b) => attempted(a.amazonImportDetailsJson) - attempted(b.amazonImportDetailsJson) || a.createdAt.getTime() - b.createdAt.getTime()).slice(0, take).map((row) => ({ id: row.id, asin: row.asin, amazonUrl: `https://www.amazon.com/dp/${row.asin}` })) };
+}
+
+export async function recordCatalogContentCheck(id: string) {
+  await requireAdmin();
+  const parsed = z.string().min(1).max(100).parse(id);
+  const row = await db.adminArbitrageProduct.findUnique({ where: { id: parsed } });
+  if (!row || row.status === "ARCHIVED") return;
+  let details: Record<string, unknown> = {};
+  try { details = JSON.parse(row.amazonImportDetailsJson || "{}"); } catch { /* Preserve a usable audit object. */ }
+  await db.adminArbitrageProduct.updateMany({ where: { id: parsed, updatedAt: row.updatedAt }, data: { amazonImportDetailsJson: JSON.stringify({ ...details, contentCheckedAt: new Date().toISOString() }) } });
+}
 
 export async function filterCatalogImportAsins(rawAsins: string[]) {
   await requireAdmin();
