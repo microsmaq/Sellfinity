@@ -2,6 +2,26 @@ const CATALOG_JOB_KEY = "catalogImportJob";
 const DISCOVERY_KEY = "catalogDiscoverySchedule";
 const REPAIR_KEY = "catalogContentRepairSchedule";
 let catalogWorkerActive = false;
+let continuousStarting = false;
+const DEFAULT_DISCOVERY_PAGES = ["home-garden", "kitchen", "sporting-goods", "tools", "office-products", "pet-supplies", "toys-and-games", "arts-crafts", "beauty", "electronics"].flatMap((category) => [1, 2].map((page) => `https://www.amazon.com/Best-Sellers/zgbs/${category}?pg=${page}`));
+
+async function continueDiscovery() {
+  if (continuousStarting) return;
+  continuousStarting = true;
+  try {
+    const settings = (await chrome.storage.local.get(DISCOVERY_KEY))[DISCOVERY_KEY];
+    const job = await catalogJob();
+    const workload = await workloadState();
+    if (!settings?.enabled || !settings.continuous || ["running", "paused", "error"].includes(job?.status) || workload.paused || (workload.used || 0) >= workload.dailyLimit || (workload.nextAt || 0) > Date.now()) return;
+    const visits = settings.pageVisits || {};
+    // One pass per category page per day, not endless re-reading of saved ASINs.
+    const page = settings.pages.find((url) => !visits[url] || Date.now() - visits[url] >= 24 * 60 * 60 * 1000);
+    if (!page) return;
+    await beginCatalogImport([], [page], 1000);
+    const latest = (await chrome.storage.local.get(DISCOVERY_KEY))[DISCOVERY_KEY];
+    if (latest?.enabled && latest.continuous) await chrome.storage.local.set({ [DISCOVERY_KEY]: { ...latest, pageVisits: { ...(latest.pageVisits || {}), [page]: Date.now() } } });
+  } finally { continuousStarting = false; }
+}
 
 async function catalogJob() { return (await chrome.storage.local.get(CATALOG_JOB_KEY))[CATALOG_JOB_KEY]; }
 async function saveCatalogJob(job, resume = false) {
@@ -62,7 +82,11 @@ async function beginCatalogImport(candidates = [], pages = [], limit = 100, prod
   const current = await catalogJob();
   if (current?.status === "running") throw new Error("A catalog import is already running. Stop it before starting another.");
   if ((await runStatuses()).some((run) => run.status === "running" && run.mode === "PRICE")) throw new Error("Finish or stop the live price check before importing products.");
-  const adminTab = await chrome.tabs.create({ url: "https://www.sellfinity.app/admin/arbitrage/import", active: false });
+  let adminTab = null;
+  if (current?.adminTabId) {
+    try { const previous = await chrome.tabs.get(current.adminTabId); if (previous.url === "https://www.sellfinity.app/admin/arbitrage/import") adminTab = previous; } catch { /* Recreate a closed source tab. */ }
+  }
+  if (!adminTab) adminTab = await chrome.tabs.create({ url: "https://www.sellfinity.app/admin/arbitrage/import", active: false });
   await saveCatalogJob({ status: "running", adminTabId: adminTab.id, candidates, pages, pageCursor: 0, cursor: 0, limit, added: 0, updated: 0, skipped: 0, failed: 0, errors: [], product, repair, startedAt: Date.now() });
   void processCatalogImport();
 }
@@ -136,18 +160,29 @@ async function processCatalogImport() {
 }
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-  if (!["GET_CATALOG_IMPORT_STATUS", "IMPORT_CURRENT_AMAZON", "IMPORT_CURRENT_BESTSELLERS", "STOP_CATALOG_IMPORT", "SAVE_DISCOVERY_SCHEDULE", "RESUME_CATALOG_IMPORT", "SAVE_CONTENT_REPAIR_SCHEDULE", "REPAIR_CATALOG_CONTENT"].includes(message?.type)) return;
+  if (!["GET_CATALOG_IMPORT_STATUS", "IMPORT_CURRENT_AMAZON", "IMPORT_CURRENT_BESTSELLERS", "STOP_CATALOG_IMPORT", "SAVE_DISCOVERY_SCHEDULE", "RESUME_CATALOG_IMPORT", "SAVE_CONTENT_REPAIR_SCHEDULE", "REPAIR_CATALOG_CONTENT", "START_CONTINUOUS_DISCOVERY"].includes(message?.type)) return;
   void (async () => {
     try {
       if (message.type === "GET_CATALOG_IMPORT_STATUS") {
         sendResponse({ ok: true, job: await catalogJob(), schedule: (await chrome.storage.local.get(DISCOVERY_KEY))[DISCOVERY_KEY], repairSchedule: (await chrome.storage.local.get(REPAIR_KEY))[REPAIR_KEY] }); return;
       }
       if (message.type === "STOP_CATALOG_IMPORT") {
+        const settings = (await chrome.storage.local.get(DISCOVERY_KEY))[DISCOVERY_KEY];
+        if (settings?.continuous) await chrome.storage.local.set({ [DISCOVERY_KEY]: { ...settings, enabled: false, continuous: false } });
         const job = await catalogJob();
         if (job) {
           await saveCatalogJob({ ...job, status: "cancelled" });
           if (job.productTabId) try { await chrome.tabs.remove(job.productTabId); } catch { /* Already closed. */ }
         }
+      } else if (message.type === "START_CONTINUOUS_DISCOVERY") {
+        const job = await catalogJob();
+        if (["running", "paused", "error"].includes(job?.status)) throw new Error("Finish, stop or resume the current import first. Verification pauses cannot be bypassed.");
+        // Random order is for category variety, not an anti-detection mechanism.
+        const pages = [...DEFAULT_DISCOVERY_PAGES];
+        for (let i = pages.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [pages[i], pages[j]] = [pages[j], pages[i]]; }
+        const saved = (await chrome.storage.local.get(DISCOVERY_KEY))[DISCOVERY_KEY];
+        await chrome.storage.local.set({ [DISCOVERY_KEY]: { enabled: true, continuous: true, time: "00:00", pages, limit: 1000, pageVisits: saved?.pageVisits || {} } });
+        await continueDiscovery();
       } else if (message.type === "RESUME_CATALOG_IMPORT") {
         const job = await catalogJob();
         if (job && job.status !== "running") { await saveCatalogJob({ ...job, status: "running" }, true); void processCatalogImport(); }
@@ -193,6 +228,7 @@ chrome.alarms.onAlarm.addListener((alarm) => {
       }
     }
     const settings = (await chrome.storage.local.get(DISCOVERY_KEY))[DISCOVERY_KEY];
+    if (settings?.continuous) { await continueDiscovery().catch(() => {}); return; }
     const now = new Date();
     if (!settings?.enabled || settings.lastDay === localDay(now)) return;
     const [hours, minutes] = settings.time.split(":").map(Number);

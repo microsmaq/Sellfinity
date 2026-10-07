@@ -63,7 +63,7 @@ The extension does not use clipboard access. It only reads supported
 Amazon/carrier tracking pages opened from Sellfinity and submits tracking to
 the matching fulfillment row.
 
-## Automated content repair (v1.6.5)
+## Automated content repair (v1.6.6)
 
 Open the helper → Repair missing catalog content. Choose products per run,
 enable daily repair and save the local start time, or run a repair immediately.
@@ -74,7 +74,7 @@ availability and approved matches untouched. Uses existing workload limits,
 Stop/Resume controls and verification pauses. No paid product research calls.
 If Amazon does not expose usable copy, the warning remains for manual review.
 
-## Rich catalog imports (v1.6.5)
+## Rich catalog imports (v1.6.6)
 
 Product captures now include standard and A+ description text, feature bullets,
 and up to 12 deduplicated gallery photo URLs at their original resolution.
@@ -87,7 +87,7 @@ gallery images without changing its price, availability or approved match.
 The popup reports these records as enriched. Bestseller discovery still skips
 existing ASINs. Manual/JSON/CSV imports can also supply this product content.
 
-## Amazon workload controls (v1.6.5)
+## Amazon workload controls (v1.6.6)
 
 Price checks record a shared per-ASIN attempt timestamp in Sellfinity when the
 helper starts opening the page, even if the read later fails or is blocked.
@@ -122,7 +122,7 @@ to 15 minutes, then remaining items continue automatically, even after repeated
 failures. User pauses always require manual resume. The page reader retains its
 bounded startup retries; failed products are not retried indefinitely.
 
-Reload the unpacked helper after replacing it with v1.6.5, then refresh the
+Reload the unpacked helper after replacing it with v1.6.6, then refresh the
 Sellfinity tab. Existing daily schedules are retained. Browser-local page limits
 are not a coordinated cap across multiple computers.
 

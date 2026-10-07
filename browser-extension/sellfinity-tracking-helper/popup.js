@@ -55,6 +55,10 @@ async function refreshStatus() {
       document.getElementById("stop-catalog").disabled = job.status !== "running";
       document.getElementById("resume-catalog").disabled = !["error", "cancelled"].includes(job.status);
     }
+    if (catalog?.schedule?.enabled && catalog.schedule.continuous) {
+      document.getElementById("stop-catalog").disabled = false;
+      document.getElementById("catalog-detail").textContent += " · Continuous discovery enabled; uses saved workload limits. May wait for the next category/page allowance.";
+    }
   } catch {
     document.querySelectorAll(".detail:not(#work-feedback)").forEach((element) => { element.textContent = "Helper status is temporarily unavailable."; });
   }
@@ -141,6 +145,7 @@ async function catalogCommand(type, payload = {}) {
   } catch { document.getElementById("catalog-detail").textContent = "Reload the extension and the Amazon/Sellfinity tabs."; }
 }
 document.getElementById("capture-product").addEventListener("click", () => catalogCommand("IMPORT_CURRENT_AMAZON"));
+document.getElementById("start-continuous-discovery").addEventListener("click", () => catalogCommand("START_CONTINUOUS_DISCOVERY"));
 document.getElementById("save-repair").addEventListener("click", () => catalogCommand("SAVE_CONTENT_REPAIR_SCHEDULE", {
   enabled: document.getElementById("repair-enabled").checked,
   time: document.getElementById("repair-time").value,
