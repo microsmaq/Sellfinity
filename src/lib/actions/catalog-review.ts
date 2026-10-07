@@ -19,3 +19,9 @@ export async function reviewPendingCatalogNow() {
   revalidatePath("/admin/arbitrage"); revalidatePath("/arbitrage"); revalidatePath("/admin/settings");
   return result;
 }
+export async function reviewHighConfidenceCatalogNow() {
+  await requireAdmin();
+  const result = await runAutomaticCatalogReview(true, true);
+  revalidatePath("/admin/arbitrage"); revalidatePath("/arbitrage"); revalidatePath("/admin/settings");
+  return result;
+}

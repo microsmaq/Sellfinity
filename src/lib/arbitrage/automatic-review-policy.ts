@@ -25,11 +25,11 @@ type ReviewFacts = {
 const tokens = (text: string) => text.toLowerCase().match(/[a-z0-9]+/g) ?? [];
 /** AI certainty is one input, not a substitute for observable identity and
  * landed-cost checks. Missing variant evidence stays in manual review. */
-export function automaticReviewDecision(facts: ReviewFacts, now = new Date()): { publish: boolean; reason: string } {
+export function automaticReviewDecision(facts: ReviewFacts, now = new Date(), minimumConfidence = 100): { publish: boolean; reason: string } {
   const hold = (reason: string) => ({ publish: false, reason });
   if (!facts.inStock || !facts.shippingVerified) return hold("Amazon availability or shipping needs verification.");
   if (!facts.amazonCheckedAt || now.getTime() - facts.amazonCheckedAt.getTime() > 24 * 60 * 60 * 1000) return hold("Amazon data is older than 24 hours; refresh it first.");
-  if (facts.assessment.verdict !== "MATCH" || facts.assessment.confidence !== 100 || facts.rulesRejected) return hold("Match needs administrator review; automatic publication requires MATCH at 100% with no rule conflict.");
+  if (facts.assessment.verdict !== "MATCH" || facts.assessment.confidence < minimumConfidence || facts.rulesRejected) return hold(`Match needs administrator review; automatic publication requires MATCH at ${minimumConfidence}% or higher with no rule conflict.`);
   if (!facts.amazonImage || !facts.ebayImage) return hold("Both product images are required for identity review.");
   const ebay = new Set(tokens(facts.ebayTitle));
   const brand = tokens(facts.brand);
@@ -48,5 +48,5 @@ export function automaticReviewDecision(facts: ReviewFacts, now = new Date()): {
   if (!facts.hasMarketEvidence || !facts.averagePriceCents) return hold("Current eBay market evidence is unavailable.");
   if (facts.profitCents <= 0 || (facts.marginPct < AUTO_PUBLISH_MIN_MARGIN_PCT && facts.profitCents < AUTO_PUBLISH_FLAT_PROFIT_CENTS)) return hold("The product does not meet the automatic profit threshold.");
   if (!isCompetitivelyPriced(assessPriceCompetitiveness(facts.suggestedPriceCents, facts.ebayPriceCents, facts.averagePriceCents))) return hold("The profitable suggested price is not competitive with the eBay market.");
-  return { publish: true, reason: "Automatic review passed: exact brand and variant evidence, MATCH 100%, verified fresh landed cost, competitive profitable pricing." };
+  return { publish: true, reason: `Automatic review passed: exact brand and variant evidence, MATCH ${facts.assessment.confidence}%, verified fresh landed cost, competitive profitable pricing.` };
 }

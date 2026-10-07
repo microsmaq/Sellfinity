@@ -346,7 +346,7 @@ export async function listAdminCatalog(params: {
 
 /** Make a curated catalog row visible in the existing user-facing Arbitrage
  * Finder without disrupting its publishing, hiding, sorting, or export flows. */
-export async function publishCatalogProductToUsers(id: string): Promise<void> {
+export async function publishCatalogProductToUsers(id: string, approval?: { updatedAt: Date; confidence: number; reason: string }): Promise<void> {
   const item = await db.adminArbitrageProduct.findUnique({ where: { id } });
   if (item?.amazonImportDetailsJson && item.amazonImportDetailsJson !== "{}") requireCatalogContent(item);
   if (item?.amazonShippingVerified === false || !item?.amazonInStock) throw new Error("Verify Amazon availability and shipping before publishing.");
@@ -359,6 +359,8 @@ export async function publishCatalogProductToUsers(id: string): Promise<void> {
   ) {
     throw new Error("Research an eBay equivalent before publishing this product.");
   }
+  if (approval) Object.assign(item, { matchVerdict: "MATCH", matchConfidence: approval.confidence, matchReason: approval.reason, matchMethod: "DECISIONS" });
+  const reference = { id: item.ebayItemId, title: item.ebayTitle, price: item.ebayPriceCents, url: item.ebayUrl };
   const suggested = arbitrageSuggestedPriceCents(
     item.amazonPriceCents,
     item.ebayPriceCents,
@@ -371,14 +373,18 @@ export async function publishCatalogProductToUsers(id: string): Promise<void> {
     item.amazonPriceCents,
     item.amazonShippingCents,
   );
-  await db.$transaction([
-    db.arbitrageItem.upsert({
-      where: { ebayItemId: item.ebayItemId },
+  await db.$transaction(async (tx) => {
+    if (approval) {
+      const lease = await tx.adminArbitrageProduct.updateMany({ where: { id, status: "NO_MATCH", updatedAt: approval.updatedAt }, data: { updatedAt: new Date() } });
+      if (!lease.count) throw new Error("Candidate changed during automatic approval. Nothing was published.");
+    }
+    await tx.arbitrageItem.upsert({
+      where: { ebayItemId: reference.id },
       create: {
-        ebayItemId: item.ebayItemId,
-        ebayTitle: item.ebayTitle,
-        ebayPriceCents: item.ebayPriceCents,
-        ebayUrl: item.ebayUrl,
+        ebayItemId: reference.id,
+        ebayTitle: reference.title,
+        ebayPriceCents: reference.price,
+        ebayUrl: reference.url,
         imageUrl: item.ebayImageUrl ?? item.amazonImageUrl ?? "",
         category: item.category,
         asin: item.asin,
@@ -400,9 +406,9 @@ export async function publishCatalogProductToUsers(id: string): Promise<void> {
         matchCheckedAt: item.lastResearchedAt ?? new Date(),
       },
       update: {
-        ebayTitle: item.ebayTitle,
-        ebayPriceCents: item.ebayPriceCents,
-        ebayUrl: item.ebayUrl,
+        ebayTitle: reference.title,
+        ebayPriceCents: reference.price,
+        ebayUrl: reference.url,
         imageUrl: item.ebayImageUrl ?? item.amazonImageUrl ?? "",
         category: item.category,
         asin: item.asin,
@@ -423,17 +429,18 @@ export async function publishCatalogProductToUsers(id: string): Promise<void> {
         matchMethod: item.matchMethod,
         matchCheckedAt: item.lastResearchedAt ?? new Date(),
       },
-    }),
-    db.adminArbitrageProduct.update({
+    });
+    await tx.adminArbitrageProduct.update({
       where: { id },
       data: {
         status: "PUBLISHED",
+        ...(approval && { matchVerdict: "MATCH", matchConfidence: approval.confidence, matchReason: approval.reason, matchMethod: "DECISIONS" }),
         suggestedPriceCents: suggested,
         estimatedProfitCents: margin.estimatedProfitCents,
         marginPct: Math.round(margin.marginPct),
       },
-    }),
-  ]);
+    });
+  });
 }
 
 /** Keep automated/admin scans represented in the Amazon-first catalog. */

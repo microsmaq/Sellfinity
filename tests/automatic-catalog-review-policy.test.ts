@@ -13,6 +13,12 @@ describe("strict automatic catalog publication", () => {
   it("publishes a fully verified exact match with profitable competitive pricing", () => {
     expect(automaticReviewDecision(facts, now).publish).toBe(true);
   });
+  it("allows 95% visual matches only when the saved-review flow explicitly opts in", () => {
+    const candidate = { ...facts, assessment: { ...facts.assessment, confidence: 95 } };
+    expect(automaticReviewDecision(candidate, now).publish).toBe(false);
+    expect(automaticReviewDecision(candidate, now, 95).publish).toBe(true);
+    expect(automaticReviewDecision({ ...candidate, rulesRejected: true }, now, 95).publish).toBe(false);
+  });
   it("does not trust an AI 100 score when variant evidence conflicts", () => {
     expect(automaticReviewDecision({ ...facts, ebayTitle: "Acme AB123 2 Pack Knee Strap Red 10 inch" }, now).publish).toBe(false);
     expect(automaticReviewDecision({ ...facts, ebayTitle: "Acme AB123 1 Pack Knee Strap Black 10 inch" }, now).publish).toBe(false);
