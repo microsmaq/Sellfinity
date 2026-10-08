@@ -22,7 +22,23 @@ describe("browser catalog capture", () => {
     expect(product).toMatchObject({ asin: "B099999999", shippingCents: null, availability: "AVAILABLE" });
   });
   it("never silently accepts a CAPTCHA page", () => {
-    expect(() => captureRuntime().sellfinityCaptureCatalogProduct({ title: "Robot Check", body: { innerText: "Enter the characters you see below" } }, "https://www.amazon.com/dp/B012345678")).toThrow("CAPTCHA");
+    expect(() => captureRuntime().sellfinityCaptureCatalogProduct({ title: "Robot Check", body: { innerText: "Enter the characters you see below" } }, "https://www.amazon.com/dp/B012345678")).toThrow("verification");
+  });
+  it("distinguishes an unfinished bestseller page from a genuine verification block", () => {
+    const runtime = captureRuntime();
+    const doc = { readyState: "loading", title: "Best Sellers", body: { innerText: "Loading" }, querySelector: () => null, querySelectorAll: () => [] };
+    try { runtime.sellfinityCaptureBestsellers(doc, "https://www.amazon.com/Best-Sellers/zgbs/kitchen"); throw new Error("Expected loading error"); }
+    catch (error) { expect(error).toMatchObject({ code: "PAGE_LOADING" }); }
+    try { runtime.sellfinityCaptureBestsellers({ ...doc, title: "Robot Check" }, "https://www.amazon.com/Best-Sellers/zgbs/kitchen"); throw new Error("Expected verification error"); }
+    catch (error) { expect(error).toMatchObject({ code: "VERIFICATION_REQUIRED" }); }
+  });
+  it("does not label a missing title or empty bestseller page as verification", () => {
+    const runtime = captureRuntime();
+    const doc = { readyState: "complete", title: "Amazon", body: { innerText: "" }, querySelector: () => null, querySelectorAll: () => [] };
+    try { runtime.sellfinityCaptureCatalogProduct(doc, "https://www.amazon.com/dp/B012345678"); throw new Error("Expected missing product"); }
+    catch (error) { expect(error).toMatchObject({ code: "PRODUCT_NOT_READABLE" }); }
+    try { runtime.sellfinityCaptureBestsellers(doc, "https://www.amazon.com/Best-Sellers/zgbs/kitchen"); throw new Error("Expected missing cards"); }
+    catch (error) { expect(error).toMatchObject({ code: "BESTSELLERS_NOT_READABLE" }); }
   });
   it("records ranked cards and deduplicates ASINs", () => {
     const card = { querySelectorAll: () => [{ href: "https://www.amazon.com/dp/B012345678" }], querySelector: () => ({ textContent: "#3" }) };

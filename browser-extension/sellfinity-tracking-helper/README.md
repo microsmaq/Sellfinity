@@ -63,7 +63,7 @@ The extension does not use clipboard access. It only reads supported
 Amazon/carrier tracking pages opened from Sellfinity and submits tracking to
 the matching fulfillment row.
 
-## Automated content repair (v1.6.7)
+## Automated content repair (v1.6.8)
 
 Open the helper → Repair missing catalog content. Choose products per run,
 enable daily repair and save the local start time, or run a repair immediately.
@@ -74,7 +74,7 @@ availability and approved matches untouched. Uses existing workload limits,
 Stop/Resume controls and verification pauses. No paid product research calls.
 If Amazon does not expose usable copy, the warning remains for manual review.
 
-## Rich catalog imports (v1.6.7)
+## Rich catalog imports (v1.6.8)
 
 Product captures now include standard and A+ description text, feature bullets,
 and up to 12 deduplicated gallery photo URLs at their original resolution.
@@ -87,7 +87,7 @@ gallery images without changing its price, availability or approved match.
 The popup reports these records as enriched. Bestseller discovery still skips
 existing ASINs. Manual/JSON/CSV imports can also supply this product content.
 
-## Amazon workload controls (v1.6.7)
+## Amazon workload controls (v1.6.8)
 
 Price checks record a shared per-ASIN attempt timestamp in Sellfinity when the
 helper starts opening the page, even if the read later fails or is blocked.
@@ -122,7 +122,7 @@ to 15 minutes, then remaining items continue automatically, even after repeated
 failures. User pauses always require manual resume. The page reader retains its
 bounded startup retries; failed products are not retried indefinitely.
 
-Reload the unpacked helper after replacing it with v1.6.7, then refresh the
+Reload the unpacked helper after replacing it with v1.6.8, then refresh the
 Sellfinity tab. Existing daily schedules are retained. Browser-local page limits
 are not a coordinated cap across multiple computers.
 
@@ -157,6 +157,18 @@ automatic price changes on available products. Relisting and image changes
 remain manual. Progress and results appear in Listings and Publishing History.
 Keep this Chrome profile signed in as the intended seller with eBay connected.
 Set the seller schedule after the admin computer normally finishes its scan.
+
+## Discovery loading recovery (v1.6.8)
+
+Discovery waits up to 90 seconds for each Amazon page to finish loading.
+Unreadable product pages are recorded as errors, then the saved queue continues
+under the existing workload limits. Loading errors and empty bestseller pages
+do not count as verification blocks. An explicit verification detection still
+pauses browsing and leaves the Amazon tab open for manual completion.
+
+After upgrading an already-paused older helper, inspect its saved Amazon tab.
+If it shows a challenge, complete it manually. Then use the workload Resume
+control to continue the saved queue; upgrading does not silently clear a pause.
 
 ## No-credit catalog imports (v1.5.0)
 

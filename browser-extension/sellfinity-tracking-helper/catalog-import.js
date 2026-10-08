@@ -93,19 +93,22 @@ async function readCatalogPage(url, type, job) {
       if (candidate?.id) await catalogRpc(job.adminTabId, { operation: "contentCheck", id: candidate.id });
     }
     let reason = "Amazon page could not be read.";
-    for (let attempt = 0; attempt < 30; attempt++) {
+    for (let attempt = 0; attempt < 90; attempt++) {
       if ((await catalogJob())?.status !== "running") throw new Error("Import stopped.");
       try {
         const response = await chrome.tabs.sendMessage(tab.id, { type });
         if (response?.ok) return response.result;
         reason = response?.error || reason;
-        if (/CAPTCHA/i.test(reason)) throw new Error(reason);
-      } catch (error) { if (/CAPTCHA|Import stopped/i.test(error.message)) throw error; }
+        if (response?.blocked === true || response?.code === "VERIFICATION_REQUIRED") throw Object.assign(new Error(reason), { verificationRequired: true });
+        if (attempt === 0 || attempt % 10 === 0) await saveCatalogJob({ ...job, productTabId: tab.id, currentUrl: url, currentAsin: type === "CAPTURE_CATALOG_PRODUCT" ? job.candidates[job.cursor]?.asin || "" : "", stage: `Waiting for Amazon page (${attempt + 1}/90 seconds): ${reason}` });
+      } catch (error) { if (error.verificationRequired || /Import stopped/i.test(error.message)) throw error; }
       await new Promise((resolve) => setTimeout(resolve, 1000));
     }
-    throw new Error(reason);
+    throw new Error(`Amazon page was not readable after 90 seconds: ${reason}`);
   } catch (error) {
-    preserveTab = /CAPTCHA|verification|access denied|sign.in/i.test(error.message);
+    // Only an explicit page-reader signal proves a verification block. Words
+    // in a generic loading/help message must not pause the entire queue.
+    preserveTab = error.verificationRequired === true;
     if (preserveTab) { await pauseAmazonWork("Amazon verification required for catalog import. Checking the existing tab hourly; manual verification may still be needed.", true, tab.id); error.workloadPause = true; }
     throw error;
   } finally { if (!preserveTab) try { await chrome.tabs.remove(tab.id); } catch { /* Already closed. */ } }
@@ -179,7 +182,7 @@ async function processCatalogImport() {
           const saved = await catalogRpc(job.adminTabId, { operation: "save", rows: [{ ...product, source: "BESTSELLER_BROWSER", bestsellerRank: candidate.bestsellerRank, bestsellerCategory: candidate.bestsellerCategory, bestsellerUrl: candidate.bestsellerUrl }] });
           job.added += saved.added; job.updated = (job.updated || 0) + (saved.updated || 0); job.skipped += saved.skipped;
         } catch (error) {
-          if (error.workloadPause || /CAPTCHA|administrator|Catalog save|Catalog request|Import stopped/i.test(error.message)) throw error;
+          if (error.workloadPause || /administrator|Catalog save|Catalog request|Import stopped/i.test(error.message)) throw error;
           job.failed++; job.errors = [...job.errors, `${candidate.asin}: ${error.message}`].slice(-20);
         }
         if ((await catalogJob())?.status !== "running") return;

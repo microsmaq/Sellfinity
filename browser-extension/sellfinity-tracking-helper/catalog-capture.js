@@ -1,10 +1,18 @@
-globalThis.sellfinityCaptureCatalogProduct = function captureCatalogProduct(doc = document, url = location.href) {
+function catalogCaptureError(message, code) {
+  return Object.assign(new Error(message), { code });
+}
+
+function checkCatalogVerification(doc) {
   const pageText = (doc.body?.innerText || "").slice(0, 15000);
-  if (globalThis.sellfinityAmazonAvailabilityFromPage?.(doc) === "BLOCKED" || /enter the characters you see below|not a robot|robot check/i.test(`${doc.title} ${pageText}`)) throw new Error("Amazon requires CAPTCHA verification. Complete it manually before retrying.");
-  if (doc.readyState && doc.readyState !== "complete") throw new Error("Amazon product details are still loading. Try again after the page finishes loading.");
+  if (globalThis.sellfinityAmazonAvailabilityFromPage?.(doc) === "BLOCKED" || /enter the characters you see below|not a robot|robot check/i.test(`${doc.title} ${pageText}`)) throw catalogCaptureError("Amazon requires verification. Complete it manually before retrying.", "VERIFICATION_REQUIRED");
+}
+
+globalThis.sellfinityCaptureCatalogProduct = function captureCatalogProduct(doc = document, url = location.href) {
+  checkCatalogVerification(doc);
+  if (doc.readyState && doc.readyState !== "complete") throw catalogCaptureError("Amazon product details are still loading.", "PAGE_LOADING");
   const asin = doc.querySelector('input#ASIN')?.value || url.match(/\/(?:dp|gp\/product)\/([A-Z0-9]{10})/i)?.[1];
   const title = doc.querySelector("#productTitle")?.textContent?.trim();
-  if (!asin || !title) throw new Error("Open a complete Amazon product page first. Sign in if required.");
+  if (!asin || !title) throw catalogCaptureError("Amazon product details are not readable yet. Check that this is a product page.", "PRODUCT_NOT_READABLE");
   const cost = globalThis.sellfinityAmazonPriceFromPage(doc);
   const available = globalThis.sellfinityAmazonAvailabilityFromPage(doc);
   const breadcrumbs = [...doc.querySelectorAll("#wayfinding-breadcrumbs_feature_div a")].map((el) => el.textContent.trim()).filter(Boolean);
@@ -45,7 +53,9 @@ globalThis.sellfinityCaptureCatalogProduct = function captureCatalogProduct(doc 
 };
 
 globalThis.sellfinityCaptureBestsellers = function captureBestsellers(doc = document, url = location.href) {
+  checkCatalogVerification(doc);
   if (!/\/zgbs(?:\/|$)|\/Best-Sellers/i.test(new URL(url).pathname)) throw new Error("Open an Amazon Best Sellers category page.");
+  if (doc.readyState && doc.readyState !== "complete") throw catalogCaptureError("Amazon bestseller details are still loading.", "PAGE_LOADING");
   const category = doc.querySelector("#zg_banner_text, #zg_browseRoot .zg_selected, h1")?.textContent?.trim() || doc.title;
   const cards = [...doc.querySelectorAll(".zg-grid-general-faceout, .p13n-sc-uncoverable-faceout")];
   const candidates = cards.flatMap((card) => {
@@ -55,7 +65,7 @@ globalThis.sellfinityCaptureBestsellers = function captureBestsellers(doc = docu
     if (!asin || !rank) return [];
     return [{ asin, amazonUrl: `https://www.amazon.com/dp/${asin}`, bestsellerRank: rank, bestsellerCategory: category.slice(0, 200), bestsellerUrl: url }];
   });
-  if (!candidates.length) throw new Error("No ranked bestseller cards were readable. Check Amazon sign-in or CAPTCHA.");
+  if (!candidates.length) throw catalogCaptureError("No ranked bestseller cards were readable on this page.", "BESTSELLERS_NOT_READABLE");
   return [...new Map(candidates.map((row) => [row.asin, row])).values()];
 };
 
@@ -63,6 +73,6 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (!["CAPTURE_CATALOG_PRODUCT", "CAPTURE_BESTSELLER_PAGE"].includes(message?.type)) return;
   try {
     sendResponse({ ok: true, result: message.type === "CAPTURE_CATALOG_PRODUCT" ? globalThis.sellfinityCaptureCatalogProduct() : globalThis.sellfinityCaptureBestsellers() });
-  } catch (error) { sendResponse({ ok: false, error: error.message }); }
+  } catch (error) { sendResponse({ ok: false, error: error.message, code: error.code || "CAPTURE_FAILED", blocked: error.code === "VERIFICATION_REQUIRED" }); }
   return true;
 });
