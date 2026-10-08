@@ -32,6 +32,16 @@ it("Stop disables continuous restarts even when no import is active", async () =
   const env = runtime({ dailyLimit: 100 }); env.state.catalogDiscoverySchedule = { enabled: true, continuous: true };
   expect(await env.message("STOP_CATALOG_IMPORT")).toMatchObject({ ok: true }); expect(env.state.catalogDiscoverySchedule.enabled).toBe(false);
 });
+it("continuous discovery starts the next category after an unreadable-category batch completes", async () => {
+  const env = runtime({ dailyLimit: 100 });
+  const bad = "https://www.amazon.com/Best-Sellers/zgbs/arts-crafts?pg=2";
+  const next = "https://www.amazon.com/Best-Sellers/zgbs/kitchen";
+  env.state.catalogImportJob = { status: "complete", pagesFailed: 1 };
+  env.state.catalogDiscoverySchedule = { enabled: true, continuous: true, pages: [bad, next], pageVisits: { [bad]: Date.now() } };
+  await env.context.continueDiscovery();
+  expect(env.state.catalogImportJob.pages).toEqual([next]);
+  expect(env.opens()).toBe(1);
+});
 it("reports exact daily-cap and verification wait reasons instead of idle", async () => {
   const capped = runtime({ used: 100, dailyLimit: 100 });
   capped.state.catalogDiscoverySchedule = { enabled: true, continuous: true, pages: [] };

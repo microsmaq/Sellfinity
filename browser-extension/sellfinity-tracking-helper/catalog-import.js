@@ -55,7 +55,7 @@ async function catalogActivity() {
       nextAt = Math.max(date.getTime(), Date.now() + 60_000); reason = `Daily discovery enabled at ${settings.time} on this computer.`;
     }
   }
-  return { state, reason, nextAt, continuous: Boolean(enabled && settings.continuous), enabled, currentUrl: job?.currentUrl || "", currentAsin: job?.currentAsin || "", processed: job?.cursor || 0, total: job?.candidates?.length || 0, pagesChecked: job?.pageCursor || 0, pagesTotal: job?.pages?.length || 0, added: job?.added || 0, enriched: job?.updated || 0, skipped: job?.skipped || 0, failed: job?.failed || 0, errors: job?.errors || [], updatedAt: job?.updatedAt || null };
+  return { state, reason, nextAt, continuous: Boolean(enabled && settings.continuous), enabled, currentUrl: job?.currentUrl || "", currentAsin: job?.currentAsin || "", processed: job?.cursor || 0, total: job?.candidates?.length || 0, pagesChecked: job?.pageCursor || 0, pagesTotal: job?.pages?.length || 0, pagesFailed: job?.pagesFailed || 0, added: job?.added || 0, enriched: job?.updated || 0, skipped: job?.skipped || 0, failed: (job?.failed || 0) + (job?.pagesFailed || 0), errors: job?.errors || [], updatedAt: job?.updatedAt || null };
 }
 async function saveCatalogJob(job, resume = false) {
   const current = await catalogJob();
@@ -104,7 +104,7 @@ async function readCatalogPage(url, type, job) {
       } catch (error) { if (error.verificationRequired || /Import stopped/i.test(error.message)) throw error; }
       await new Promise((resolve) => setTimeout(resolve, 1000));
     }
-    throw new Error(`Amazon page was not readable after 90 seconds: ${reason}`);
+    throw Object.assign(new Error(`Amazon page was not readable after 90 seconds: ${reason}`), { catalogPageFailure: true });
   } catch (error) {
     // Only an explicit page-reader signal proves a verification block. Words
     // in a generic loading/help message must not pause the entire queue.
@@ -158,10 +158,20 @@ async function processCatalogImport() {
       if (job.cursor >= job.candidates.length) {
         if (job.pageCursor >= job.pages.length) break;
         const page = job.pages[job.pageCursor];
-        const found = await readCatalogPage(page, "CAPTURE_BESTSELLER_PAGE", job);
+        let found;
+        try { found = await readCatalogPage(page, "CAPTURE_BESTSELLER_PAGE", job); }
+        catch (error) {
+          if (!error.catalogPageFailure || error.workloadPause) throw error;
+          if ((await catalogJob())?.status !== "running") return;
+          job.pagesFailed = (job.pagesFailed || 0) + 1;
+          job.errors = [...job.errors, `Category ${page}: ${error.message}`].slice(-20);
+          job.pageCursor++; job.productTabId = null;
+          await saveCatalogJob({ ...job, stage: "Category could not be read; continuing to the next page", currentAsin: "", currentUrl: "" });
+          continue;
+        }
         const seen = new Set(job.candidates.map((row) => row.asin));
         job.candidates.push(...found.filter((row) => !seen.has(row.asin)));
-        job.pageCursor++;
+        job.pageCursor++; job.productTabId = null;
         await saveCatalogJob(job);
         continue;
       }
@@ -190,7 +200,7 @@ async function processCatalogImport() {
         await saveCatalogJob({ ...job, stage: "Preparing next product", currentAsin: "", currentUrl: "" });
       }
     }
-    await saveCatalogJob({ ...job, status: "complete", stage: "Batch complete", currentAsin: "", currentUrl: "", detail: job.repair ? `${job.cursor} incomplete products checked. Missing content may still need manual review.` : job.added >= job.limit ? "Target reached" : "Selected pages exhausted" });
+    await saveCatalogJob({ ...job, status: "complete", stage: job.pagesFailed ? `Batch complete · ${job.pagesFailed} category pages could not be read` : "Batch complete", currentAsin: "", currentUrl: "", detail: job.repair ? `${job.cursor} incomplete products checked. Missing content may still need manual review.` : job.added >= job.limit ? "Target reached" : "Selected pages exhausted" });
   } catch (error) {
     const job = await catalogJob();
     if (job?.status === "running") await saveCatalogJob({ ...job, status: error.workloadPause ? "paused" : "error", detail: error.message });

@@ -47,6 +47,30 @@ describe("browser catalog capture", () => {
     expect(products).toHaveLength(1);
     expect(products[0]).toMatchObject({ asin: "B012345678", bestsellerRank: 3 });
   });
+  it("reads rank badges outside the product faceout, including the live video-wrapper layout", () => {
+    const links = [{ href: "https://www.amazon.com/Paint-Brushes/dp/B0878MN2VR/ref=zg_bs" }, { href: "https://www.amazon.com/Paint-Brushes/dp/B0878MN2VR" }];
+    const badge = { textContent: "#51", parentElement: null as unknown };
+    const wrapper = { parentElement: null, querySelector: () => badge, querySelectorAll: (selector: string) => selector === ".zg-bdg-text" ? [badge] : links };
+    badge.parentElement = wrapper;
+    const faceout = { parentElement: wrapper, querySelector: () => null, querySelectorAll: (selector: string) => selector === "a[href]" ? links : [] };
+    const doc = { readyState: "complete", title: "Amazon", querySelector: () => null, querySelectorAll: (selector: string) => selector === ".zg-bdg-text" ? [badge] : selector === "h1, h2" ? [{ textContent: "Amazon Best Sellers" }, { textContent: "Best Sellers in Arts, Crafts & Sewing" }] : [faceout] };
+    const rows = captureRuntime().sellfinityCaptureBestsellers(doc, "https://www.amazon.com/Best-Sellers/zgbs/arts-crafts?pg=2");
+    expect(rows).toEqual([expect.objectContaining({ asin: "B0878MN2VR", bestsellerRank: 51, bestsellerCategory: "Arts, Crafts & Sewing" })]);
+  });
+  it("finds ranked products even when product-card class names change, without importing unranked links", () => {
+    const badge = { textContent: "#52", parentElement: null as unknown };
+    const wrapper = { parentElement: null, querySelector: () => badge, querySelectorAll: (selector: string) => selector === ".zg-bdg-text" ? [badge] : [{ href: "https://www.amazon.com/Chalk-Markers/dp/B07QF31BNY" }] };
+    badge.parentElement = wrapper;
+    const doc = { title: "Arts", querySelector: () => null, querySelectorAll: (selector: string) => selector === ".zg-bdg-text" ? [badge] : [] };
+    expect(captureRuntime().sellfinityCaptureBestsellers(doc, "https://www.amazon.com/Best-Sellers/zgbs/arts-crafts")).toEqual([expect.objectContaining({ asin: "B07QF31BNY", bestsellerRank: 52 })]);
+  });
+  it("never pairs one rank with multiple different product ASINs", () => {
+    const badge = { textContent: "#51", parentElement: null as unknown };
+    const wrapper = { parentElement: null, querySelector: () => badge, querySelectorAll: (selector: string) => selector === ".zg-bdg-text" ? [badge] : [{ href: "https://www.amazon.com/dp/B0878MN2VR" }, { href: "https://www.amazon.com/dp/B07QF31BNY" }] };
+    badge.parentElement = wrapper;
+    const doc = { title: "Arts", querySelector: () => null, querySelectorAll: (selector: string) => selector === ".zg-bdg-text" ? [badge] : [] };
+    expect(() => captureRuntime().sellfinityCaptureBestsellers(doc, "https://www.amazon.com/Best-Sellers/zgbs/arts-crafts")).toThrow("No ranked bestseller");
+  });
   it("captures A+ text and deduplicates standard descriptions", () => {
     const doc = { title: "Product", body: { innerText: "Available" }, querySelector: (selector: string) => selector === "input#ASIN" ? { value: "B012345678" } : selector === "#productTitle" ? { textContent: "Test product" } : null,
       querySelectorAll: (selector: string) => selector.includes("#productDescription") ? [{ textContent: "Observed description" }, { textContent: "Observed description. A+ material specifications." }] : [] };

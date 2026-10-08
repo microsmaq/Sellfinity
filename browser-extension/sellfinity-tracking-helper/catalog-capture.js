@@ -56,12 +56,34 @@ globalThis.sellfinityCaptureBestsellers = function captureBestsellers(doc = docu
   checkCatalogVerification(doc);
   if (!/\/zgbs(?:\/|$)|\/Best-Sellers/i.test(new URL(url).pathname)) throw new Error("Open an Amazon Best Sellers category page.");
   if (doc.readyState && doc.readyState !== "complete") throw catalogCaptureError("Amazon bestseller details are still loading.", "PAGE_LOADING");
-  const category = doc.querySelector("#zg_banner_text, #zg_browseRoot .zg_selected, h1")?.textContent?.trim() || doc.title;
-  const cards = [...doc.querySelectorAll(".zg-grid-general-faceout, .p13n-sc-uncoverable-faceout")];
+  const categoryHeading = [...doc.querySelectorAll("h1, h2")].find((heading) => /^Best Sellers in /i.test(heading.textContent?.trim() || ""));
+  const category = categoryHeading?.textContent?.trim().replace(/^Best Sellers in /i, "") || doc.querySelector("#zg_banner_text, #zg_browseRoot .zg_selected, h1")?.textContent?.trim() || doc.title;
+  const productAsin = (link) => link?.href?.match(/\/(?:dp|gp\/product)\/([A-Z0-9]{10})(?=[/?#]|$)/i)?.[1]?.toUpperCase();
+  const rankValue = (badge) => Number(badge?.textContent?.trim().match(/^#?\s*([1-9]\d*)$/)?.[1]) || 0;
+  // Amazon may put the badge beside (not inside) the product faceout, e.g.
+  // in a video wrapper. Use the smallest ancestor with exactly one rank and
+  // one product ASIN. Never associate a whole grid's rank with another item.
+  const rankedContainer = (start) => {
+    for (let node = start, depth = 0; node && depth < 7; node = node.parentElement, depth++) {
+      const badges = [...node.querySelectorAll(".zg-bdg-text")];
+      if (badges.length > 1) return null;
+      const asins = new Set([...node.querySelectorAll("a[href]")].map(productAsin).filter(Boolean));
+      if (asins.size > 1) return null;
+      if (badges.length === 1 && rankValue(badges[0]) && asins.size === 1) return node;
+    }
+    return null;
+  };
+  const cards = [...new Set([
+    ...doc.querySelectorAll(".zg-grid-general-faceout, .p13n-sc-uncoverable-faceout"),
+    ...[...doc.querySelectorAll(".zg-bdg-text")].map((badge) => rankedContainer(badge.parentElement)).filter(Boolean),
+  ])];
   const candidates = cards.flatMap((card) => {
-    const anchor = [...card.querySelectorAll("a[href]")].find((link) => /\/(?:dp|gp\/product)\/[A-Z0-9]{10}/i.test(link.href));
-    const asin = anchor?.href.match(/\/(?:dp|gp\/product)\/([A-Z0-9]{10})/i)?.[1]?.toUpperCase();
-    const rank = Number(card.querySelector(".zg-bdg-text")?.textContent?.replace(/[^0-9]/g, ""));
+    const ranked = card.querySelector(".zg-bdg-text") ? card : rankedContainer(card);
+    if (!ranked) return [];
+    const asins = new Set([...ranked.querySelectorAll("a[href]")].map(productAsin).filter(Boolean));
+    if (asins.size !== 1) return [];
+    const asin = [...asins][0];
+    const rank = rankValue(ranked.querySelector(".zg-bdg-text"));
     if (!asin || !rank) return [];
     return [{ asin, amazonUrl: `https://www.amazon.com/dp/${asin}`, bestsellerRank: rank, bestsellerCategory: category.slice(0, 200), bestsellerUrl: url }];
   });

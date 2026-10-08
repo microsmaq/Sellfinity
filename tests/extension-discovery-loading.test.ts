@@ -41,3 +41,29 @@ it("does not treat an empty bestseller page's generic help text as proof of CAPT
   await expect(env.context.readCatalogPage("https://www.amazon.com/Best-Sellers/zgbs/kitchen", "CAPTURE_BESTSELLER_PAGE", env.state.catalogImportJob)).rejects.toThrow("after 90 seconds");
   expect(env.pauses()).toBe(0); expect(env.removed).toEqual([2]);
 });
+it("records an unreadable category and continues to the next category", async () => {
+  const env = runtime((attempt) => attempt <= 90 ? { ok: false, code: "BESTSELLERS_NOT_READABLE", error: "No ranked cards" } : attempt === 91 ? { ok: true, result: [{ asin: "B099999999", amazonUrl: "https://www.amazon.com/dp/B099999999" }] } : { ok: true, result: { asin: "B099999999" } });
+  env.state.catalogImportJob.candidates = [];
+  env.state.catalogImportJob.pages = ["https://www.amazon.com/Best-Sellers/zgbs/arts-crafts?pg=2", "https://www.amazon.com/Best-Sellers/zgbs/kitchen"];
+  await env.context.processCatalogImport();
+  expect(env.state.catalogImportJob).toMatchObject({ status: "complete", pageCursor: 2, pagesFailed: 1, cursor: 1, added: 1 });
+  expect(env.state.catalogImportJob.errors[0]).toContain("Category https://www.amazon.com/Best-Sellers/zgbs/arts-crafts?pg=2");
+  expect(env.pauses()).toBe(0);
+});
+it("keeps workload waits resumable without skipping the category", async () => {
+  const env = runtime(() => ({ ok: true, result: [] }));
+  env.state.catalogImportJob.candidates = [];
+  env.state.catalogImportJob.pages = ["https://www.amazon.com/Best-Sellers/zgbs/kitchen"];
+  env.context.reserveAmazonPage = async () => ({ ok: false, reason: "Daily page limit reached" });
+  await env.context.processCatalogImport();
+  expect(env.state.catalogImportJob).toMatchObject({ status: "paused", pageCursor: 0 });
+  expect(env.state.catalogImportJob.pagesFailed).toBeUndefined(); expect(env.attempts()).toBe(0);
+});
+it("does not skip a genuine verification block on a category page", async () => {
+  const env = runtime(() => ({ ok: false, blocked: true, code: "VERIFICATION_REQUIRED", error: "Amazon verification required" }));
+  env.state.catalogImportJob.candidates = [];
+  env.state.catalogImportJob.pages = ["https://www.amazon.com/Best-Sellers/zgbs/arts-crafts", "https://www.amazon.com/Best-Sellers/zgbs/kitchen"];
+  await env.context.processCatalogImport();
+  expect(env.state.catalogImportJob).toMatchObject({ status: "paused", pageCursor: 0 });
+  expect(env.attempts()).toBe(1); expect(env.pauses()).toBe(1); expect(env.removed).toEqual([]);
+});
