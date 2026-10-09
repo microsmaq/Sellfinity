@@ -8,7 +8,7 @@ function runtime(responses: (attempt: number) => object) {
   let pauses = 0;
   const removed: number[] = [];
   const context: any = {
-    URL, Date, Set, Promise, setTimeout: (fn: () => void) => { fn(); return 1; },
+    URL, Date, Set, Promise, localDay: (date: Date) => date.toDateString(), setTimeout: (fn: () => void) => { fn(); return 1; },
     reserveAmazonPage: async () => ({ ok: true }), pauseAmazonWork: async () => { pauses++; },
     chrome: { storage: { local: { get: async (key: string) => ({ [key]: state[key] }), set: async (value: object) => Object.assign(state, value) } },
       tabs: { create: async () => ({ id: 2 }), get: async () => ({}), remove: async (id: number) => { removed.push(id); }, sendMessage: async (_id: number, message: any) => message.type === "CATALOG_IMPORT_RPC" ? { ok: true, result: message.payload.operation === "save" ? { added: 1, skipped: 0 } : { existing: [] } } : responses(++attempts) },
@@ -66,4 +66,14 @@ it("does not skip a genuine verification block on a category page", async () => 
   await env.context.processCatalogImport();
   expect(env.state.catalogImportJob).toMatchObject({ status: "paused", pageCursor: 0 });
   expect(env.attempts()).toBe(1); expect(env.pauses()).toBe(1); expect(env.removed).toEqual([]);
+});
+it("only marks categories successful after reading and records timed-run additions once", async () => {
+  const page = "https://www.amazon.com/Best-Sellers/zgbs/kitchen";
+  const env = runtime((attempt) => attempt === 1 ? { ok: true, result: [{ asin: "B099999999", amazonUrl: "https://www.amazon.com/dp/B099999999" }] } : { ok: true, result: { asin: "B099999999" } });
+  env.state.catalogImportJob.candidates = []; env.state.catalogImportJob.pages = [page]; env.state.catalogImportJob.scheduledDiscovery = true;
+  env.state.catalogDiscoverySchedule = { checksVersion: 1, enabled: true, continuous: false, time: "00:00", limit: 10, pages: [page], pageChecks: {} };
+  await env.context.processCatalogImport();
+  expect(env.state.catalogDiscoverySchedule.pageChecks[page]).toMatchObject({ status: "success", productsFound: 1, successfulAt: expect.any(Number), attemptedAt: expect.any(Number) });
+  expect(env.state.catalogDiscoverySchedule.addedToday).toBe(1);
+  await env.context.processCatalogImport(); expect(env.state.catalogDiscoverySchedule.addedToday).toBe(1);
 });

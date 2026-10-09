@@ -55,10 +55,11 @@ async function refreshStatus() {
       document.getElementById("catalog-status").className = `status ${activity.state}`;
       document.getElementById("catalog-detail").textContent = `${activity.reason}\n${activity.processed}/${activity.total} products processed · ${activity.added} added · ${activity.enriched} enriched · ${activity.skipped} skipped · ${activity.failed} errors\n${activity.pagesChecked}/${activity.pagesTotal} category pages checked${activity.pagesFailed ? ` · ${activity.pagesFailed} unreadable` : ""}${activity.currentAsin ? ` · ASIN ${activity.currentAsin}` : ""}`;
       document.getElementById("catalog-bar").style.width = `${activity.total ? Math.min(100, activity.processed / activity.total * 100) : 0}%`;
-      document.getElementById("catalog-next").textContent = [activity.nextAt ? `Next opportunity: ${new Date(activity.nextAt).toLocaleString()}` : "", activity.currentUrl, activity.updatedAt ? `Last activity: ${new Date(activity.updatedAt).toLocaleTimeString()}` : "", activity.continuous ? "Continuous discovery enabled." : activity.enabled ? "Daily discovery enabled." : "Discovery schedule off."].filter(Boolean).join("\n");
+      document.getElementById("catalog-next").textContent = [activity.nextAt ? `Next opportunity: ${new Date(activity.nextAt).toLocaleString()}` : "", activity.enabled ? `Categories: ${activity.categoriesSuccessful || 0} successfully read · ${activity.categoriesRetrying || 0} awaiting retry · ${activity.categoriesUnattempted || 0} not attempted` : "", activity.currentUrl, activity.updatedAt ? `Last activity: ${new Date(activity.updatedAt).toLocaleTimeString()}` : "", activity.continuous ? "Continuous discovery enabled." : activity.enabled ? "Daily discovery enabled." : "Discovery schedule off."].filter(Boolean).join("\n");
       document.getElementById("catalog-errors").textContent = activity.errors.length ? activity.errors.join("\n") : "No product or category errors recorded for this batch.";
       document.getElementById("stop-catalog").disabled = !activity.continuous && !["running", "waiting", "paused"].includes(activity.state);
-      document.getElementById("resume-catalog").disabled = !["error", "cancelled"].includes(catalog?.job?.status);
+      document.getElementById("resume-catalog").disabled = !activity.canResume;
+      document.getElementById("resume-catalog").textContent = activity.canResume ? "Resume unfinished import" : "No unfinished import to resume";
     }
 
   } catch {

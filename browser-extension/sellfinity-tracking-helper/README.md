@@ -122,7 +122,7 @@ to 15 minutes, then remaining items continue automatically, even after repeated
 failures. User pauses always require manual resume. The page reader retains its
 bounded startup retries; failed products are not retried indefinitely.
 
-Reload the unpacked helper after replacing it with v1.6.9, then refresh the
+Reload the unpacked helper after replacing it with v1.6.10, then refresh the
 Sellfinity tab. Existing daily schedules are retained. Browser-local page limits
 are not a coordinated cap across multiple computers.
 
@@ -157,6 +157,21 @@ automatic price changes on available products. Relisting and image changes
 remain manual. Progress and results appear in Listings and Publishing History.
 Keep this Chrome profile signed in as the intended seller with eBay connected.
 Set the seller schedule after the admin computer normally finishes its scan.
+
+## Discovery scheduling recovery (v1.6.10)
+
+Category attempts and successful reads are now separate. Never-attempted pages
+are prioritized, followed by the oldest eligible attempt. A successful category
+read waits 24 hours before the next pass. An unreadable category retries after
+15 minutes; repeated failures increase the cooldown to at most 4 hours. Shared
+workload intervals, breaks, page budgets and verification pauses still apply.
+
+Old category start timestamps migrate as unknown outcomes, not successful
+reads. They become eligible for a new scan without resetting workload usage.
+Daily timed runs may retry failed categories on the same day, while retaining
+their daily new-product target. The popup shows schedule-wide successful,
+retrying and unattempted category counts. Resume is only for an unfinished
+import; completed batches wait for the scheduler instead of offering a no-op.
 
 ## Bestseller card recovery (v1.6.9)
 

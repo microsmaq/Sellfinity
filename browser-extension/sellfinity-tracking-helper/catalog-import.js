@@ -3,26 +3,77 @@ const DISCOVERY_KEY = "catalogDiscoverySchedule";
 const REPAIR_KEY = "catalogContentRepairSchedule";
 let catalogWorkerActive = false;
 let continuousStarting = false;
+let discoveryWrites = Promise.resolve();
+const DISCOVERY_RETRY_MS = 15 * 60_000;
+const DISCOVERY_FRESH_MS = 24 * 60 * 60_000;
 const DEFAULT_DISCOVERY_PAGES = ["home-garden", "kitchen", "sporting-goods", "tools", "office-products", "pet-supplies", "toys-and-games", "arts-crafts", "beauty", "electronics"].flatMap((category) => [1, 2].map((page) => `https://www.amazon.com/Best-Sellers/zgbs/${category}?pg=${page}`));
+
+function normalizedDiscovery(settings) {
+  if (!settings || settings.checksVersion === 1) return settings;
+  // Old pageVisits were written before reading a page, so they cannot prove
+  // success. Keep their attempt ordering but make these unknown outcomes due.
+  const checks = { ...(settings.pageChecks || {}) };
+  for (const [page, attemptedAt] of Object.entries(settings.pageVisits || {})) {
+    if (!checks[page]) checks[page] = { attemptedAt, status: "unknown" };
+  }
+  const { pageVisits: _legacy, ...rest } = settings;
+  return { ...rest, checksVersion: 1, pageChecks: checks };
+}
+async function updateDiscovery(change) {
+  const write = discoveryWrites.then(async () => {
+    const current = normalizedDiscovery((await chrome.storage.local.get(DISCOVERY_KEY))[DISCOVERY_KEY]);
+    const next = change(current);
+    if (next) await chrome.storage.local.set({ [DISCOVERY_KEY]: next });
+    return next;
+  });
+  discoveryWrites = write.catch(() => {});
+  return write;
+}
+async function discoverySettings() {
+  const settings = (await chrome.storage.local.get(DISCOVERY_KEY))[DISCOVERY_KEY];
+  return settings && settings.checksVersion !== 1 ? updateDiscovery((latest) => latest) : settings;
+}
+function categoryDueAt(check) {
+  if (!check || check.status === "unknown") return 0;
+  if (check.status === "success") return (check.successfulAt || 0) + DISCOVERY_FRESH_MS;
+  return check.retryAt || (check.attemptedAt || 0) + DISCOVERY_RETRY_MS;
+}
+function discoveryQueue(settings, now = Date.now()) {
+  return (settings?.pages || []).map((page) => ({ page, check: settings.pageChecks?.[page], dueAt: categoryDueAt(settings.pageChecks?.[page]) }))
+    .sort((a, b) => (a.check?.attemptedAt || 0) - (b.check?.attemptedAt || 0))
+    .filter((entry) => entry.dueAt <= now);
+}
+async function recordCategoryCheck(page, status, detail = "", productsFound = 0) {
+  await updateDiscovery((settings) => {
+    if (!settings?.pages?.includes(page)) return settings;
+    const previous = settings.pageChecks?.[page] || {};
+    const failures = status === "failed" ? (previous.failures || 0) + 1 : status === "success" ? 0 : previous.failures || 0;
+    const check = { ...previous, status, failures, lastError: detail,
+      ...(status === "checking" ? { attemptedAt: Date.now(), retryAt: Date.now() + DISCOVERY_RETRY_MS } : {}),
+      ...(status === "success" ? { successfulAt: Date.now(), retryAt: 0, productsFound } : {}),
+      ...(status === "failed" ? { retryAt: Date.now() + DISCOVERY_RETRY_MS * 2 ** Math.min(failures - 1, 4) } : {}),
+    };
+    return { ...settings, pageChecks: { ...settings.pageChecks, [page]: check } };
+  });
+}
+function catalogHasRemaining(job) {
+  return Boolean(job && (job.product || (job.repair && !job.prepared) || job.cursor < (job.candidates?.length || 0) || job.pageCursor < (job.pages?.length || 0)));
+}
 
 async function continueDiscovery() {
   if (continuousStarting) return;
   continuousStarting = true;
   try {
-    const settings = (await chrome.storage.local.get(DISCOVERY_KEY))[DISCOVERY_KEY];
+    const settings = await discoverySettings();
     const job = await catalogJob();
     const workload = await workloadState();
     if (!settings?.enabled || !settings.continuous || ["running", "paused", "error"].includes(job?.status) || workload.paused || (workload.used || 0) >= workload.dailyLimit || (workload.nextAt || 0) > Date.now()) return;
-    const visits = settings.pageVisits || {};
-    // One pass per category page per day, not endless re-reading of saved ASINs.
-    const page = settings.pages.find((url) => !visits[url] || Date.now() - visits[url] >= 24 * 60 * 60 * 1000);
+    const page = discoveryQueue(settings)[0]?.page;
     if (!page) return;
-    await beginCatalogImport([], [page], 1000);
-    const latest = (await chrome.storage.local.get(DISCOVERY_KEY))[DISCOVERY_KEY];
-    if (latest?.enabled && latest.continuous) await chrome.storage.local.set({ [DISCOVERY_KEY]: { ...latest, lastError: "", pageVisits: { ...(latest.pageVisits || {}), [page]: Date.now() } } });
+    await beginCatalogImport([], [page], 1000, null, false, true);
+    await updateDiscovery((latest) => latest ? { ...latest, lastError: "" } : latest);
   } catch (error) {
-    const settings = (await chrome.storage.local.get(DISCOVERY_KEY))[DISCOVERY_KEY];
-    if (settings?.enabled) await chrome.storage.local.set({ [DISCOVERY_KEY]: { ...settings, lastError: error.message || "Discovery could not start. Check admin sign-in." } });
+    await updateDiscovery((settings) => settings?.enabled ? { ...settings, lastError: error.message || "Discovery could not start. Check admin sign-in." } : settings);
     throw error;
   } finally { continuousStarting = false; }
 }
@@ -30,7 +81,7 @@ async function continueDiscovery() {
 async function catalogJob() { return (await chrome.storage.local.get(CATALOG_JOB_KEY))[CATALOG_JOB_KEY]; }
 async function catalogActivity() {
   const job = await catalogJob();
-  const settings = (await chrome.storage.local.get(DISCOVERY_KEY))[DISCOVERY_KEY];
+  const settings = await discoverySettings();
   const work = await workloadState();
   const enabled = Boolean(settings?.enabled);
   let state = job?.status || (enabled ? "waiting" : "off");
@@ -46,16 +97,20 @@ async function catalogActivity() {
     state = "waiting";
     if (settings.lastError) { reason = settings.lastError; nextAt = Date.now() + 60_000; }
     else if (settings.continuous) {
-      const eligible = settings.pages.some((page) => !settings.pageVisits?.[page] || Date.now() - settings.pageVisits[page] >= 86_400_000);
-      reason = eligible ? "Waiting for the next scheduler tick or for another browsing task to finish." : "All category pages were checked recently. Waiting before the next pass.";
-      nextAt = eligible ? Math.max(Date.now() + 60_000, work.nextAt || 0) : Math.min(...settings.pages.map((page) => settings.pageVisits[page] + 86_400_000));
+      const eligible = discoveryQueue(settings).length > 0;
+      const retrying = settings.pages.some((page) => ["failed", "checking", "unknown"].includes(settings.pageChecks?.[page]?.status));
+      reason = eligible ? "Categories are ready. Continuing on the next scheduler tick when browsing is available." : retrying ? "Waiting to retry unreadable or interrupted categories after a cooldown." : "All category pages were successfully read recently. Waiting before the next pass.";
+      nextAt = eligible ? Math.max(Date.now() + 60_000, work.nextAt || 0) : Math.max(work.nextAt || 0, Math.min(...settings.pages.map((page) => categoryDueAt(settings.pageChecks?.[page]))));
     } else {
       const date = new Date(); const [hour, minute] = settings.time.split(":").map(Number); date.setHours(hour, minute, 0, 0);
-      if (settings.lastDay === localDay(new Date())) date.setDate(date.getDate() + 1);
-      nextAt = Math.max(date.getTime(), Date.now() + 60_000); reason = `Daily discovery enabled at ${settings.time} on this computer.`;
+      const reachedTarget = settings.addedDay === localDay(new Date()) && (settings.addedToday || 0) >= settings.limit;
+      if (reachedTarget) date.setDate(date.getDate() + 1);
+      const earliestCategory = discoveryQueue(settings).length ? Date.now() + 60_000 : Math.min(...settings.pages.map((page) => categoryDueAt(settings.pageChecks?.[page])));
+      nextAt = Math.max(date.getTime(), earliestCategory, work.nextAt || 0); reason = reachedTarget ? "Daily new-product target reached. Next run is tomorrow." : `Daily discovery enabled at ${settings.time}; failed categories retry after a cooldown.`;
     }
   }
-  return { state, reason, nextAt, continuous: Boolean(enabled && settings.continuous), enabled, currentUrl: job?.currentUrl || "", currentAsin: job?.currentAsin || "", processed: job?.cursor || 0, total: job?.candidates?.length || 0, pagesChecked: job?.pageCursor || 0, pagesTotal: job?.pages?.length || 0, pagesFailed: job?.pagesFailed || 0, added: job?.added || 0, enriched: job?.updated || 0, skipped: job?.skipped || 0, failed: (job?.failed || 0) + (job?.pagesFailed || 0), errors: job?.errors || [], updatedAt: job?.updatedAt || null };
+  const categoryChecks = (settings?.pages || []).map((page) => settings.pageChecks?.[page]);
+  return { state, reason, nextAt, canResume: ["error", "cancelled"].includes(job?.status) && catalogHasRemaining(job), categoriesSuccessful: categoryChecks.filter((check) => check?.status === "success").length, categoriesRetrying: categoryChecks.filter((check) => ["failed", "checking", "unknown"].includes(check?.status)).length, categoriesUnattempted: categoryChecks.filter((check) => !check).length, continuous: Boolean(enabled && settings.continuous), enabled, currentUrl: job?.currentUrl || "", currentAsin: job?.currentAsin || "", processed: job?.cursor || 0, total: job?.candidates?.length || 0, pagesChecked: job?.pageCursor || 0, pagesTotal: job?.pages?.length || 0, pagesFailed: job?.pagesFailed || 0, added: job?.added || 0, enriched: job?.updated || 0, skipped: job?.skipped || 0, failed: (job?.failed || 0) + (job?.pagesFailed || 0), errors: job?.errors || [], updatedAt: job?.updatedAt || null };
 }
 async function saveCatalogJob(job, resume = false) {
   const current = await catalogJob();
@@ -85,6 +140,7 @@ async function readCatalogPage(url, type, job) {
   const permit = await reserveAmazonPage();
   if (!permit.ok) { const error = new Error(permit.reason); error.workloadPause = true; throw error; }
   const tab = await chrome.tabs.create({ url, active: false });
+  if (type === "CAPTURE_BESTSELLER_PAGE") await recordCategoryCheck(url, "checking");
   await saveCatalogJob({ ...job, productTabId: tab.id, currentUrl: url, currentAsin: type === "CAPTURE_CATALOG_PRODUCT" ? job.candidates[job.cursor]?.asin || "" : "", stage: type === "CAPTURE_CATALOG_PRODUCT" ? "Reading Amazon product details" : "Scanning bestseller category" });
   let preserveTab = false;
   try {
@@ -114,7 +170,7 @@ async function readCatalogPage(url, type, job) {
   } finally { if (!preserveTab) try { await chrome.tabs.remove(tab.id); } catch { /* Already closed. */ } }
 }
 
-async function beginCatalogImport(candidates = [], pages = [], limit = 100, product = null, repair = false) {
+async function beginCatalogImport(candidates = [], pages = [], limit = 100, product = null, repair = false, scheduledDiscovery = false) {
   const current = await catalogJob();
   if (current?.status === "running") throw new Error("A catalog import is already running. Stop it before starting another.");
   if ((await runStatuses()).some((run) => run.status === "running" && run.mode === "PRICE")) throw new Error("Finish or stop the live price check before importing products.");
@@ -123,7 +179,7 @@ async function beginCatalogImport(candidates = [], pages = [], limit = 100, prod
     try { const previous = await chrome.tabs.get(current.adminTabId); if (previous.url === "https://www.sellfinity.app/admin/arbitrage/import") adminTab = previous; } catch { /* Recreate a closed source tab. */ }
   }
   if (!adminTab) adminTab = await chrome.tabs.create({ url: "https://www.sellfinity.app/admin/arbitrage/import", active: false });
-  await saveCatalogJob({ status: "running", adminTabId: adminTab.id, candidates, pages, pageCursor: 0, cursor: 0, limit, added: 0, updated: 0, skipped: 0, failed: 0, errors: [], product, repair, startedAt: Date.now() });
+  await saveCatalogJob({ status: "running", adminTabId: adminTab.id, candidates, pages, pageCursor: 0, cursor: 0, limit, added: 0, updated: 0, skipped: 0, failed: 0, errors: [], product, repair, scheduledDiscovery, startedAt: Date.now() });
   void processCatalogImport();
 }
 
@@ -164,11 +220,13 @@ async function processCatalogImport() {
           if (!error.catalogPageFailure || error.workloadPause) throw error;
           if ((await catalogJob())?.status !== "running") return;
           job.pagesFailed = (job.pagesFailed || 0) + 1;
+          await recordCategoryCheck(page, "failed", error.message);
           job.errors = [...job.errors, `Category ${page}: ${error.message}`].slice(-20);
           job.pageCursor++; job.productTabId = null;
           await saveCatalogJob({ ...job, stage: "Category could not be read; continuing to the next page", currentAsin: "", currentUrl: "" });
           continue;
         }
+        await recordCategoryCheck(page, "success", "", found.length);
         const seen = new Set(job.candidates.map((row) => row.asin));
         job.candidates.push(...found.filter((row) => !seen.has(row.asin)));
         job.pageCursor++; job.productTabId = null;
@@ -200,6 +258,12 @@ async function processCatalogImport() {
         await saveCatalogJob({ ...job, stage: "Preparing next product", currentAsin: "", currentUrl: "" });
       }
     }
+    if ((await catalogJob())?.status !== "running") return;
+    if (job.scheduledDiscovery) await updateDiscovery((settings) => {
+      if (!settings || settings.continuous || settings.lastCountedJob === job.startedAt) return settings;
+      const day = localDay(new Date());
+      return { ...settings, addedDay: day, addedToday: (settings.addedDay === day ? settings.addedToday || 0 : 0) + job.added, lastCountedJob: job.startedAt };
+    });
     await saveCatalogJob({ ...job, status: "complete", stage: job.pagesFailed ? `Batch complete · ${job.pagesFailed} category pages could not be read` : "Batch complete", currentAsin: "", currentUrl: "", detail: job.repair ? `${job.cursor} incomplete products checked. Missing content may still need manual review.` : job.added >= job.limit ? "Target reached" : "Selected pages exhausted" });
   } catch (error) {
     const job = await catalogJob();
@@ -212,11 +276,10 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   void (async () => {
     try {
       if (message.type === "GET_CATALOG_IMPORT_STATUS") {
-        sendResponse({ ok: true, job: await catalogJob(), activity: await catalogActivity(), schedule: (await chrome.storage.local.get(DISCOVERY_KEY))[DISCOVERY_KEY], repairSchedule: (await chrome.storage.local.get(REPAIR_KEY))[REPAIR_KEY] }); return;
+        sendResponse({ ok: true, job: await catalogJob(), activity: await catalogActivity(), schedule: await discoverySettings(), repairSchedule: (await chrome.storage.local.get(REPAIR_KEY))[REPAIR_KEY] }); return;
       }
       if (message.type === "STOP_CATALOG_IMPORT") {
-        const settings = (await chrome.storage.local.get(DISCOVERY_KEY))[DISCOVERY_KEY];
-        if (settings?.continuous) await chrome.storage.local.set({ [DISCOVERY_KEY]: { ...settings, enabled: false, continuous: false } });
+        await updateDiscovery((settings) => settings?.continuous ? { ...settings, enabled: false, continuous: false } : settings);
         const job = await catalogJob();
         if (job) {
           await saveCatalogJob({ ...job, status: "cancelled" });
@@ -228,12 +291,13 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         // Random order is for category variety, not an anti-detection mechanism.
         const pages = [...DEFAULT_DISCOVERY_PAGES];
         for (let i = pages.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [pages[i], pages[j]] = [pages[j], pages[i]]; }
-        const saved = (await chrome.storage.local.get(DISCOVERY_KEY))[DISCOVERY_KEY];
-        await chrome.storage.local.set({ [DISCOVERY_KEY]: { enabled: true, continuous: true, time: "00:00", pages, limit: 1000, pageVisits: saved?.pageVisits || {} } });
+        await updateDiscovery((saved) => ({ ...saved, checksVersion: 1, pageChecks: saved?.pageChecks || {}, enabled: true, continuous: true, time: "00:00", pages, limit: 1000, lastError: "" }));
         await continueDiscovery();
       } else if (message.type === "RESUME_CATALOG_IMPORT") {
         const job = await catalogJob();
-        if (job && job.status !== "running") { await saveCatalogJob({ ...job, status: "running" }, true); void processCatalogImport(); }
+        if (!catalogHasRemaining(job) || job.status === "complete") throw new Error("This batch is finished. Enabled discovery continues automatically at the next opportunity shown above.");
+        if ((await workloadState()).paused) throw new Error("Browsing is paused. Check the Amazon tab and use Resume in workload controls first.");
+        if (job.status !== "running") { await saveCatalogJob({ ...job, status: "running", detail: "Resuming unfinished import" }, true); void processCatalogImport(); }
       } else if (message.type === "REPAIR_CATALOG_CONTENT") {
         await beginCatalogImport([], [], Math.max(1, Math.min(1000, Number(message.limit) || 100)), null, true);
       } else if (message.type === "SAVE_CONTENT_REPAIR_SCHEDULE") {
@@ -243,7 +307,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         const pages = (message.pages || []).filter(Boolean);
         if (!pages.length || pages.length > 20 || pages.some((url) => !validBestsellerUrl(url))) throw new Error("Enter 1–20 Amazon Best Sellers category/page URLs.");
         if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(message.time)) throw new Error("Choose a valid time.");
-        await chrome.storage.local.set({ [DISCOVERY_KEY]: { enabled: Boolean(message.enabled), time: message.time, pages, limit: Math.max(1, Math.min(1000, Number(message.limit) || 100)) } });
+        await updateDiscovery((saved) => ({ ...saved, checksVersion: 1, pageChecks: saved?.pageChecks || {}, continuous: false, enabled: Boolean(message.enabled), time: message.time, pages, limit: Math.max(1, Math.min(1000, Number(message.limit) || 100)), lastError: "" }));
       } else {
         const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
         if (!tab?.url || !/^https:\/\/(www\.)?amazon\.com\//.test(tab.url)) throw new Error("Open an Amazon product or Best Sellers page first.");
@@ -263,6 +327,7 @@ chrome.alarms.onAlarm.addListener((alarm) => {
     const job = await catalogJob();
     if (job?.status === "paused" || (await workloadState()).paused) return;
     if (job?.status === "running") { await processCatalogImport(); return; }
+    if (job?.status === "error") return; // Authentication and save errors need review.
     const repair = (await chrome.storage.local.get(REPAIR_KEY))[REPAIR_KEY];
     const localNow = new Date();
     if (repair?.enabled && repair.lastDay !== localDay(localNow)) {
@@ -275,18 +340,22 @@ chrome.alarms.onAlarm.addListener((alarm) => {
         return;
       }
     }
-    const settings = (await chrome.storage.local.get(DISCOVERY_KEY))[DISCOVERY_KEY];
+    const settings = await discoverySettings();
     if (settings?.continuous) { await continueDiscovery().catch(() => {}); return; }
     const now = new Date();
-    if (!settings?.enabled || settings.lastDay === localDay(now)) return;
+    if (!settings?.enabled) return;
     const [hours, minutes] = settings.time.split(":").map(Number);
     if (now.getHours() * 60 + now.getMinutes() < hours * 60 + minutes) return;
+    const work = await workloadState();
+    if ((work.used || 0) >= work.dailyLimit || (work.nextAt || 0) > Date.now()) return;
+    const addedToday = settings.addedDay === localDay(now) ? settings.addedToday || 0 : 0;
+    const pages = discoveryQueue(settings).map((entry) => entry.page);
+    if (addedToday >= settings.limit || !pages.length) return;
     try {
-      await beginCatalogImport([], settings.pages, settings.limit);
-      await chrome.storage.local.set({ [DISCOVERY_KEY]: { ...settings, lastError: "", lastDay: localDay(now) } });
+      await beginCatalogImport([], pages, settings.limit - addedToday, null, false, true);
+      await updateDiscovery((latest) => latest ? { ...latest, lastError: "" } : latest);
     } catch (error) {
-      const latest = (await chrome.storage.local.get(DISCOVERY_KEY))[DISCOVERY_KEY];
-      if (latest?.enabled) await chrome.storage.local.set({ [DISCOVERY_KEY]: { ...latest, lastError: error.message || "Discovery could not start. Check admin sign-in." } });
+      await updateDiscovery((latest) => latest?.enabled ? { ...latest, lastError: error.message || "Discovery could not start. Check admin sign-in." } : latest);
     }
   })();
 });
