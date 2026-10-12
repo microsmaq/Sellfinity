@@ -122,7 +122,7 @@ to 15 minutes, then remaining items continue automatically, even after repeated
 failures. User pauses always require manual resume. The page reader retains its
 bounded startup retries; failed products are not retried indefinitely.
 
-Reload the unpacked helper after replacing it with v1.6.10, then refresh the
+Reload the unpacked helper after replacing it with v1.6.11, then refresh the
 Sellfinity tab. Existing daily schedules are retained. Browser-local page limits
 are not a coordinated cap across multiple computers.
 
@@ -157,6 +157,20 @@ automatic price changes on available products. Relisting and image changes
 remain manual. Progress and results appear in Listings and Publishing History.
 Keep this Chrome profile signed in as the intended seller with eBay connected.
 Set the seller schedule after the admin computer normally finishes its scan.
+
+## Complete local helper reset (v1.6.11)
+
+At the top of the popup, expand **Troubleshooting & reset**, choose **Reset
+extension…**, then confirm in the centered dialog. Reset clears all extension
+local queues, progress, errors, history, schedules, pauses and workload settings
+for this Chrome profile, then restarts the helper. Daily/continuous schedules
+are off afterwards; workload settings return to their defaults.
+
+Browser tabs, sign-ins and Sellfinity's database, listings and orders are not
+deleted. Actions already submitted to Sellfinity may still finish; reset does
+not undo completed actions or bypass Amazon verification. Refresh Amazon and
+Sellfinity tabs after reset, reopen the popup, and configure your limits and
+schedules again. Reset on one computer does not reset another Chrome profile.
 
 ## Discovery scheduling recovery (v1.6.10)
 

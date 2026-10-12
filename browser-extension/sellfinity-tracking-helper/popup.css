@@ -31,3 +31,12 @@ input[type="time"] { margin-left: 8px; padding: 5px; border: 1px solid #cbd5e1; 
 #save-daily, #run-daily { margin-top: 6px; color: #4338ca; border-color: #c7d2fe; }
 textarea, select { box-sizing: border-box; width: 100%; border: 1px solid #cbd5e1; border-radius: 6px; padding: 6px; }
 #capture-product, #capture-bestsellers, #resume-catalog, #save-discovery { margin-top: 6px; color: #4338ca; border-color: #c7d2fe; }
+.reset-controls { padding: 10px 12px; border: 1px solid #cbd5e1; border-radius: 10px; background: #fff; }
+dialog { box-sizing: border-box; position: fixed; inset: 0; width: calc(100% - 24px); max-width: 360px; max-height: calc(100% - 24px); margin: auto; padding: 18px; border: 1px solid #cbd5e1; border-radius: 14px; color: #1e293b; background: #fff; box-shadow: 0 20px 60px #0f172a40; }
+dialog::backdrop { background: #0f172a80; }
+dialog h2 { margin: 0 0 10px; font-size: 16px; }
+dialog p { font-size: 12px; }
+.dialog-actions { display: flex; gap: 8px; margin-top: 12px; }
+#cancel-reset { color: #475569; border-color: #cbd5e1; }
+#confirm-reset { background: #b91c1c; color: #fff; border-color: #b91c1c; }
+#confirm-reset:hover:not(:disabled) { background: #991b1b; }

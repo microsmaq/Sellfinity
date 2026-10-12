@@ -4,6 +4,7 @@ const STATUS_KEY = "bulkRunStatuses";
 const MAX_REQUEST_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 const FINISHED_STATUS_AGE_MS = 60 * 60 * 1000;
 const MAX_BULK_TABS = 1;
+importScripts("reset.js");
 importScripts("workload.js");
 importScripts("daily-check.js");
 importScripts("catalog-import.js");

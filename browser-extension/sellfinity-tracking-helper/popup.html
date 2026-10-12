@@ -9,6 +9,21 @@
   <body>
     <header><div><h1>Sellfinity Helper</h1><p id="version" class="version"></p></div><span class="live-dot" title="Extension is running"></span></header>
     <p class="intro">Amazon price and tracking activity appears here while Sellfinity is open.</p>
+    <details class="reset-controls"><summary>Troubleshooting &amp; reset</summary>
+      <p class="detail">Clear stuck local runs and start fresh. Your Sellfinity data and browser tabs remain unchanged.</p>
+      <button id="open-reset" type="button">Reset extension…</button>
+    </details>
+    <dialog id="reset-dialog" aria-labelledby="reset-title" aria-describedby="reset-description">
+      <h2 id="reset-title">Reset Sellfinity Helper?</h2>
+      <div id="reset-description">
+        <p>This clears all helper queues, progress, errors, category history, pauses, workload settings and daily schedules on this Chrome profile.</p>
+        <p>Workload limits return to defaults and automatic schedules turn off. Browser tabs, sign-ins, Sellfinity products, listings and orders are not deleted.</p>
+        <p>Actions already sent to Sellfinity may still finish. This does not bypass Amazon verification.</p>
+        <p>The helper restarts. Refresh Amazon and Sellfinity tabs afterwards, then configure any schedules you want to enable again.</p>
+      </div>
+      <p id="reset-feedback" class="detail" role="status" aria-live="polite"></p>
+      <div class="dialog-actions"><button id="cancel-reset" type="button" autofocus>Cancel</button><button id="confirm-reset" type="button">Reset extension</button></div>
+    </dialog>
     <section class="run-card">
       <strong>Amazon workload controls</strong>
       <p class="detail">Limits reduce unnecessary traffic; they do not guarantee Amazon access. Verification requires you to complete the check manually.</p>
@@ -78,5 +93,6 @@
     <details><summary>Quick checks</summary><ol><li>Stay signed in to Amazon.</li><li>Complete any Amazon CAPTCHA.</li><li>Keep the Sellfinity tab open.</li></ol></details>
     <p class="privacy">The helper only opens Amazon links supplied by Sellfinity and returns tracking or price details to the matching fulfillment order.</p>
     <script src="popup.js"></script>
+    <script src="popup-reset.js"></script>
   </body>
 </html>
