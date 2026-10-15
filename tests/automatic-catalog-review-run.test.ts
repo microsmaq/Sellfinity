@@ -1,8 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-const mocks = vi.hoisted(() => ({ settings: vi.fn(), lease: vi.fn(), finish: vi.fn(), candidates: vi.fn(), research: vi.fn(), result: vi.fn(), count: vi.fn(), failed: vi.fn() }));
+const mocks = vi.hoisted(() => ({ settings: vi.fn(), lease: vi.fn(), finish: vi.fn(), candidates: vi.fn(), research: vi.fn(), result: vi.fn(), count: vi.fn(), failed: vi.fn(), prioritize: vi.fn() }));
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/arbitrage/admin-research", () => ({ researchAdminCatalogProduct: mocks.research }));
 vi.mock("@/lib/arbitrage/review-saved-candidate", () => ({ reviewSavedCatalogCandidate: mocks.research }));
+vi.mock("@/lib/ai/jev-workflows", () => ({ prioritizeCatalogReview: mocks.prioritize }));
 vi.mock("@/lib/db", () => ({ db: {
   adminCatalogReviewAutomation: { upsert: mocks.settings, updateMany: mocks.lease, update: mocks.finish },
   adminArbitrageProduct: { findMany: mocks.candidates, findUnique: mocks.result, count: mocks.count, updateMany: mocks.failed },
@@ -16,6 +17,7 @@ describe("automatic pending-review queue", () => {
     mocks.candidates.mockResolvedValue([{ id: "one", asin: "B012345678" }]);
     mocks.result.mockResolvedValue({ status: "PUBLISHED", matchReason: "Passed strict gate" });
     mocks.count.mockResolvedValue(0);
+    mocks.prioritize.mockImplementation(async (items) => items);
   });
   it("does no research when disabled or another review holds the lease", async () => {
     mocks.settings.mockResolvedValueOnce({ enabled: false });
@@ -33,5 +35,18 @@ describe("automatic pending-review queue", () => {
     mocks.research.mockRejectedValue(new Error("eBay unavailable"));
     expect(await runAutomaticCatalogReview()).toMatchObject({ processed: 1, published: 0, failed: 1 });
     expect(mocks.failed).toHaveBeenCalledWith(expect.objectContaining({ where: { id: "one", status: "PENDING" }, data: expect.objectContaining({ status: "NO_MATCH" }) }));
+  });
+  it("scopes selected approval to fresh high-confidence review pairs and skips extra queue-ranking AI", async () => {
+    mocks.candidates.mockResolvedValue([{ id: "one", asin: "B012345678", status: "NO_MATCH" }]);
+    expect(await runAutomaticCatalogReview(true, true, { ids: ["one", "two"], limit: 10 })).toMatchObject({ processed: 1, published: 1 });
+    expect(mocks.candidates).toHaveBeenCalledWith(expect.objectContaining({ take: 10, orderBy: { updatedAt: "asc" }, where: expect.objectContaining({ id: { in: ["one", "two"] }, status: "NO_MATCH", matchConfidence: { gte: 95 }, matchVerdict: { not: "REJECTED" }, amazonShippingVerified: true, amazonRefreshedAt: { gte: expect.any(Date) } }) }));
+    expect(mocks.research).toHaveBeenCalledWith("one");
+    expect(mocks.prioritize).not.toHaveBeenCalled();
+  });
+  it("retains the daily cap for scheduled review and clamps manual batch size", async () => {
+    await runAutomaticCatalogReview(false, true, { limit: 100 });
+    expect(mocks.candidates).toHaveBeenLastCalledWith(expect.objectContaining({ take: 5 }));
+    await runAutomaticCatalogReview(true, true, { limit: 100 });
+    expect(mocks.candidates).toHaveBeenLastCalledWith(expect.objectContaining({ take: 25 }));
   });
 });

@@ -34,6 +34,7 @@ import { PremiumProgress } from "@/components/premium-progress";
 import { shouldSkipRecentlyCheckedAmazon } from "@/lib/amazon/freshness";
 import { recordAmazonCheckAttempt } from "@/lib/actions/amazon-checks";
 import { CatalogEquivalentResearch } from "./catalog-equivalent-research";
+import { CatalogAutoApproval } from "./catalog-auto-approval";
 
 type AdminScanProgress = {
   target: number;
@@ -359,7 +360,8 @@ export function AdminArbitrageManager({
   const [expanded, setExpanded] = useState(false);
   const [transitionPending, startTransition] = useTransition();
   const [equivalentResearchRunning, setEquivalentResearchRunning] = useState(false);
-  const pending = transitionPending || equivalentResearchRunning;
+  const [autoApprovalRunning, setAutoApprovalRunning] = useState(false);
+  const pending = transitionPending || equivalentResearchRunning || autoApprovalRunning;
   const stopScanRequested = useRef(false);
   const stopRefreshRequested = useRef(false);
   const liveAmazonSavePromises = useRef<Promise<void>[]>([]);
@@ -864,6 +866,7 @@ export function AdminArbitrageManager({
 
       <Card className="overflow-hidden">
         <CatalogEquivalentResearch selectedIds={[...selected]} disabled={pending || liveAmazonRunning} onRunningChange={setEquivalentResearchRunning} />
+        <CatalogAutoApproval selectedIds={[...selected]} disabled={pending || liveAmazonRunning} onRunningChange={setAutoApprovalRunning} />
         <div className="grid gap-5 bg-gradient-to-r from-slate-950 to-indigo-950 px-6 py-5 text-white lg:grid-cols-[1fr_auto]">
           <div>
             <h2 className="text-base font-semibold">Add an Amazon bestseller</h2>
