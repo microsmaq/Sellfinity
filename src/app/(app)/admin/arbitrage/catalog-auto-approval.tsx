@@ -26,7 +26,7 @@ export function CatalogAutoApproval({ selectedIds, disabled, onRunningChange }: 
     try {
       const prepared = await prepareCatalogAutoApproval(selected ? selectedIds : undefined, limit);
       if ("skipped" in prepared) { setMessage(prepared.reason); return; }
-      if (!prepared.ids.length) { setMessage("No eligible high-confidence matches. Candidates must be in Needs review at 95%+, with fresh Amazon data, verified shipping and a saved eBay comparison."); return; }
+      if (!prepared.ids.length) { setMessage("No eligible high-confidence matches. Candidates must be in Needs review at 95%+, with Amazon price data updated within the last 3 days, verified shipping and a saved eBay comparison."); return; }
       if (stop.current) { setMessage("Stopped before reviewing any products."); return; }
       if ((limit === "ALL" || prepared.ids.length >= 100) && !window.confirm(`Review ${prepared.ids.length.toLocaleString()} eligible products using AI? This uses AI credits and may take a while. Keep this tab open. Qualified products will be approved into Arbitrage Finder, not listed on eBay. You can stop after the current group.`)) { setMessage("Approval cancelled. No products were changed."); return; }
       const outcome = await processCatalogApprovalQueue(prepared.ids, (ids) => reviewHighConfidenceCatalogNow(ids, ids.length), {
@@ -44,7 +44,7 @@ export function CatalogAutoApproval({ selectedIds, disabled, onRunningChange }: 
   return <section className="border-b border-emerald-100 bg-gradient-to-r from-emerald-50/80 to-white p-5" aria-busy={running}>
     <div className="flex flex-col justify-between gap-3 xl:flex-row xl:items-center">
       <div className="max-w-2xl"><div className="flex flex-wrap items-center gap-2"><h2 className="font-semibold text-slate-950">Auto-approve matching products</h2><Badge tone="green">Decisions API</Badge></div>
-        <p className="mt-1 text-xs leading-5 text-slate-600">Checks saved Needs review matches at 95%+; approval requires image-aware verification, a Decisions exact-match score of at least 99%, and existing identity, freshness, shipping and profit safeguards. Uncertain products stay in review.</p>
+        <p className="mt-1 text-xs leading-5 text-slate-600">Checks saved Needs review matches at 95%+; approval requires image-aware verification, a Decisions exact-match score of at least 99%, Amazon price data updated within the last 3 days, and existing identity, shipping and profit safeguards. Uncertain products stay in review.</p>
         <p className="mt-1 text-xs text-slate-500">Uses saved comparisons, not new Amazon or eBay research. AI usage applies. Keep this tab open; large runs use small checkpoints and each queued product is checked once per run. Daily automation limits are unchanged.</p>
       </div>
       <div className="flex shrink-0 flex-wrap items-end gap-2">

@@ -33,7 +33,12 @@ describe("strict automatic catalog publication", () => {
   it("holds unavailable, unknown-shipping and stale Amazon records", () => {
     expect(automaticReviewDecision({ ...facts, inStock: false }, now).publish).toBe(false);
     expect(automaticReviewDecision({ ...facts, shippingVerified: false }, now).publish).toBe(false);
-    expect(automaticReviewDecision({ ...facts, amazonCheckedAt: new Date(now.getTime() - 25 * 60 * 60 * 1000) }, now).publish).toBe(false);
+    expect(automaticReviewDecision({ ...facts, amazonCheckedAt: new Date(now.getTime() - 73 * 60 * 60 * 1000) }, now).publish).toBe(false);
+  });
+  it("accepts Amazon data up to exactly 3 days old but holds older or missing prices", () => {
+    for (const hours of [25, 48, 72]) expect(automaticReviewDecision({ ...facts, amazonCheckedAt: new Date(now.getTime() - hours * 60 * 60 * 1000) }, now).publish).toBe(true);
+    expect(automaticReviewDecision({ ...facts, amazonCheckedAt: new Date(now.getTime() - 72 * 60 * 60 * 1000 - 1) }, now)).toMatchObject({ publish: false, reason: expect.stringContaining("3 days") });
+    expect(automaticReviewDecision({ ...facts, amazonCheckedAt: null }, now).publish).toBe(false);
   });
   it("requires real market evidence and profitable competitive pricing", () => {
     expect(automaticReviewDecision({ ...facts, hasMarketEvidence: false }, now).publish).toBe(false);

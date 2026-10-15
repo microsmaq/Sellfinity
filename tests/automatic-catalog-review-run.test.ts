@@ -8,8 +8,12 @@ vi.mock("@/lib/db", () => ({ db: {
   adminCatalogReviewAutomation: { upsert: mocks.settings, updateMany: mocks.lease, update: mocks.finish },
   adminArbitrageProduct: { findMany: mocks.candidates, findUnique: mocks.result, count: mocks.count, updateMany: mocks.failed },
 } }));
-import { runAutomaticCatalogReview } from "@/lib/arbitrage/automatic-review";
+import { highConfidenceCatalogWhere, runAutomaticCatalogReview } from "@/lib/arbitrage/automatic-review";
 describe("automatic pending-review queue", () => {
+  it("uses a 3-day Amazon cutoff for manual approval queue preparation", () => {
+    const now = new Date("2026-10-15T12:00:00Z");
+    expect(highConfidenceCatalogWhere(now).amazonRefreshedAt.gte).toEqual(new Date("2026-10-12T12:00:00Z"));
+  });
   beforeEach(() => {
     vi.resetAllMocks();
     mocks.settings.mockResolvedValue({ enabled: true, dailyLimit: 5 });
