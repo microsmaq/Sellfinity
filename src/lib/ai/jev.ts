@@ -21,12 +21,18 @@ export function jevConfiguration() {
 }
 
 /** Bounded advisory decisions; refusals and malformed responses fall back safely. */
-export async function evaluateJevDecision(state: unknown, questions: Record<string, JevQuestion>, diagnostic = false, reportFailure?: (reason: string) => void): Promise<JevAnswers | null> {
+export async function evaluateJevDecision(state: unknown, questions: Record<string, JevQuestion>, diagnostic = false, reportFailure?: (reason: string) => void, imageUrls: string[] = []): Promise<JevAnswers | null> {
   const config = jevConfiguration();
   if (!config.enabled || !config.configured || (!diagnostic && Date.now() < unavailableUntil)) return null;
   const entries = Object.entries(questions);
   if (!entries.length || entries.length > 25) return null;
-  const body = JSON.stringify({ model: config.model, input: JSON.stringify(state), questions: entries.map(([name, question]) => question.type === "boolean"
+  if (imageUrls.length > 2 || imageUrls.some((url) => { try { return new URL(url).protocol !== "https:"; } catch { return true; } })) return null;
+  const evidence = JSON.stringify(state);
+  const input = imageUrls.length ? [{ role: "user", content: [
+    { type: "input_text", text: evidence },
+    ...imageUrls.map((image_url) => ({ type: "input_image", image_url, detail: "high" })),
+  ] }] : evidence;
+  const body = JSON.stringify({ model: config.model, input, questions: entries.map(([name, question]) => question.type === "boolean"
     ? { name, type: "predicate", instructions: question.instructions }
     : { name, type: "choice", instructions: question.instructions, choices: Object.entries(question.criteria).map(([value, description]) => ({ value, description })) }) });
   if (body.length > 40_000) return null;
@@ -36,7 +42,7 @@ export async function evaluateJevDecision(state: unknown, questions: Record<stri
   try {
     const response = await fetch("https://api.openai.com/v1/decisions", {
       method: "POST", headers: { authorization: `Bearer ${process.env.OPENAI_API_KEY!.trim()}`, "content-type": "application/json" },
-      signal: AbortSignal.timeout(diagnostic ? 12_000 : 5_000), body,
+      signal: AbortSignal.timeout(diagnostic || imageUrls.length ? 12_000 : 5_000), body,
     });
     if (!response.ok) {
       const payload = diagnostic ? await response.json().catch(() => null) : null;

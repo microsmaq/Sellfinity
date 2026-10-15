@@ -30,6 +30,16 @@ describe("strict automatic catalog publication", () => {
     expect(automaticReviewDecision({ ...facts, brand: "" }).publish).toBe(false);
     expect(automaticReviewDecision({ ...facts, rulesRejected: true }).publish).toBe(false);
   });
+  it("lets saved visual matches resolve title omissions with a separate Decisions check", () => {
+    const candidate = { ...facts, ebayTitle: "AB123 Knee Strap", brand: "Acme", variant: "Black" };
+    expect(automaticReviewDecision(candidate, 95).publish).toBe(false);
+    expect(automaticReviewDecision(candidate, 95, true).publish).toBe(true);
+    expect(automaticReviewDecision({ ...candidate, rulesRejected: true }, 95, true).publish).toBe(false);
+    expect(automaticReviewDecision({ ...candidate, ebayImage: null }, 95, true).publish).toBe(false);
+    expect(automaticReviewDecision({ ...candidate, assessment: { ...facts.assessment, method: "RULES" } }, 95, true).publish).toBe(false);
+    expect(automaticReviewDecision({ ...candidate, assessment: { ...facts.assessment, confidence: 94 } }, 95, true).publish).toBe(false);
+    expect(automaticReviewDecision({ ...candidate, assessment: { ...facts.assessment, verdict: "REVIEW" } }, 95, true).publish).toBe(false);
+  });
   it("ignores availability, shipping, data age and missing price refreshes for identity approval", () => {
     const candidate = { ...facts, inStock: false, shippingVerified: false, amazonCheckedAt: null };
     expect(automaticReviewDecision(candidate).publish).toBe(true);

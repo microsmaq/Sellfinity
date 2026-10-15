@@ -29,6 +29,32 @@ it("never skips visual verification for positive or uncertain decisions", async 
   expect(shouldSkipVisualVerification({ sameProductProbability: 1, conflictProbability: 0, route: "VERIFY", durationMs: 1 })).toBe(false);
   expect(shouldSkipVisualVerification({ sameProductProbability: 0.1, conflictProbability: 0.9, route: "REJECT", durationMs: 1 })).toBe(false);
 });
+it("sends two labeled product images as Decisions image parts, not just image URL text", async () => {
+  const fetcher = vi.fn().mockImplementation(async () => Response.json({ answers: [{ name: "same", type: "predicate", probability: 0.96 }] })); vi.stubGlobal("fetch", fetcher);
+  const { evaluateJevDecision } = await import("@/lib/ai/jev");
+  const questions = { same: { type: "boolean" as const, instructions: "Compare identity" } };
+  const images = ["https://example.com/amazon.jpg", "https://example.com/ebay.jpg"];
+  const state = { imageOrder: ["Amazon source", "eBay comparison"] };
+  await evaluateJevDecision(state, questions, false, undefined, images);
+  const body = JSON.parse(fetcher.mock.calls[0][1].body);
+  expect(body.input).toEqual([{ role: "user", content: [
+    { type: "input_text", text: JSON.stringify(state) },
+    ...images.map((image_url) => ({ type: "input_image", image_url, detail: "high" })),
+  ] }]);
+  await evaluateJevDecision(state, questions, false, undefined, images);
+  expect(fetcher).toHaveBeenCalledTimes(1);
+  await evaluateJevDecision(state, questions, false, undefined, [images[0], "https://example.com/different.jpg"]);
+  expect(fetcher).toHaveBeenCalledTimes(2);
+});
+it("does not call Decisions with invalid or excessive image inputs", async () => {
+  const fetcher = vi.fn(); vi.stubGlobal("fetch", fetcher);
+  const { evaluateJevDecision } = await import("@/lib/ai/jev");
+  const questions = { same: { type: "boolean" as const, instructions: "Compare identity" } };
+  for (const images of [["file:///private.jpg"], ["not a URL"], Array(3).fill("https://example.com/a.jpg")]) {
+    expect(await evaluateJevDecision({}, questions, false, undefined, images)).toBeNull();
+  }
+  expect(fetcher).not.toHaveBeenCalled();
+});
 it("falls back and cools down after authentication failure", async () => {
   const fetcher = vi.fn().mockResolvedValue(new Response(null, { status: 401 })); vi.stubGlobal("fetch", fetcher);
   const { screenProductPairWithJev } = await import("@/lib/ai/jev");

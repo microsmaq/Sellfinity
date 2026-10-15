@@ -12,12 +12,13 @@ type ReviewFacts = {
 };
 
 const tokens = (text: string) => text.toLowerCase().match(/[a-z0-9]+/g) ?? [];
-/** Admin approval verifies identity, not a seller's profitability. Missing
- * variant evidence stays in manual review. */
-export function automaticReviewDecision(facts: ReviewFacts, minimumConfidence = 100): { publish: boolean; reason: string } {
+/** New research requires exact title evidence. Saved candidates may instead use
+ * visual AI plus a separate image-aware Decisions check to resolve omissions. */
+export function automaticReviewDecision(facts: ReviewFacts, minimumConfidence = 100, allowTitleOmissions = false): { publish: boolean; reason: string } {
   const hold = (reason: string) => ({ publish: false, reason });
-  if (facts.assessment.verdict !== "MATCH" || facts.assessment.confidence < minimumConfidence || facts.rulesRejected) return hold(`Match needs administrator review; automatic publication requires MATCH at ${minimumConfidence}% or higher with no rule conflict.`);
+  if (facts.assessment.verdict !== "MATCH" || facts.assessment.confidence < minimumConfidence || facts.rulesRejected) return hold(`Current verification: ${facts.assessment.verdict} at ${facts.assessment.confidence}%. Automatic approval requires MATCH at ${minimumConfidence}% or higher with no rule conflict. ${facts.assessment.reason}`);
   if (!facts.amazonImage || !facts.ebayImage) return hold("Both product images are required for identity review.");
+  if (allowTitleOmissions && facts.assessment.method === "AI") return { publish: true, reason: `Image-aware product match verified at ${facts.assessment.confidence}%. Decisions must independently confirm identity and check for explicit conflicts. Profitability and listing decisions belong to each seller.` };
   const ebay = new Set(tokens(facts.ebayTitle));
   const brand = tokens(facts.brand);
   if (!brand.length || brand.some((token) => !ebay.has(token))) return hold("The exact Amazon brand is not confirmed in the eBay title.");

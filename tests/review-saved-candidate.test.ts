@@ -14,8 +14,47 @@ beforeEach(() => { vi.resetAllMocks(); mocks.find.mockResolvedValue(row()); mock
 it("publishes with a concurrency guard only after both AI and Decisions checks pass", async () => {
   await reviewSavedCatalogCandidate("a"); expect(mocks.publish).toHaveBeenCalledWith("a", expect.objectContaining({ updatedAt: expect.any(Date), confidence: 98, reason: expect.stringContaining("99.5%") }), { identityOnly: true });
 });
-it.each([null, { sameProduct: { type: "boolean", probability: 0.95 }, conflict: { type: "boolean", probability: 0 } }, { sameProduct: { type: "boolean", probability: 1 }, conflict: { type: "boolean", probability: 0.1 } }])("holds missing or uncertain Decisions answers", async (answers) => {
+it.each([null, {}, { sameProduct: { type: "boolean", probability: 0.949 }, conflict: { type: "boolean", probability: 0 } }, { sameProduct: { type: "boolean", probability: 1 }, conflict: { type: "boolean", probability: 0.1 } }])("holds missing or uncertain Decisions answers", async (answers) => {
   mocks.decisions.mockResolvedValue(answers); await reviewSavedCatalogCandidate("a"); expect(mocks.publish).not.toHaveBeenCalled(); expect(mocks.hold).toHaveBeenCalled();
+});
+it("accepts the 95% match and 5% explicit-conflict boundary without inventing 100% confidence", async () => {
+  mocks.decisions.mockResolvedValue({ sameProduct: { type: "boolean", probability: 0.95 }, conflict: { type: "boolean", probability: 0.05 } });
+  await reviewSavedCatalogCandidate("a");
+  expect(mocks.publish).toHaveBeenCalledWith("a", expect.objectContaining({ confidence: 95, reason: expect.stringContaining("95.0%") }), { identityOnly: true });
+});
+it("reports actual match and conflict scores when held, not the old 99% requirement", async () => {
+  mocks.decisions.mockResolvedValue({ sameProduct: { type: "boolean", probability: 0.94 }, conflict: { type: "boolean", probability: 0.12 } });
+  await reviewSavedCatalogCandidate("a");
+  expect(mocks.hold.mock.calls[0][0].data.matchReason).toContain("94.0% (needs ≥95%)");
+  expect(mocks.hold.mock.calls[0][0].data.matchReason).toContain("12.0% (must be ≤5%)");
+});
+it("distinguishes unavailable Decisions verification from a low identity score", async () => {
+  mocks.decisions.mockResolvedValue(null); await reviewSavedCatalogCandidate("a");
+  expect(mocks.hold.mock.calls[0][0].data.matchReason).toContain("unavailable or returned an unusable response");
+});
+it("supplies both images, separates missing details from contradictions and does not anchor Decisions to a prior score", async () => {
+  const item = { ...row(), matchConfidence: 100, amazonImageUrl: "https://example.com/amazon.jpg", ebayImageUrl: "https://example.com/ebay.jpg", amazonImportDetailsJson: '{"variant":"Black"}' };
+  mocks.find.mockResolvedValue(item); await reviewSavedCatalogCandidate("a");
+  const [evidence, questions, , , images] = mocks.decisions.mock.calls[0];
+  expect(images).toEqual([item.amazonImageUrl, item.ebayImageUrl]);
+  expect(evidence.amazon.variant).toBe("Black"); expect(evidence).not.toHaveProperty("verification");
+  expect(questions.conflict.instructions).toContain("omitted attribute or abbreviated title alone is not an explicit contradiction");
+  expect(questions.sameProduct.instructions).toContain("Do not invent missing decisive facts");
+  expect(mocks.policy).toHaveBeenCalledWith(expect.any(Object), 95, true);
+});
+it("allows shorter saved titles through the real policy only when both verifiers confirm identity", async () => {
+  const { automaticReviewDecision } = await vi.importActual<typeof import("@/lib/arbitrage/automatic-review-policy")>("@/lib/arbitrage/automatic-review-policy");
+  mocks.policy.mockImplementation(automaticReviewDecision);
+  mocks.find.mockResolvedValue({ ...row(), amazonBrand: "Acme", amazonTitle: "Acme AB123 2 Pack Lamp Black 10 inch", ebayTitle: "AB123 Lamp", amazonImportDetailsJson: '{"variant":"Black"}' });
+  mocks.decisions.mockResolvedValue({ sameProduct: { type: "boolean", probability: 0.97 }, conflict: { type: "boolean", probability: 0.02 } });
+  await reviewSavedCatalogCandidate("a");
+  expect(mocks.publish).toHaveBeenCalledWith("a", expect.objectContaining({ confidence: 97 }), { identityOnly: true });
+});
+it("reports actual identity conflicts instead of labeling them an unavailable visual service", async () => {
+  mocks.assess.mockResolvedValue({ method: "RULES", verdict: "REJECTED", confidence: 98, reason: "Conflicting model identifiers (AB123 vs AB999)." });
+  await reviewSavedCatalogCandidate("a");
+  expect(mocks.publish).not.toHaveBeenCalled(); expect(mocks.decisions).not.toHaveBeenCalled();
+  expect(mocks.hold.mock.calls[0][0].data.matchReason).toContain("Conflicting model identifiers");
 });
 it("does not override explicitly rejected candidates", async () => {
   mocks.find.mockResolvedValue({ ...row(), matchMethod: "MANUAL_REJECTED" }); await reviewSavedCatalogCandidate("a"); expect(mocks.assess).not.toHaveBeenCalled(); expect(mocks.publish).not.toHaveBeenCalled();
