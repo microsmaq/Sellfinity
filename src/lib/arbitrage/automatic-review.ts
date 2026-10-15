@@ -3,17 +3,15 @@ import { db } from "@/lib/db";
 import { researchAdminCatalogProduct } from "./admin-research";
 import { prioritizeCatalogReview } from "@/lib/ai/jev-workflows";
 import { reviewSavedCatalogCandidate } from "./review-saved-candidate";
-import { CATALOG_REVIEW_DATA_MAX_AGE_MS } from "./automatic-review-policy";
 
 export async function catalogReviewSettings() {
   return db.adminCatalogReviewAutomation.upsert({ where: { id: "main" }, create: { id: "main" }, update: {} });
 }
 
-export function highConfidenceCatalogWhere(now = new Date(), ids?: string[]) {
+export function highConfidenceCatalogWhere(ids?: string[]) {
   return {
     status: "NO_MATCH", matchConfidence: { gte: 95 }, matchVerdict: { not: "REJECTED" }, matchMethod: { not: "MANUAL_REJECTED" }, ebayItemId: { not: null },
-    ...(ids && { id: { in: ids } }), amazonInStock: true, amazonShippingVerified: true,
-    amazonPriceCents: { gt: 0 }, amazonRefreshedAt: { gte: new Date(now.getTime() - CATALOG_REVIEW_DATA_MAX_AGE_MS) },
+    ...(ids && { id: { in: ids } }),
   };
 }
 
@@ -31,12 +29,9 @@ export async function runAutomaticCatalogReview(force = false, reviewOnly = fals
   const deadline = Date.now() + 220_000;
   try {
     const savedReview = { status: "NO_MATCH", matchConfidence: { gte: 95 }, matchVerdict: { not: "REJECTED" }, matchMethod: { not: "MANUAL_REJECTED" }, ebayItemId: { not: null } };
-    const where = reviewOnly ? highConfidenceCatalogWhere(now, options.ids) : {
+    const where = reviewOnly ? highConfidenceCatalogWhere(options.ids) : {
       OR: [{ status: "PENDING", lastResearchedAt: null }, savedReview],
       ...(options.ids && { id: { in: options.ids } }),
-      amazonInStock: true, amazonShippingVerified: true,
-      amazonPriceCents: { gt: 0 },
-      amazonRefreshedAt: { gte: new Date(now.getTime() - CATALOG_REVIEW_DATA_MAX_AGE_MS) },
     };
     const candidates = await db.adminArbitrageProduct.findMany({
       where, orderBy: { updatedAt: "asc" }, take: force && options.limit ? Math.max(1, Math.min(25, options.limit)) : settings.dailyLimit,

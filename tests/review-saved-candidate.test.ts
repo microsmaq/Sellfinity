@@ -12,7 +12,7 @@ import { reviewSavedCatalogCandidate } from "@/lib/arbitrage/review-saved-candid
 const row = () => ({ id: "a", status: "NO_MATCH", matchConfidence: 98, matchMethod: "AI", matchVerdict: "MATCH", ebayTitle: "Acme AB123 lamp", ebayItemId: "123", amazonTitle: "Acme AB123 lamp", amazonBrand: "Acme", amazonDescription: "Lamp details", amazonBulletPointsJson: '["Feature"]', amazonImageUrl: "amazon photo", ebayImageUrl: "ebay photo", amazonImportDetailsJson: "{}", lastResearchedAt: new Date(), updatedAt: new Date(), amazonRefreshedAt: new Date(), competitorCount: 3, estimatedSales30d: 10, averageCompetitorPriceCents: 5000 });
 beforeEach(() => { vi.resetAllMocks(); mocks.find.mockResolvedValue(row()); mocks.assess.mockResolvedValue({ method: "AI", verdict: "MATCH", confidence: 98 }); mocks.policy.mockReturnValue({ publish: true, reason: "Strict gates passed" }); mocks.decisions.mockResolvedValue({ sameProduct: { type: "boolean", probability: 0.995 }, conflict: { type: "boolean", probability: 0.001 } }); });
 it("publishes with a concurrency guard only after both AI and Decisions checks pass", async () => {
-  await reviewSavedCatalogCandidate("a"); expect(mocks.publish).toHaveBeenCalledWith("a", expect.objectContaining({ updatedAt: expect.any(Date), confidence: 98, reason: expect.stringContaining("99.5%") }));
+  await reviewSavedCatalogCandidate("a"); expect(mocks.publish).toHaveBeenCalledWith("a", expect.objectContaining({ updatedAt: expect.any(Date), confidence: 98, reason: expect.stringContaining("99.5%") }), { identityOnly: true });
 });
 it.each([null, { sameProduct: { type: "boolean", probability: 0.95 }, conflict: { type: "boolean", probability: 0 } }, { sameProduct: { type: "boolean", probability: 1 }, conflict: { type: "boolean", probability: 0.1 } }])("holds missing or uncertain Decisions answers", async (answers) => {
   mocks.decisions.mockResolvedValue(answers); await reviewSavedCatalogCandidate("a"); expect(mocks.publish).not.toHaveBeenCalled(); expect(mocks.hold).toHaveBeenCalled();
@@ -23,10 +23,10 @@ it("does not override explicitly rejected candidates", async () => {
 it("requires visual AI instead of a rule-only fallback", async () => {
   mocks.assess.mockResolvedValue({ method: "RULES", verdict: "MATCH", confidence: 100 }); await reviewSavedCatalogCandidate("a"); expect(mocks.decisions).not.toHaveBeenCalled(); expect(mocks.publish).not.toHaveBeenCalled();
 });
-it("never uses a positive decision to override profit/identity gates", async () => {
-  mocks.policy.mockReturnValue({ publish: false, reason: "Unprofitable" }); await reviewSavedCatalogCandidate("a"); expect(mocks.decisions).not.toHaveBeenCalled(); expect(mocks.publish).not.toHaveBeenCalled();
+it("never uses a positive decision to override identity gates", async () => {
+  mocks.policy.mockReturnValue({ publish: false, reason: "Wrong variant" }); await reviewSavedCatalogCandidate("a"); expect(mocks.decisions).not.toHaveBeenCalled(); expect(mocks.publish).not.toHaveBeenCalled();
 });
-it.each([25, 48, 72])("accepts saved eBay evidence %s hours old, through exactly three days", async (hours) => {
+it.each([25, 48, 72])("does not impose an eBay market-data freshness gate at %s hours", async (hours) => {
   const now = Date.now();
   const clock = vi.spyOn(Date, "now").mockReturnValue(now);
   try {
@@ -34,13 +34,12 @@ it.each([25, 48, 72])("accepts saved eBay evidence %s hours old, through exactly
     await reviewSavedCatalogCandidate("a"); expect(mocks.publish).toHaveBeenCalled();
   } finally { clock.mockRestore(); }
 });
-it.each([null, 72 * 60 * 60 * 1000 + 1])("holds missing or older-than-three-day eBay evidence before paid AI checks", async (age) => {
+it.each([null, 30 * 24 * 60 * 60 * 1000])("approves exact matches despite missing or old market evidence and unusable cost data", async (age) => {
   const now = Date.now();
   const clock = vi.spyOn(Date, "now").mockReturnValue(now);
   try {
-    mocks.find.mockResolvedValue({ ...row(), lastResearchedAt: age === null ? null : new Date(now - age) });
+    mocks.find.mockResolvedValue({ ...row(), lastResearchedAt: age === null ? null : new Date(now - age), amazonRefreshedAt: null, amazonInStock: false, amazonShippingVerified: false, amazonPriceCents: 0, averageCompetitorPriceCents: null, competitorCount: null, estimatedSales30d: null, amazonDescription: "", amazonBulletPointsJson: "[]" });
     await reviewSavedCatalogCandidate("a");
-    expect(mocks.assess).not.toHaveBeenCalled(); expect(mocks.decisions).not.toHaveBeenCalled(); expect(mocks.publish).not.toHaveBeenCalled();
-    expect(mocks.hold).toHaveBeenCalledWith(expect.objectContaining({ data: { matchReason: expect.stringContaining("3 days") } }));
+    expect(mocks.assess).toHaveBeenCalled(); expect(mocks.decisions).toHaveBeenCalled(); expect(mocks.publish).toHaveBeenCalledWith("a", expect.any(Object), { identityOnly: true });
   } finally { clock.mockRestore(); }
 });

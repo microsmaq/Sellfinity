@@ -9,7 +9,7 @@ beforeEach(() => { vi.resetAllMocks(); mocks.auth.mockResolvedValue({ id: "admin
 it("prepares all eligible pending records, not just the visible page", async () => {
   mocks.findMany.mockResolvedValue([{ id: "a" }, { id: "b" }]);
   expect(await prepareCatalogEquivalentResearch()).toEqual({ ids: ["a", "b"] });
-  expect(mocks.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ status: "PENDING", amazonShippingVerified: true }), orderBy: expect.any(Array) }));
+  expect(mocks.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ status: "PENDING", amazonTitle: { not: "" } }), orderBy: expect.any(Array) }));
   expect(mocks.research).not.toHaveBeenCalled();
 });
 it("limits selected research to pending/review rows and deduplicates IDs", async () => {

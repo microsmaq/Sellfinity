@@ -4,15 +4,7 @@ import { estimateMargin } from "@/lib/fees";
 import type { ArbitrageOpportunity } from "./scanner";
 import { arbitrageSuggestedPriceCents } from "./pricing";
 import { catalogContentWarnings, requireCatalogContent } from "./catalog-content";
-import {
-  assessPriceCompetitiveness,
-  isCompetitivelyPriced,
-} from "./price-competitiveness";
-import {
-  AUTO_PUBLISH_MIN_MARGIN_PCT,
-  AUTO_PUBLISH_MIN_MATCH_CONFIDENCE,
-  AUTO_PUBLISH_FLAT_PROFIT_CENTS,
-} from "./auto-publish";
+import { AUTO_PUBLISH_MIN_MATCH_CONFIDENCE } from "./auto-publish";
 
 export const ADMIN_CATALOG_PAGE_SIZE = 50;
 
@@ -120,24 +112,6 @@ function suggestedPriceFor(item: {
     : null;
 }
 
-function hasCompetitiveSuggestedPrice(item: {
-  amazonPriceCents: number;
-  amazonShippingCents: number;
-  ebayPriceCents: number | null;
-  ebayRecommendedPriceCents: number | null;
-  averageCompetitorPriceCents: number | null;
-}): boolean {
-  const suggestedPrice = suggestedPriceFor(item);
-  return suggestedPrice !== null && isCompetitivelyPriced(
-    assessPriceCompetitiveness(
-      suggestedPrice,
-      item.ebayPriceCents ?? 0,
-      item.averageCompetitorPriceCents,
-      item.ebayRecommendedPriceCents,
-    ),
-  );
-}
-
 export async function listAdminCatalog(params: {
   page: number;
   filters: AdminCatalogFilters;
@@ -166,14 +140,8 @@ export async function listAdminCatalog(params: {
       AND: [
         {
           ebayItemId: { not: null },
-          suggestedPriceCents: { not: null },
           matchVerdict: { in: ["MATCH", "LIKELY"] },
           matchConfidence: { gte: AUTO_PUBLISH_MIN_MATCH_CONFIDENCE },
-          OR: [
-            { marginPct: { gte: AUTO_PUBLISH_MIN_MARGIN_PCT } },
-            { estimatedProfitCents: { gte: AUTO_PUBLISH_FLAT_PROFIT_CENTS } },
-          ],
-          estimatedProfitCents: { gt: 0 },
         },
       ],
     }),
@@ -247,8 +215,7 @@ export async function listAdminCatalog(params: {
   // User adoption is derived from seller products, rather than stored on the
   // catalog row. When it is the active sort, rank the complete filtered set
   // before slicing the requested page so pagination remains truthful.
-  const inMemoryPagination =
-    filters.sortKey === "usersListed" || filters.qualifiedOnly;
+  const inMemoryPagination = filters.sortKey === "usersListed";
   let items = await db.adminArbitrageProduct.findMany({
     where,
     orderBy: filters.sortKey === "usersListed" ? { updatedAt: "desc" } : orderBy,
@@ -259,10 +226,7 @@ export async function listAdminCatalog(params: {
           take: pageSize,
         }),
   });
-  if (filters.qualifiedOnly) {
-    items = items.filter(hasCompetitiveSuggestedPrice);
-  }
-  const total = filters.qualifiedOnly ? items.length : databaseTotal;
+  const total = databaseTotal;
   const adoptionAsins =
     filters.sortKey === "usersListed"
       ? items.map((item) => item.asin)
@@ -290,8 +254,6 @@ export async function listAdminCatalog(params: {
       if (difference !== 0) return filters.sortDesc ? -difference : difference;
       return b.updatedAt.getTime() - a.updatedAt.getTime();
     });
-    items = items.slice((page - 1) * pageSize, page * pageSize);
-  } else if (filters.qualifiedOnly) {
     items = items.slice((page - 1) * pageSize, page * pageSize);
   }
 
@@ -346,26 +308,28 @@ export async function listAdminCatalog(params: {
 
 /** Make a curated catalog row visible in the existing user-facing Arbitrage
  * Finder without disrupting its publishing, hiding, sorting, or export flows. */
-export async function publishCatalogProductToUsers(id: string, approval?: { updatedAt: Date; confidence: number; reason: string }): Promise<void> {
+export async function publishCatalogProductToUsers(id: string, approval?: { updatedAt: Date; confidence: number; reason: string }, options: { identityOnly?: boolean } = {}): Promise<void> {
   const item = await db.adminArbitrageProduct.findUnique({ where: { id } });
-  if (item?.amazonImportDetailsJson && item.amazonImportDetailsJson !== "{}") requireCatalogContent(item);
-  if (item?.amazonShippingVerified === false || !item?.amazonInStock) throw new Error("Verify Amazon availability and shipping before publishing.");
+  // Identity approval only exposes a catalog pair; it never lists to eBay.
+  // Do not change source flags or freshness to make the pair appear sellable.
+  if (!options.identityOnly && item?.amazonImportDetailsJson && item.amazonImportDetailsJson !== "{}") requireCatalogContent(item);
+  if (!options.identityOnly && (item?.amazonShippingVerified === false || !item?.amazonInStock)) throw new Error("Verify Amazon availability and shipping before publishing.");
   if (
     !item ||
     !item.ebayItemId ||
     !item.ebayTitle ||
-    !item.ebayPriceCents ||
+    (!options.identityOnly && !item.ebayPriceCents) ||
     !item.ebayUrl
   ) {
     throw new Error("Research an eBay equivalent before publishing this product.");
   }
   if (approval) Object.assign(item, { matchVerdict: "MATCH", matchConfidence: approval.confidence, matchReason: approval.reason, matchMethod: "DECISIONS" });
-  const reference = { id: item.ebayItemId, title: item.ebayTitle, price: item.ebayPriceCents, url: item.ebayUrl };
+  const reference = { id: item.ebayItemId, title: item.ebayTitle, price: item.ebayPriceCents ?? 0, url: item.ebayUrl };
   const suggested = arbitrageSuggestedPriceCents(
     item.amazonPriceCents,
-    item.ebayPriceCents,
+    reference.price,
     item.ebayRecommendedPriceCents,
-    item.averageCompetitorPriceCents ?? item.ebayPriceCents,
+    item.averageCompetitorPriceCents ?? reference.price,
     item.amazonShippingCents,
   );
   const margin = estimateMargin(

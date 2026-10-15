@@ -12,7 +12,7 @@ export async function prepareCatalogEquivalentResearch(selectedIds?: string[]) {
     where: {
       status: ids ? { in: ["PENDING", "NO_MATCH"] } : "PENDING",
       ...(ids && { id: { in: ids } }),
-      amazonInStock: true, amazonShippingVerified: true, amazonPriceCents: { gt: 0 },
+      amazonTitle: { not: "" },
     },
     orderBy: [{ lastResearchedAt: { sort: "asc", nulls: "first" } }, { createdAt: "asc" }],
     select: { id: true },

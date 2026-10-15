@@ -14,7 +14,7 @@ export async function prepareCatalogAutoApproval(selectedIds: string[] | undefin
   const input = z.object({ ids: selectedApprovalIds, limit: z.union([z.number().int().min(1).max(100), z.literal("ALL")]) }).parse({ ids: selectedIds, limit });
   const config = jevConfiguration();
   if (!config.enabled || !config.configured) return { skipped: true as const, reason: "OpenAI Decisions is not enabled or configured. Check the Decisions connection in Admin Settings; no products were changed." };
-  const rows = await db.adminArbitrageProduct.findMany({ where: highConfidenceCatalogWhere(new Date(), input.ids), orderBy: { updatedAt: "asc" }, ...(input.limit !== "ALL" && { take: input.limit }), select: { id: true } });
+  const rows = await db.adminArbitrageProduct.findMany({ where: highConfidenceCatalogWhere(input.ids), orderBy: { updatedAt: "asc" }, ...(input.limit !== "ALL" && { take: input.limit }), select: { id: true } });
   return { ids: rows.map((row) => row.id) };
 }
 

@@ -18,3 +18,14 @@ it("records the actual approval confidence and Decisions method without claiming
   expect(mocks.upsert.mock.calls[0][0].create).toMatchObject({ matchVerdict: "MATCH", matchConfidence: 95, matchMethod: "DECISIONS" });
   expect(mocks.update.mock.calls[0][0].data).toMatchObject({ status: "PUBLISHED", matchConfidence: 95, matchMethod: "DECISIONS" });
 });
+it("permits identity-only catalog approval without certifying commercial source data", async () => {
+  mocks.find.mockResolvedValue({ id: "a", asin: "B012345678", amazonInStock: false, amazonShippingVerified: false, amazonImportDetailsJson: '{"source":"BROWSER"}', amazonDescription: "", ebayItemId: "123", ebayTitle: "Lamp", ebayPriceCents: null, ebayUrl: "https://www.ebay.com/itm/123", amazonPriceCents: 0, amazonShippingCents: 0 });
+  await publishCatalogProductToUsers("a", { updatedAt, confidence: 98, reason: "Identity verified" }, { identityOnly: true });
+  const saved = mocks.update.mock.calls[0][0].data;
+  expect(saved).toMatchObject({ status: "PUBLISHED", matchConfidence: 98 });
+  for (const field of ["amazonInStock", "amazonShippingVerified", "amazonRefreshedAt", "amazonPriceCents"]) expect(saved).not.toHaveProperty(field);
+});
+it("retains source checks for publication callers that do not request identity-only catalog approval", async () => {
+  mocks.find.mockResolvedValue({ amazonInStock: false, amazonShippingVerified: false });
+  await expect(publishCatalogProductToUsers("a")).rejects.toThrow("Verify Amazon availability and shipping"); expect(mocks.upsert).not.toHaveBeenCalled();
+});

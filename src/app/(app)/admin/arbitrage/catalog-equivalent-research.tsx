@@ -23,7 +23,7 @@ export function CatalogEquivalentResearch({ selectedIds, disabled, onRunningChan
       const { ids } = await prepareCatalogEquivalentResearch(selected ? selectedIds : undefined);
       const counts = { total: ids.length, done: 0, matched: 0, unmatched: 0, errors: 0, skipped: 0 };
       setProgress({ ...counts });
-      if (!ids.length) { setMessage("No eligible products. Verify saved Amazon price, availability and shipping first. Published products are left unchanged."); return; }
+      if (!ids.length) { setMessage("No pending products with a saved Amazon title were found in this scope. Published products are left unchanged."); return; }
       for (const id of ids) {
         if (stop.current) break;
         setMessage(`Researching product ${counts.done + 1} of ${counts.total}…`);

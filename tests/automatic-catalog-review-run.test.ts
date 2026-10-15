@@ -10,9 +10,9 @@ vi.mock("@/lib/db", () => ({ db: {
 } }));
 import { highConfidenceCatalogWhere, runAutomaticCatalogReview } from "@/lib/arbitrage/automatic-review";
 describe("automatic pending-review queue", () => {
-  it("uses a 3-day Amazon cutoff for manual approval queue preparation", () => {
-    const now = new Date("2026-10-15T12:00:00Z");
-    expect(highConfidenceCatalogWhere(now).amazonRefreshedAt.gte).toEqual(new Date("2026-10-12T12:00:00Z"));
+  it("does not exclude identity review based on price, availability, shipping or age", () => {
+    const where = highConfidenceCatalogWhere();
+    for (const field of ["amazonRefreshedAt", "amazonShippingVerified", "amazonInStock", "amazonPriceCents", "lastResearchedAt", "marginPct"]) expect(where).not.toHaveProperty(field);
   });
   beforeEach(() => {
     vi.resetAllMocks();
@@ -43,7 +43,7 @@ describe("automatic pending-review queue", () => {
   it("scopes selected approval to fresh high-confidence review pairs and skips extra queue-ranking AI", async () => {
     mocks.candidates.mockResolvedValue([{ id: "one", asin: "B012345678", status: "NO_MATCH" }]);
     expect(await runAutomaticCatalogReview(true, true, { ids: ["one", "two"], limit: 10 })).toMatchObject({ processed: 1, published: 1 });
-    expect(mocks.candidates).toHaveBeenCalledWith(expect.objectContaining({ take: 10, orderBy: { updatedAt: "asc" }, where: expect.objectContaining({ id: { in: ["one", "two"] }, status: "NO_MATCH", matchConfidence: { gte: 95 }, matchVerdict: { not: "REJECTED" }, amazonShippingVerified: true, amazonRefreshedAt: { gte: expect.any(Date) } }) }));
+    expect(mocks.candidates).toHaveBeenCalledWith(expect.objectContaining({ take: 10, orderBy: { updatedAt: "asc" }, where: expect.objectContaining({ id: { in: ["one", "two"] }, status: "NO_MATCH", matchConfidence: { gte: 95 }, matchVerdict: { not: "REJECTED" } }) }));
     expect(mocks.research).toHaveBeenCalledWith("one");
     expect(mocks.prioritize).not.toHaveBeenCalled();
   });

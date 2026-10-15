@@ -19,7 +19,7 @@ it("snapshots up to 100 eligible products without a paid review or publication c
 });
 it("snapshots all eligible products without a hidden 25/100-item cap and preserves selected scope", async () => {
   await prepareCatalogAutoApproval(["one", "two"], "ALL");
-  expect(mocks.where).toHaveBeenCalledWith(expect.any(Date), ["one", "two"]);
+  expect(mocks.where).toHaveBeenCalledWith(["one", "two"]);
   expect(mocks.findMany.mock.calls[0][0]).not.toHaveProperty("take");
 });
 it("rejects an empty selected snapshot instead of treating it as all products", async () => {

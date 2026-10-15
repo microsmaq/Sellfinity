@@ -1213,7 +1213,7 @@ export function AdminArbitrageManager({
                 className="mt-0.5 h-4 w-4 rounded border-emerald-400 text-emerald-600 focus:ring-emerald-500"
               />
               <span>
-                <span className="font-semibold">Qualified opportunities only</span>
+                <span className="font-semibold">High-confidence matches only</span>
                 <span className="ml-2 text-xs text-emerald-800">
                   Match or Likely · confidence ≥ 95% · competitive price · net margin ≥ 15% or about $7 profit
                 </span>

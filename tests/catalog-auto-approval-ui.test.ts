@@ -8,6 +8,7 @@ it("shows selected and catalog-wide approval directly with bounded batches and s
   const html = renderToStaticMarkup(createElement(CatalogAutoApproval, { selectedIds: ["one", "two"], disabled: false, onRunningChange: vi.fn() }));
   expect(html).toContain("Auto-approve high matches"); expect(html).toContain("Auto-approve selected (2)");
   expect(html).toContain("Decisions API"); expect(html).toContain("99%"); expect(html).toContain("Uncertain products stay in review");
+  expect(html).toContain("Identity-only review"); expect(html).toContain("do not block admin match approval"); expect(html).not.toContain("last 3 days");
   expect(html).toContain("25 products"); expect(html).toContain("50 products"); expect(html).toContain("100 products"); expect(html).toContain("All eligible products");
 });
 it("disables selected approval when no rows are selected", () => {

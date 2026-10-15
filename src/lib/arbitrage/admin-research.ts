@@ -69,15 +69,15 @@ export async function researchAdminCatalogProduct(id: string, options: { automat
   if (options.reviewOnly && !["PENDING", "NO_MATCH"].includes(item.status)) throw new Error("This product is already approved or no longer eligible for pending research.");
 
   const imported = Boolean(JSON.parse(item.amazonImportDetailsJson || "{}").source);
+  const identityOnly = Boolean(options.automatic || options.reviewOnly);
   let contentHold = "";
-  if (imported) { try { requireCatalogContent(item); } catch (error) { contentHold = error instanceof Error ? error.message : "Product content needs review."; } }
-  if (imported && (item.amazonShippingVerified === false || !item.amazonInStock)) {
+  if (imported && !identityOnly) { try { requireCatalogContent(item); } catch (error) { contentHold = error instanceof Error ? error.message : "Product content needs review."; } }
+  if (imported && !identityOnly && (item.amazonShippingVerified === false || !item.amazonInStock)) {
     throw new Error("Verify imported Amazon availability and shipping before eBay research. Use the browser checker or manual import to correct it.");
   }
-  if (options.automatic && (!item.amazonInStock || item.amazonShippingVerified === false)) throw new Error("Verify availability and shipping before automatic review.");
-  if (options.storedSource && (!item.amazonInStock || item.amazonShippingVerified === false || item.amazonPriceCents <= 0)) throw new Error("Check the Amazon price, availability and shipping before eBay research.");
+  if (options.storedSource && !identityOnly && (!item.amazonInStock || item.amazonShippingVerified === false || item.amazonPriceCents <= 0)) throw new Error("Check the Amazon price, availability and shipping before eBay research.");
   const source = imported || options.automatic || options.storedSource ? sharedRowToScrapedProduct(item) : await getScraper().scrape(item.amazonUrl);
-  if (!source || !source.inStock || source.priceCents <= 0) {
+  if (!source || (!identityOnly && (!source.inStock || source.priceCents <= 0))) {
     await db.adminArbitrageProduct.update({
       where: { id },
       data: {
@@ -93,7 +93,8 @@ export async function researchAdminCatalogProduct(id: string, options: { automat
     });
     return;
   }
-  const sourceSnapshot = { ...sharedAmazonSnapshotData(source), ...((imported || options.automatic || options.storedSource) && { amazonImportDetailsJson: item.amazonImportDetailsJson, amazonRefreshedAt: item.amazonRefreshedAt, amazonDescription: item.amazonDescription }) };
+  if (!source.title?.trim()) throw new Error("The saved Amazon product needs a title for identity matching.");
+  const sourceSnapshot = identityOnly ? {} : { ...sharedAmazonSnapshotData(source), ...((imported || options.automatic || options.storedSource) && { amazonImportDetailsJson: item.amazonImportDetailsJson, amazonRefreshedAt: item.amazonRefreshedAt, amazonDescription: item.amazonDescription }) };
 
   const candidates = await (options.ebayOnly ? searchEbayProducts : searchAdminEbayProducts)(source.title, 50);
   const attached = candidates.length
@@ -165,14 +166,14 @@ export async function researchAdminCatalogProduct(id: string, options: { automat
     return;
   }
 
-  const market = await (options.ebayOnly ? researchEbayMarket : researchAdminEbayMarket)(
+  const market = identityOnly ? null : await (options.ebayOnly ? researchEbayMarket : researchAdminEbayMarket)(
     best.candidate.title,
     best.candidate.itemId,
   );
   const metrics = market?.metrics;
   const averagePrice =
-    metrics?.averageCompetitorPriceCents ?? best.candidate.priceCents;
-  const recommendedPrice = metrics?.bestSellingPriceCents ?? null;
+    metrics?.averageCompetitorPriceCents ?? (identityOnly ? item.averageCompetitorPriceCents : best.candidate.priceCents);
+  const recommendedPrice = metrics?.bestSellingPriceCents ?? (identityOnly ? item.ebayRecommendedPriceCents : null);
   const suggestedPrice = arbitrageSuggestedPriceCents(
     source.priceCents,
     best.candidate.priceCents,
@@ -191,12 +192,6 @@ export async function researchAdminCatalogProduct(id: string, options: { automat
     amazonTitle: source.title, ebayTitle: best.candidate.title, brand: source.brand,
     variant: JSON.parse(item.amazonImportDetailsJson || "{}").variant || "",
     amazonImage: source.imageUrls[0] ?? null, ebayImage: best.candidate.imageUrl ?? null,
-    inStock: item.amazonInStock, shippingVerified: item.amazonShippingVerified !== false,
-    amazonCheckedAt: item.amazonRefreshedAt,
-    suggestedPriceCents: suggestedPrice, ebayPriceCents: best.candidate.priceCents,
-    averagePriceCents: metrics?.averageCompetitorPriceCents ?? null,
-    hasMarketEvidence: Boolean(metrics && metrics.competitorCount && metrics.estimatedSales30d > 0),
-    profitCents: margin.estimatedProfitCents, marginPct: margin.marginPct,
   }) : null;
   const approved = !contentHold && !options.reviewOnly && (automaticDecision ? automaticDecision.publish : isApprovedProductMatch(best.assessment));
 
@@ -217,8 +212,8 @@ export async function researchAdminCatalogProduct(id: string, options: { automat
       matchMethod: best.assessment.method,
       estimatedSales30d:
         metrics?.estimatedSales30d ??
-        estimatedSales30d(best.candidate.itemId, best.candidate.priceCents),
-      competitorCount: metrics?.competitorCount ?? 1,
+        (identityOnly ? item.estimatedSales30d : estimatedSales30d(best.candidate.itemId, best.candidate.priceCents)),
+      competitorCount: metrics?.competitorCount ?? (identityOnly ? item.competitorCount : 1),
       averageCompetitorPriceCents: averagePrice,
       ebayRecommendedPriceCents:
         recommendedPrice,
@@ -230,7 +225,10 @@ export async function researchAdminCatalogProduct(id: string, options: { automat
   });
   if (!savedReview.count) throw new Error("This product changed during automatic review. Review the current record before publishing.");
 
-  if (approved) await publishCatalogProductToUsers(id);
+  if (approved) {
+    if (identityOnly) await publishCatalogProductToUsers(id, undefined, { identityOnly: true });
+    else await publishCatalogProductToUsers(id);
+  }
 }
 
 /** Refresh only Amazon buy-box truth for one curated row. This is the paid
@@ -446,12 +444,9 @@ export async function attachAdminEbayCandidate(id: string, input: string): Promi
 
 export async function approveAdminEbayCandidate(id: string): Promise<void> {
   const item = await db.adminArbitrageProduct.findUnique({ where: { id } });
-  if (item?.amazonImportDetailsJson && item.amazonImportDetailsJson !== "{}") requireCatalogContent(item);
-  if (!item?.ebayItemId || !item.ebayTitle || !item.ebayPriceCents || !item.ebayUrl) {
+  if (!item?.ebayItemId || !item.ebayTitle || !item.ebayUrl) {
     throw new Error("Add or research an eBay candidate before approving the match.");
   }
-  if (!item.amazonInStock) throw new Error("The Amazon source is unavailable and cannot be published.");
-  if (item.amazonShippingVerified === false) throw new Error("Verify Amazon shipping before approving this product.");
   await db.adminArbitrageProduct.update({
     where: { id },
     data: {
@@ -463,7 +458,7 @@ export async function approveAdminEbayCandidate(id: string): Promise<void> {
       lastResearchedAt: new Date(),
     },
   });
-  await publishCatalogProductToUsers(id);
+  await publishCatalogProductToUsers(id, undefined, { identityOnly: true });
 }
 
 export async function rejectAdminEbayCandidate(id: string): Promise<void> {
