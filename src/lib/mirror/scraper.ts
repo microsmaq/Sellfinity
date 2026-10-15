@@ -29,7 +29,8 @@ export interface ProductPageScraper {
 /**
  * Extract an ASIN from any common Amazon product URL shape:
  * /dp/ASIN, /gp/product/ASIN, /product/ASIN, with query strings, subdomains
- * (smile., www., country TLDs), and trailing path segments all tolerated.
+ * (smile., www., country TLDs), trailing path segments, and Amazon sponsored
+ * links whose embedded destination is another Amazon product URL.
  */
 export function extractAsin(url: string): string | null {
   let parsed: URL;
@@ -39,8 +40,17 @@ export function extractAsin(url: string): string | null {
     return null;
   }
   if (!/(^|\.)amazon\.[a-z.]+$/i.test(parsed.hostname)) return null;
-  const match = parsed.pathname.match(
-    /\/(?:dp|gp\/product|product)\/([A-Z0-9]{10})(?:[/?]|$)/i,
-  );
-  return match ? match[1].toUpperCase() : null;
+  const productPath = /\/(?:dp|gp\/product|gp\/aw\/d|product)\/([A-Z0-9]{10})(?:[/?]|$)/i;
+  const match = parsed.pathname.match(productPath);
+  if (match) return match[1].toUpperCase();
+  if (parsed.pathname !== "/sspa/click") return null;
+  // Inspect one explicit destination only. Do not follow redirects or accept
+  // product-shaped paths on a non-Amazon destination.
+  const destination = parsed.searchParams.get("url");
+  if (!destination) return null;
+  let target: URL;
+  try { target = new URL(destination, parsed.origin); } catch { return null; }
+  if (!/^https?:$/.test(target.protocol) || !/(^|\.)amazon\.[a-z.]+$/i.test(target.hostname)) return null;
+  const targetMatch = target.pathname.match(productPath);
+  return targetMatch ? targetMatch[1].toUpperCase() : null;
 }

@@ -42,7 +42,7 @@ export function sharedRowToScrapedProduct(row: SharedAmazonRow): ScrapedProduct 
   ])];
   return {
     sourceId: row.asin,
-    sourceUrl: row.amazonUrl,
+    sourceUrl: `https://www.amazon.com/dp/${row.asin}`,
     title: row.amazonTitle,
     brand: row.amazonBrand,
     bulletPoints: stringArray(row.amazonBulletPointsJson),
@@ -63,7 +63,7 @@ export function sharedAmazonSnapshotData(product: ScrapedProduct) {
     amazonShippingCents: product.shippingCostCents,
     amazonShippingVerified: true,
     amazonImportDetailsJson: "{}",
-    amazonUrl: product.sourceUrl,
+    amazonUrl: `https://www.amazon.com/dp/${product.sourceId}`,
     amazonImageUrl: product.imageUrls[0] ?? null,
     amazonBrand: product.brand,
     amazonDescription: product.description,
@@ -79,6 +79,8 @@ export type SharedAmazonLookupOptions = {
   /** Skip legacy seller snapshots when the shared admin row is missing or
    * unusable, and obtain one provider-backed snapshot for the global cache. */
   providerOnCatalogMiss?: boolean;
+  /** Publishing needs an actionable reason instead of the null used by sync. */
+  requirePurchasable?: boolean;
 };
 
 /**
@@ -97,6 +99,16 @@ export async function getSharedAmazonProduct(
     : url;
   const asin = extractAsin(normalizedUrl);
   if (!asin) return null;
+  const canonicalUrl = `https://www.amazon.com/dp/${asin}`;
+  const unavailable = (reason: string): null => {
+    if (options.requirePurchasable) throw new Error(`Amazon source ${asin}: ${reason} No listing was published.`);
+    return null;
+  };
+  const purchasable = (product: ScrapedProduct) => {
+    if (!product.inStock) return unavailable("the admin catalog marks this item unavailable. Refresh its live Amazon availability in Product Intelligence before retrying.");
+    if (product.priceCents <= 0) return unavailable("a usable Amazon purchase price is missing. Refresh its price and shipping in Product Intelligence before retrying.");
+    return product;
+  };
 
   const existing = await db.adminArbitrageProduct.findUnique({ where: { asin } });
   if (existing) {
@@ -104,15 +116,17 @@ export async function getSharedAmazonProduct(
       throw new Error("Imported Amazon availability or shipping needs manual verification before this product can be used.");
     }
     const stored = sharedRowToScrapedProduct(existing);
+    if (!stored.inStock) return purchasable(stored);
     const usableSnapshot = stored.priceCents > 0 && stored.imageUrls.length > 0;
-    if (usableSnapshot) return stored.inStock ? stored : null;
+    if (usableSnapshot) return stored;
     if (!options.providerOnCatalogMiss && (!stored.inStock || stored.priceCents <= 0)) return null;
 
     // Rows created before complete shared snapshots were introduced can have
     // incomplete Amazon data. Enrich that ASIN once on demand instead of
     // leaving pricing/image workflows without a usable shared snapshot.
-    const enriched = await getScraper().scrape(existing.amazonUrl || normalizedUrl);
-    if (!enriched || enriched.imageUrls.length === 0) return null;
+    const enriched = await getScraper().scrape(canonicalUrl);
+    if (!enriched || enriched.imageUrls.length === 0) return unavailable("saved product details are incomplete and the Amazon lookup did not return usable images. Refresh or repair this product in Product Intelligence before retrying.");
+    if (enriched.sourceId.toUpperCase() !== asin) return unavailable("the Amazon lookup returned a different ASIN. Review the exact source in Product Intelligence before retrying.");
     const saved = await db.adminArbitrageProduct.upsert({
       where: { asin },
       create: {
@@ -123,7 +137,7 @@ export async function getSharedAmazonProduct(
       },
       update: sharedAmazonSnapshotData(enriched),
     });
-    return sharedRowToScrapedProduct(saved);
+    return purchasable(sharedRowToScrapedProduct(saved));
   }
 
   // Lazily promote legacy per-user imports into the shared catalog without
@@ -161,11 +175,12 @@ export async function getSharedAmazonProduct(
       update: sharedAmazonSnapshotData(legacyProduct),
     });
     const stored = sharedRowToScrapedProduct(saved);
-    return stored.inStock && stored.priceCents > 0 ? stored : null;
+    return purchasable(stored);
   }
 
-  const product = await getScraper().scrape(normalizedUrl);
-  if (!product || product.imageUrls.length === 0) return null;
+  const product = await getScraper().scrape(canonicalUrl);
+  if (!product || product.imageUrls.length === 0) return unavailable("no usable Amazon product details were returned. Refresh or import this ASIN in Product Intelligence before retrying.");
+  if (product.sourceId.toUpperCase() !== asin) return unavailable("the Amazon lookup returned a different ASIN. Review the exact source in Product Intelligence before retrying.");
   const snapshot = sharedAmazonSnapshotData(product);
   const saved = await db.adminArbitrageProduct.upsert({
     where: { asin: product.sourceId },
@@ -180,9 +195,9 @@ export async function getSharedAmazonProduct(
     // the shared Amazon snapshot.
     update: snapshot,
   });
-  return sharedRowToScrapedProduct(saved);
+  return purchasable(sharedRowToScrapedProduct(saved));
 }
 
 export const sharedCatalogScraper: ProductPageScraper = {
-  scrape: (url) => getSharedAmazonProduct(url, { providerOnCatalogMiss: true }),
+  scrape: (url) => getSharedAmazonProduct(url, { providerOnCatalogMiss: true, requirePurchasable: true }),
 };

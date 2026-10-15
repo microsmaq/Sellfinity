@@ -3,7 +3,7 @@
 // limits and the eBay connection requirement apply unchanged.
 
 import { db } from "@/lib/db";
-import type { ProductPageScraper } from "./scraper";
+import type { ProductPageScraper, ScrapedProduct } from "./scraper";
 import { extractAsin } from "./scraper";
 import { sharedCatalogScraper } from "./shared-catalog";
 
@@ -77,6 +77,7 @@ export async function mirrorUrl(
 ): Promise<MirrorOutcome> {
   const sourceUrl = normalizeAmazonProductInput(url);
   const inputAsin = extractAsin(sourceUrl);
+  if (!inputAsin) return { url, ok: false, error: "Enter a valid Amazon product URL or 10-character ASIN." };
   if (inputAsin) {
     const alreadyImported = await db.product.findUnique({
       where: { userId_sku: { userId, sku: inputAsin } },
@@ -86,14 +87,18 @@ export async function mirrorUrl(
       return { url, ok: false, error: `Already imported (SKU ${inputAsin}).` };
     }
   }
-  const scraped = await scraper.scrape(sourceUrl);
+  let scraped: ScrapedProduct | null;
+  try { scraped = await scraper.scrape(sourceUrl); }
+  catch (error) { return { url, ok: false, error: error instanceof Error ? error.message : "Amazon source lookup failed. Please try again." }; }
   if (!scraped) {
     return {
       url,
       ok: false,
-      error: "Not a recognizable Amazon product URL, or the product page is unavailable.",
+      error: `Amazon source data for ASIN ${inputAsin} is missing or unavailable. Refresh the product in Product Intelligence before retrying.`,
     };
   }
+  if (scraped.sourceId.toUpperCase() !== inputAsin) return { url, ok: false, error: "The Amazon lookup returned a different ASIN. Review the exact source before publishing." };
+  if (!scraped.inStock || scraped.priceCents <= 0) return { url, ok: false, error: `ASIN ${inputAsin} needs a verified, available Amazon source with a usable purchase price before publishing.` };
   if (scraped.imageUrls.length === 0) {
     return {
       url,
