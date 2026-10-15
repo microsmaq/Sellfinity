@@ -2,7 +2,7 @@ import "server-only";
 import { db } from "@/lib/db";
 import { evaluateJevDecision } from "@/lib/ai/jev";
 import { assessProductMatch, assessProductMatchRules } from "./product-match";
-import { automaticReviewDecision } from "./automatic-review-policy";
+import { automaticReviewDecision, CATALOG_REVIEW_DATA_MAX_AGE_MS } from "./automatic-review-policy";
 import { requireCatalogContent } from "./catalog-content";
 import { publishCatalogProductToUsers } from "./admin-catalog";
 import { arbitrageSuggestedPriceCents } from "./pricing";
@@ -16,7 +16,7 @@ export async function reviewSavedCatalogCandidate(id: string) {
     await db.adminArbitrageProduct.updateMany({ where: { id, status: "NO_MATCH", updatedAt: item.updatedAt }, data: { matchReason: reason.slice(0, 1000) } });
   };
   try { requireCatalogContent(item); } catch (error) { await hold(error instanceof Error ? error.message : "Complete the product content first."); return; }
-  if (!item.lastResearchedAt || Date.now() - item.lastResearchedAt.getTime() > 24 * 60 * 60 * 1000) { await hold("Refresh eBay research before automatic approval; saved market evidence is older than 24 hours."); return; }
+  if (!item.lastResearchedAt || Date.now() - item.lastResearchedAt.getTime() > CATALOG_REVIEW_DATA_MAX_AGE_MS) { await hold("Refresh eBay research before automatic approval; saved market evidence is missing or older than 3 days."); return; }
   let variant = "";
   try { variant = JSON.parse(item.amazonImportDetailsJson || "{}").variant || ""; } catch { await hold("Import identity data needs manual review."); return; }
   const assessment = await assessProductMatch({ title: item.ebayTitle, imageUrl: item.ebayImageUrl }, { title: item.amazonTitle, imageUrl: item.amazonImageUrl });

@@ -5,7 +5,7 @@ vi.mock("@/lib/db", () => ({ db: { adminArbitrageProduct: { findUnique: mocks.fi
 vi.mock("@/lib/ai/jev", () => ({ evaluateJevDecision: mocks.decisions }));
 vi.mock("@/lib/arbitrage/product-match", () => ({ assessProductMatch: mocks.assess, assessProductMatchRules: () => ({ verdict: "MATCH" }) }));
 vi.mock("@/lib/arbitrage/admin-catalog", () => ({ publishCatalogProductToUsers: mocks.publish }));
-vi.mock("@/lib/arbitrage/automatic-review-policy", () => ({ automaticReviewDecision: mocks.policy }));
+vi.mock("@/lib/arbitrage/automatic-review-policy", async (importOriginal) => ({ ...await importOriginal<typeof import("@/lib/arbitrage/automatic-review-policy")>(), automaticReviewDecision: mocks.policy }));
 vi.mock("@/lib/arbitrage/pricing", () => ({ arbitrageSuggestedPriceCents: () => 5000 }));
 vi.mock("@/lib/fees", () => ({ estimateMargin: () => ({ estimatedProfitCents: 1000, marginPct: 20 }) }));
 import { reviewSavedCatalogCandidate } from "@/lib/arbitrage/review-saved-candidate";
@@ -25,4 +25,22 @@ it("requires visual AI instead of a rule-only fallback", async () => {
 });
 it("never uses a positive decision to override profit/identity gates", async () => {
   mocks.policy.mockReturnValue({ publish: false, reason: "Unprofitable" }); await reviewSavedCatalogCandidate("a"); expect(mocks.decisions).not.toHaveBeenCalled(); expect(mocks.publish).not.toHaveBeenCalled();
+});
+it.each([25, 48, 72])("accepts saved eBay evidence %s hours old, through exactly three days", async (hours) => {
+  const now = Date.now();
+  const clock = vi.spyOn(Date, "now").mockReturnValue(now);
+  try {
+    mocks.find.mockResolvedValue({ ...row(), lastResearchedAt: new Date(now - hours * 60 * 60 * 1000) });
+    await reviewSavedCatalogCandidate("a"); expect(mocks.publish).toHaveBeenCalled();
+  } finally { clock.mockRestore(); }
+});
+it.each([null, 72 * 60 * 60 * 1000 + 1])("holds missing or older-than-three-day eBay evidence before paid AI checks", async (age) => {
+  const now = Date.now();
+  const clock = vi.spyOn(Date, "now").mockReturnValue(now);
+  try {
+    mocks.find.mockResolvedValue({ ...row(), lastResearchedAt: age === null ? null : new Date(now - age) });
+    await reviewSavedCatalogCandidate("a");
+    expect(mocks.assess).not.toHaveBeenCalled(); expect(mocks.decisions).not.toHaveBeenCalled(); expect(mocks.publish).not.toHaveBeenCalled();
+    expect(mocks.hold).toHaveBeenCalledWith(expect.objectContaining({ data: { matchReason: expect.stringContaining("3 days") } }));
+  } finally { clock.mockRestore(); }
 });

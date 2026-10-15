@@ -2,7 +2,7 @@ import type { ProductMatchAssessment } from "./product-match";
 import { assessPriceCompetitiveness, isCompetitivelyPriced } from "./price-competitiveness";
 import { AUTO_PUBLISH_MIN_MARGIN_PCT, AUTO_PUBLISH_FLAT_PROFIT_CENTS } from "./auto-publish";
 
-export const CATALOG_REVIEW_AMAZON_MAX_AGE_MS = 3 * 24 * 60 * 60 * 1000;
+export const CATALOG_REVIEW_DATA_MAX_AGE_MS = 3 * 24 * 60 * 60 * 1000;
 
 type ReviewFacts = {
   assessment: ProductMatchAssessment;
@@ -30,7 +30,7 @@ const tokens = (text: string) => text.toLowerCase().match(/[a-z0-9]+/g) ?? [];
 export function automaticReviewDecision(facts: ReviewFacts, now = new Date(), minimumConfidence = 100): { publish: boolean; reason: string } {
   const hold = (reason: string) => ({ publish: false, reason });
   if (!facts.inStock || !facts.shippingVerified) return hold("Amazon availability or shipping needs verification.");
-  if (!facts.amazonCheckedAt || now.getTime() - facts.amazonCheckedAt.getTime() > CATALOG_REVIEW_AMAZON_MAX_AGE_MS) return hold("Amazon price data is missing or older than 3 days; refresh it first.");
+  if (!facts.amazonCheckedAt || now.getTime() - facts.amazonCheckedAt.getTime() > CATALOG_REVIEW_DATA_MAX_AGE_MS) return hold("Amazon price data is missing or older than 3 days; refresh it first.");
   if (facts.assessment.verdict !== "MATCH" || facts.assessment.confidence < minimumConfidence || facts.rulesRejected) return hold(`Match needs administrator review; automatic publication requires MATCH at ${minimumConfidence}% or higher with no rule conflict.`);
   if (!facts.amazonImage || !facts.ebayImage) return hold("Both product images are required for identity review.");
   const ebay = new Set(tokens(facts.ebayTitle));
