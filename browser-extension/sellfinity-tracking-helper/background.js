@@ -290,7 +290,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       if (!matching) return sendResponse({ ok: false });
       if (message.blocked) { await pauseAmazonWork("Amazon verification required. Checking the existing tab hourly; manual verification may still be needed.", true, sender.tab.id); return sendResponse({ ok: true }); }
       await notifySource(matching, message.type === "AMAZON_PRICE_FOUND"
-        ? { type: "FILL_AMAZON_PRICE", unitPriceCents: message.unitPriceCents, shippingCents: message.shippingCents, orderIds: matching.orderIds }
+        ? { type: "FILL_AMAZON_PRICE", unitPriceCents: message.unitPriceCents, shippingCents: message.shippingCents, productDetails: message.productDetails, orderIds: matching.orderIds }
         : { type: "AMAZON_PRICE_LOOKUP_FAILED", reason: message.reason, unavailable: Boolean(message.unavailable), orderIds: matching.orderIds });
       await advanceRun(matching.sourceTabId, "PRICE", message.type === "AMAZON_PRICE_FOUND");
       await noteAmazonRead(message.type === "AMAZON_PRICE_FOUND", Boolean(message.unavailable));

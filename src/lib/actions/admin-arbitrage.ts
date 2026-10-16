@@ -21,6 +21,7 @@ import { recalculateAllArbitragePricing } from "@/lib/arbitrage/recalculate-pric
 import { arbitrageSuggestedPriceCents } from "@/lib/arbitrage/pricing";
 import { estimateMargin } from "@/lib/fees";
 import { isAmazonDataFresh, latestAmazonCheckAt, oldestAmazonChecksFirst } from "@/lib/amazon/freshness";
+import { parseBrowserCatalogRefresh, browserCatalogContentPatch } from "@/lib/arbitrage/browser-catalog-refresh";
 
 export type AdminActionResult = {
   ok: boolean;
@@ -102,7 +103,8 @@ export async function adminUpdateAmazonCostsFromBrowser(
   rawIds: string[],
   rawPriceCents: number,
   rawShippingCents: number | null,
-): Promise<{ updatedIds: string[]; priceCents: number; shippingCents: number | null } | { error: string }> {
+  rawProductDetails?: unknown,
+): Promise<{ updatedIds: string[]; priceCents: number; shippingCents: number | null; detailsUpdated: boolean } | { error: string }> {
   await requireAdmin();
   const ids = z.array(z.string().min(1).max(100)).min(1).max(100).parse([...new Set(rawIds)]);
   const priceCents = Math.round(rawPriceCents);
@@ -113,6 +115,15 @@ export async function adminUpdateAmazonCostsFromBrowser(
   }
   const rows = await db.adminArbitrageProduct.findMany({ where: { id: { in: ids } } });
   if (!rows.length) return { error: "No matching admin catalog products were found." };
+  let productDetails: ReturnType<typeof parseBrowserCatalogRefresh>;
+  const checkedAt = new Date();
+  try {
+    productDetails = parseBrowserCatalogRefresh(rawProductDetails);
+    if (productDetails) {
+      if (productDetails.availability !== "AVAILABLE" || productDetails.priceCents !== priceCents || productDetails.shippingCents !== shippingCents) return { error: "Amazon returned inconsistent price, shipping or availability details. This product was left unchanged; retry the check." };
+      for (const row of rows) browserCatalogContentPatch(row, productDetails, checkedAt);
+    }
+  } catch (error) { return { error: message(error) }; }
   await db.$transaction(rows.flatMap((row) => {
     const nextShipping = shippingCents ?? row.amazonShippingCents;
     const suggested = row.ebayPriceCents
@@ -126,9 +137,10 @@ export async function adminUpdateAmazonCostsFromBrowser(
           amazonPriceCents: priceCents,
           amazonShippingCents: nextShipping,
           ...(shippingCents !== null && { amazonShippingVerified: true }),
-          amazonImportDetailsJson: JSON.stringify({ ...JSON.parse(row.amazonImportDetailsJson || "{}"), availability: "AVAILABLE" }),
+          amazonImportDetailsJson: productDetails ? row.amazonImportDetailsJson : JSON.stringify({ ...JSON.parse(row.amazonImportDetailsJson || "{}"), availability: "AVAILABLE" }),
           amazonInStock: true,
-          amazonRefreshedAt: new Date(),
+          amazonRefreshedAt: checkedAt,
+          ...(productDetails && browserCatalogContentPatch(row, productDetails, checkedAt)),
           suggestedPriceCents: suggested,
           estimatedProfitCents: margin?.estimatedProfitCents ?? null,
           marginPct: margin ? Math.round(margin.marginPct) : null,
@@ -139,6 +151,7 @@ export async function adminUpdateAmazonCostsFromBrowser(
         data: {
           amazonPriceCents: priceCents,
           amazonShippingCents: nextShipping,
+          ...(productDetails && { amazonTitle: productDetails.title, amazonUrl: `https://www.amazon.com/dp/${productDetails.asin}` }),
           ...(margin && {
             profitCents: margin.estimatedProfitCents,
             marginPct: Math.round(margin.marginPct),
@@ -150,7 +163,7 @@ export async function adminUpdateAmazonCostsFromBrowser(
   }));
   revalidatePath("/admin/arbitrage");
   revalidatePath("/arbitrage");
-  return { updatedIds: rows.map((row) => row.id), priceCents, shippingCents };
+  return { updatedIds: rows.map((row) => row.id), priceCents, shippingCents, detailsUpdated: Boolean(productDetails) };
 }
 
 export async function adminMarkAmazonUnavailableFromBrowser(rawIds: string[]): Promise<{ updatedIds: string[] } | { error: string }> {

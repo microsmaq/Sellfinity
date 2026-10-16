@@ -1,5 +1,26 @@
 # Sellfinity Amazon Tracking Helper
 
+## Full admin catalog refresh (v1.6.12)
+
+Admin Product Intelligence → **Refresh Amazon details** now reads price, shipping,
+availability, title, brand, category, selected variant, description/A+ text, feature
+bullets and up to 12 gallery image URLs during the same Amazon visit. Daily admin
+checks use this flow too. Workload controls, freshness skipping, stop/resume and
+verification pauses are unchanged; no extra page visits or paid research calls.
+
+Readable content replaces its saved catalog field; missing descriptions, bullets,
+images, brand or category do not erase existing data. A redirected sibling ASIN is
+not applied to the requested product. Approved eBay matches, seller price locks
+and active listings are not reset or rewritten. Unavailable or blocked pages do
+not overwrite content. Unknown shipping preserves its saved value. Content-check
+and refresh timestamps are recorded in the catalog audit details. Refresh results
+count product-detail saves separately from prices and warn about price-only reads.
+
+Replace the unpacked helper with v1.6.12, reload it in `chrome://extensions`, then
+refresh the Sellfinity and Amazon tabs. Older helpers still save prices, but need
+this update to send product details. To revisit records already checked today,
+turn off **Skip checked in last 24 hours** for a manual run.
+
 ## Install in Chrome
 
 1. Download and unzip `sellfinity-tracking-helper.zip`.

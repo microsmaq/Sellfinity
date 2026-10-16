@@ -79,7 +79,12 @@
     const inspectPrice = () => {
       if (globalThis.sellfinityAmazonAvailabilityFromPage?.(document) === "BLOCKED") { finishPrice({ type: "AMAZON_PRICE_NOT_FOUND", blocked: true, unavailable: false, reason: "Amazon verification required." }); return; }
       const result = globalThis.sellfinityAmazonPriceFromPage?.(document);
-      if (result) finishPrice({ type: "AMAZON_PRICE_FOUND", ...result });
+      if (result) {
+        let productDetails = null;
+        try { productDetails = globalThis.sellfinityCaptureCatalogProduct?.(document, location.href) || null; }
+        catch { /* Keep a usable price even when optional content is not readable. */ }
+        finishPrice({ type: "AMAZON_PRICE_FOUND", ...result, productDetails });
+      }
     };
     inspectPrice();
     if (!priceFinished) {

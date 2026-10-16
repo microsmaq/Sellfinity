@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Sellfinity Amazon Tracking Helper",
-  "version": "1.6.11",
+  "version": "1.6.12",
   "description": "Automatically checks Amazon tracking pages and saves carrier tracking to Sellfinity fulfillment.",
   "permissions": ["tabs", "storage", "alarms"],
   "host_permissions": [
@@ -45,7 +45,7 @@
         "https://*.fedex.com/*",
         "https://*.usps.com/*"
       ],
-      "js": ["tracking.js", "amazon-price.js", "amazon-content.js", "catalog-capture.js"],
+      "js": ["tracking.js", "amazon-price.js", "catalog-capture.js", "amazon-content.js"],
       "run_at": "document_idle"
     }
   ]

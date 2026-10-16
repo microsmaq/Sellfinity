@@ -216,7 +216,7 @@ function CatalogRow({
             : " · free shipping"}
         </p>
         <p className="mt-1 text-[10px] font-normal text-slate-400" title={`Last attempted check: ${row.amazonCheckedAt ? new Date(row.amazonCheckedAt).toLocaleString() : "Not recorded"}. A check attempt does not confirm the displayed price.`}>{amazonFreshness(row.amazonRefreshedAt)}{row.amazonCheckedAt ? ` · Checked ${new Date(row.amazonCheckedAt).toLocaleDateString()}` : ""}</p>
-        {row.amazonImportDetailsJson && row.amazonImportDetailsJson !== "{}" && <details className="mt-2 whitespace-normal text-left text-xs font-normal text-slate-600"><summary className="cursor-pointer">Import source & variant</summary><pre className="mt-1 max-h-48 max-w-64 overflow-auto whitespace-pre-wrap text-[10px]">{(() => { try { const info = JSON.parse(row.amazonImportDetailsJson); return [info.source, info.variant, info.importedAt, info.bestsellerRank ? `Rank #${info.bestsellerRank} · ${info.bestsellerCategory}` : "", info.bestsellerUrl || info.sourceUrl].filter(Boolean).join("\n"); } catch { return "Source details unavailable"; } })()}</pre></details>}
+        {row.amazonImportDetailsJson && row.amazonImportDetailsJson !== "{}" && <details className="mt-2 whitespace-normal text-left text-xs font-normal text-slate-600"><summary className="cursor-pointer">Import source & variant</summary><pre className="mt-1 max-h-48 max-w-64 overflow-auto whitespace-pre-wrap text-[10px]">{(() => { try { const info = JSON.parse(row.amazonImportDetailsJson); return [info.source, info.variant, info.importedAt, info.contentRefreshedAt ? `Product details refreshed: ${info.contentRefreshedAt}` : "", info.bestsellerRank ? `Rank #${info.bestsellerRank} · ${info.bestsellerCategory}` : "", info.bestsellerUrl || info.sourceUrl].filter(Boolean).join("\n"); } catch { return "Source details unavailable"; } })()}</pre></details>}
       </td>
       <td className="min-w-[300px] px-4 py-4">
         {row.ebayTitle && row.ebayUrl ? (
@@ -367,6 +367,9 @@ export function AdminArbitrageManager({
   const liveAmazonSavePromises = useRef<Promise<void>[]>([]);
   const liveAmazonUnavailableIds = useRef(new Set<string>());
   const liveAmazonUpdatedIds = useRef(new Set<string>());
+  const liveAmazonContentUpdatedIds = useRef(new Set<string>());
+  const [liveAmazonDetailsUpdated, setLiveAmazonDetailsUpdated] = useState(0);
+  const liveAmazonSaveErrors = useRef<string[]>([]);
   const liveAmazonSkippedFresh = useRef(0);
   const liveAmazonStartupTimer = useRef<number | null>(null);
   const liveAmazonRunning = liveAmazonProgress?.status === "starting" || liveAmazonProgress?.status === "running";
@@ -374,12 +377,16 @@ export function AdminArbitrageManager({
 
   useEffect(() => {
     function receiveAmazonPrice(event: Event) {
-      const detail = (event as CustomEvent<{ orderIds?: string[]; unitPriceCents?: number; shippingCents?: number | null }>).detail;
+      const detail = (event as CustomEvent<{ orderIds?: string[]; unitPriceCents?: number; shippingCents?: number | null; productDetails?: unknown }>).detail;
       if (!detail?.orderIds?.length || !Number.isFinite(detail.unitPriceCents)) return;
       const save = (async () => {
-        const result = await adminUpdateAmazonCostsFromBrowser(detail.orderIds!, detail.unitPriceCents!, detail.shippingCents ?? null);
-        if ("error" in result) return;
+        const result = await adminUpdateAmazonCostsFromBrowser(detail.orderIds!, detail.unitPriceCents!, detail.shippingCents ?? null, detail.productDetails);
+        if ("error" in result) { liveAmazonSaveErrors.current.push(result.error); return; }
         for (const id of result.updatedIds) liveAmazonUpdatedIds.current.add(id);
+        if (result.detailsUpdated) {
+          for (const id of result.updatedIds) liveAmazonContentUpdatedIds.current.add(id);
+          setLiveAmazonDetailsUpdated(liveAmazonContentUpdatedIds.current.size);
+        }
       })();
       liveAmazonSavePromises.current.push(save);
     }
@@ -412,11 +419,13 @@ export function AdminArbitrageManager({
         void Promise.all(liveAmazonSavePromises.current).then(() => {
           const unavailable = liveAmazonUnavailableIds.current.size;
           const updated = liveAmazonUpdatedIds.current.size;
+          const contentUpdated = liveAmazonContentUpdatedIds.current.size;
+          const priceOnly = updated - contentUpdated;
           const failed = Math.max(0, next.total - updated - unavailable);
           setLiveAmazonProgress({ ...next, unavailable });
           setNotice({
-            text: `Live Amazon refresh complete: ${updated} prices updated, ${unavailable} confirmed unavailable${failed ? `, and ${failed} could not be verified` : ""}${liveAmazonSkippedFresh.current ? `. ${liveAmazonSkippedFresh.current.toLocaleString()} recently checked product${liveAmazonSkippedFresh.current === 1 ? " was" : "s were"} skipped` : ""}. No Rainforest credits used.`,
-            error: failed > 0,
+            text: `Live Amazon refresh complete: ${updated} prices updated, ${contentUpdated} product details refreshed, ${unavailable} confirmed unavailable${failed ? `, and ${failed} could not be verified` : ""}${liveAmazonSkippedFresh.current ? `. ${liveAmazonSkippedFresh.current.toLocaleString()} recently checked product${liveAmazonSkippedFresh.current === 1 ? " was" : "s were"} skipped` : ""}. No Rainforest credits used.${priceOnly ? ` ${priceOnly} price-only results: product content was not returned. Reload helper v1.6.12 to refresh all readable details.` : ""}${liveAmazonSaveErrors.current[0] ? ` ${liveAmazonSaveErrors.current[0]}` : ""}`,
+            error: failed > 0 || priceOnly > 0,
           });
           router.refresh();
           document.dispatchEvent(new CustomEvent("sellfinity:daily-check-complete", { detail: { updated, unavailable, failed } }));
@@ -427,7 +436,7 @@ export function AdminArbitrageManager({
       } else if (detail.status === "cancelled") {
         setNotice({ text: `Live Amazon refresh stopped after ${detail.processed ?? 0}/${detail.total ?? 0} products. Completed updates were kept.`, error: false });
       } else if (detail.status === "error") {
-        setNotice({ text: "The Chrome helper could not start the admin Amazon refresh. Reload helper v1.6.11 and try again.", error: true });
+        setNotice({ text: "The Chrome helper could not start the admin Amazon refresh. Reload helper v1.6.12 and try again.", error: true });
       }
     }
     function receiveAmazonAttempt(event: Event) {
@@ -492,11 +501,14 @@ export function AdminArbitrageManager({
       liveAmazonSavePromises.current = [];
       liveAmazonUnavailableIds.current = new Set();
       liveAmazonUpdatedIds.current = new Set();
+      liveAmazonContentUpdatedIds.current = new Set();
+      setLiveAmazonDetailsUpdated(0);
+      liveAmazonSaveErrors.current = [];
       setLiveAmazonProgress({ status: "starting", total: prepared.requests.length, processed: 0, found: 0, unavailable: 0 });
       await new Promise<void>((resolve) => window.requestAnimationFrame(() => window.requestAnimationFrame(() => resolve())));
       liveAmazonStartupTimer.current = window.setTimeout(() => {
         setLiveAmazonProgress((current) => current?.status === "starting" ? { ...current, status: "error" } : current);
-        setNotice({ text: "The Chrome helper did not respond. Reload helper v1.6.11, refresh this page, then try again.", error: true });
+        setNotice({ text: "The Chrome helper did not respond. Reload helper v1.6.12, refresh this page, then try again.", error: true });
       }, 8_000);
       document.dispatchEvent(new CustomEvent("sellfinity:bulk-amazon-price-check", { detail: { requests: prepared.requests } }));
     });
@@ -972,7 +984,7 @@ export function AdminArbitrageManager({
               <h2 className="font-bold text-slate-950">Live signed-in Amazon refresh</h2>
               <Badge tone="indigo">0 Rainforest credits</Badge>
             </div>
-            <p className="mt-1 max-w-3xl text-sm leading-6 text-slate-600">Open each unique ASIN through the Chrome helper and save its current item price, shipping charge, and availability directly into the shared admin catalog.</p>
+            <p className="mt-1 max-w-3xl text-sm leading-6 text-slate-600">Refresh price, shipping, availability, title, brand, category, variant, description, feature bullets and gallery images in one visit per ASIN. Saves to the shared admin catalog, including on daily runs. Unreadable fields keep their saved values; approved matches and live eBay listings are not changed.</p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <select value={liveAmazonScope} disabled={pending || liveAmazonRunning} onChange={(event) => setLiveAmazonScope(event.target.value as "ALL" | "SELECTED")} className="min-h-10 rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-700" aria-label="Live Amazon refresh scope">
@@ -983,22 +995,23 @@ export function AdminArbitrageManager({
               <input type="checkbox" checked={skipFreshAmazon} disabled={pending || liveAmazonRunning} onChange={(event) => setSkipFreshAmazon(event.target.checked)} className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500" />
               Skip checked in last 24 hours
             </label>
-            <Button type="button" disabled={pending || liveAmazonRunning || (liveAmazonScope === "SELECTED" && selected.size === 0)} onClick={() => startLiveAmazonRefresh()}>{liveAmazonRunning ? "Checking Amazon…" : "Check live prices & shipping"}</Button>
+            <Button type="button" disabled={pending || liveAmazonRunning || (liveAmazonScope === "SELECTED" && selected.size === 0)} onClick={() => startLiveAmazonRefresh()}>{liveAmazonRunning ? "Refreshing Amazon…" : "Refresh Amazon details"}</Button>
             {liveAmazonRunning && <Button type="button" variant="danger" onClick={stopLiveAmazonRefresh}>Stop</Button>}
-            <a href="/downloads/sellfinity-tracking-helper.zip?v=1.6.11" download className="text-xs font-semibold text-indigo-700 hover:underline">Chrome helper v1.6.11</a>
+            <a href="/downloads/sellfinity-tracking-helper.zip?v=1.6.12" download className="text-xs font-semibold text-indigo-700 hover:underline">Chrome helper v1.6.12</a>
           </div>
         </div>
       </Card>
 
       {liveAmazonProgress && (
         <PremiumProgress
-          title={liveAmazonProgress.status === "complete" ? "Live Amazon catalog refresh complete" : liveAmazonProgress.status === "cancelled" ? "Live Amazon catalog refresh stopped" : liveAmazonProgress.status === "error" ? "Live Amazon catalog refresh needs attention" : "Checking live Amazon catalog prices"}
-          subtitle="Completed prices and shipping are saved immediately. Confirmed unavailable products are flagged; uncertain pages remain unchanged."
+          title={liveAmazonProgress.status === "complete" ? "Live Amazon catalog refresh complete" : liveAmazonProgress.status === "cancelled" ? "Live Amazon catalog refresh stopped" : liveAmazonProgress.status === "error" ? "Live Amazon catalog refresh needs attention" : "Refreshing Amazon catalog details"}
+          subtitle="Readable prices, shipping and product details are saved per product. Blank content is preserved, confirmed unavailability is flagged, and uncertain pages stay unchanged."
           percentage={liveAmazonProgress.total ? liveAmazonProgress.processed / liveAmazonProgress.total * 100 : 0}
           status={liveAmazonProgress.status === "error" ? "error" : liveAmazonProgress.status === "complete" ? "complete" : liveAmazonProgress.status === "cancelled" ? "paused" : "running"}
           stats={[
             { label: "Checked", value: `${liveAmazonProgress.processed}/${liveAmazonProgress.total}`, tone: "info" },
             { label: "Prices updated", value: liveAmazonProgress.found, tone: "success" },
+            { label: "Details refreshed", value: liveAmazonDetailsUpdated, tone: "success" },
             { label: "Unavailable", value: liveAmazonProgress.unavailable, tone: liveAmazonProgress.unavailable ? "warning" : "default" },
           ]}
           action={liveAmazonRunning ? <Button type="button" variant="secondary" onClick={stopLiveAmazonRefresh}>Stop refresh</Button> : null}

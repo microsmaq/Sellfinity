@@ -272,7 +272,8 @@
       document.dispatchEvent(new CustomEvent("sellfinity:amazon-price-found", { detail: {
         orderIds: message.orderIds,
         unitPriceCents: message.unitPriceCents,
-        shippingCents: message.shippingCents
+        shippingCents: message.shippingCents,
+        productDetails: message.productDetails
       } }));
       finishAmazonPriceItem(true);
       const shipping = message.shippingCents === null || message.shippingCents === undefined
