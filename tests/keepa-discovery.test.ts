@@ -222,4 +222,9 @@ describe("Keepa paid discovery safeguards", () => {
     expect(await advanceKeepaDiscovery()).toBe("PROGRESSED");
     expect(mocks.request.mock.calls[0][0]).toBe("product");
   });
+  it("skips non-shippable categories already queued by a previous deployment without spending credits", async () => {
+    mocks.lists.findFirst.mockImplementation(async ({ where }) => where.status === "QUEUED" ? { categoryId: "456", name: "Video Shorts" } : null);
+    expect(await advanceKeepaDiscovery()).toBe("PROGRESSED"); expect(mocks.request).not.toHaveBeenCalled();
+    expect(mocks.lists.update).toHaveBeenCalledWith({ where: { categoryId: "456" }, data: { status: "EXCLUDED", error: null } });
+  });
 });

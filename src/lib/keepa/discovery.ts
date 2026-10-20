@@ -127,6 +127,12 @@ export async function advanceKeepaDiscovery(): Promise<KeepaStep> {
 
     const categoriesPending = state.categoryStatus === "QUEUED";
     const nextList = categoriesPending || pendingCount > 0 ? null : queuedList;
+    // Also covers lists queued before the category filter was tightened.
+    if (nextList && !automaticKeepaCategories([{ id: nextList.categoryId, name: nextList.name }]).length) {
+      await db.keepaBestsellerList.update({ where: { categoryId: nextList.categoryId }, data: { status: "EXCLUDED", error: null } });
+      await db.keepaDiscoveryState.update({ where: { id: "main" }, data: { message: `Skipped ${nextList.name}: digital products/services are not shippable catalog goods. No API credits used.` } });
+      return "PROGRESSED";
+    }
     let items = categoriesPending || nextList ? [] : await db.keepaDiscoveryItem.findMany({ where: { status: "PENDING" }, orderBy: [{ createdAt: "asc" }, { asin: "asc" }], take: 20 });
     if (items.length) {
       // Repeat the free lookup immediately before spending any product tokens.

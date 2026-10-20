@@ -10,7 +10,9 @@ saved provider snapshots. It does not change the seller refresh/mirroring flows.
 2. Deploy the included Prisma migration. No browser helper update is required.
 3. The first authenticated scheduler run with a configured Keepa key automatically
    starts discovery, loads root categories once (1 token), and queues the physical
-   product categories. Digital download/app/software roots are excluded. This
+   product categories. Digital download/app/software, skills, video-short and
+   service roots are excluded (including previously queued entries before any
+   further paid list requests). This
    initialization runs once: later pauses and redeployments do not re-enable it.
    Existing manual category choices are respected. The default budget is 28,800 tokens/day, matching the
    tokens generated at 20/min over 24 hours. Existing saved custom budgets are

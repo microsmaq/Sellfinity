@@ -29,7 +29,7 @@ export function rootCategories(response: unknown) {
 
 export function automaticKeepaCategories(categories: { id: string; name: string }[]) {
   // This catalog supplies physical eBay goods, not digital downloads/apps.
-  return categories.filter((row) => !/kindle|digital|audible|apps|software|prime video|instant video/i.test(row.name));
+  return categories.filter((row) => !/kindle|digital|audible|apps|appstore|software|prime video|instant video|amazon video|video shorts|alexa skills|services/i.test(row.name));
 }
 
 export function keepaCatalogData(product: KeepaObject, source: { asin: string; categoryId: string; categoryName: string; bestsellerRank: number; fetchedAt: Date | null }) {

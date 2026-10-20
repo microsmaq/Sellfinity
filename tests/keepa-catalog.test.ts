@@ -38,7 +38,7 @@ describe("Keepa catalog decoding", () => {
     expect(rootCategories({ categories: [{ catId: "1", name: "Home" }] })).toEqual([{ id: "1", name: "Home" }]);
   });
   it("uses physical-product roots for automatic startup, not digital downloads", () => {
-    expect(automaticKeepaCategories([{ id: "1", name: "Home & Kitchen" }, { id: "2", name: "Kindle Store" }, { id: "3", name: "Apps & Games" }, { id: "4", name: "Books" }])).toEqual([{ id: "1", name: "Home & Kitchen" }, { id: "4", name: "Books" }]);
+    expect(automaticKeepaCategories([{ id: "1", name: "Home & Kitchen" }, { id: "2", name: "Kindle Store" }, { id: "3", name: "Apps & Games" }, { id: "4", name: "Books" }, { id: "5", name: "Alexa Skills" }, { id: "6", name: "Video Shorts" }, { id: "7", name: "Home & Business Services" }])).toEqual([{ id: "1", name: "Home & Kitchen" }, { id: "4", name: "Books" }]);
   });
   it("does not treat invalid Keepa dates as a fresh price check", () => { expect(keepaDate(-1)).toBeNull(); expect(keepaDate(undefined)).toBeNull(); });
 });
