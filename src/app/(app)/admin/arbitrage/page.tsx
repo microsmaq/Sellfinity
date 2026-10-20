@@ -95,6 +95,7 @@ export default async function AdminArbitragePage({
         subtitle="Discover Amazon opportunities, verify equivalent eBay products, maintain shared market data, and control what sellers receive."
       />
       <Link href="/admin/arbitrage/import" className="mb-4 inline-flex rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white">Import Amazon products · no paid research</Link>
+      <Link href="/admin/arbitrage/keepa" className="mb-4 ml-2 inline-flex rounded-lg border border-indigo-200 px-4 py-2 text-sm font-semibold text-indigo-700">Keepa bestseller import</Link>
       <AdminArbitrageManager
         data={data}
         filters={filters}

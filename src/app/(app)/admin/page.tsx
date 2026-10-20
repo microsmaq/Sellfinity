@@ -6,6 +6,8 @@ import { Badge, Card, cx, PageHeader, StatCard } from "@/components/ui";
 import { ProfitChart } from "../dashboard/profit-chart";
 import { getAdminCatalogHealth } from "@/lib/admin/catalog-reporting";
 import { CatalogHealth } from "./catalog-health";
+import { getKeepaImportSummary } from "@/lib/keepa/reporting";
+import { KeepaImportCard } from "./keepa-import-card";
 
 export const metadata = { title: "Admin dashboard — Sellfinity" };
 
@@ -15,7 +17,7 @@ function percentage(part: number, total: number): string {
 
 export default async function AdminDashboardPage() {
   await requireAdmin();
-  const [overview, catalogHealth] = await Promise.all([getAdminPlatformOverview(30), getAdminCatalogHealth()]);
+  const [overview, catalogHealth, keepa] = await Promise.all([getAdminPlatformOverview(30), getAdminCatalogHealth(), getKeepaImportSummary()]);
   const { totals, catalog, health } = overview;
   const alerts = [
     health.openIssues ? { label: `${health.openIssues} open listing issue${health.openIssues === 1 ? "" : "s"}`, href: "/admin/data", tone: "amber" as const } : null,
@@ -60,6 +62,7 @@ export default async function AdminDashboardPage() {
         <StatCard label="Verified Amazon cost" value={percentage(totals.verifiedCostOrders, totals.orders)} sub={`${totals.verifiedCostOrders}/${totals.orders} purchases matched`} />
       </section>
 
+      <KeepaImportCard initial={keepa} />
       <CatalogHealth data={catalogHealth} />
 
       {alerts.length > 0 && (

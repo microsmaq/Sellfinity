@@ -245,6 +245,68 @@ model AdminCatalogReviewAutomation {
   lastSummaryJson String    @default("{}")
 }
 
+// One shared US Keepa discovery queue: no per-user paid lookups.
+model KeepaDiscoveryState {
+  id                String    @id @default("main")
+  enabled           Boolean   @default(false)
+  dailyTokenBudget  Int       @default(28800)
+  budgetDay         String    @default("")
+  spentTokens       Int       @default(0)
+  totalTokens       Int       @default(0)
+  tokensLeft        Int?
+  tokenSampleAt     DateTime?
+  refillRate        Int       @default(20)
+  nextRunAt         DateTime?
+  lockOwner         String?
+  lockUntil         DateTime?
+  categoriesJson    String    @default("[]")
+  categoryStatus    String    @default("NONE")
+  message           String    @default("")
+  lastSchedulerAt   DateTime?
+  initializedAt     DateTime?
+  autoQueueCategories Boolean @default(true)
+  updatedAt         DateTime  @updatedAt
+}
+
+model KeepaBestsellerList {
+  categoryId        String    @id
+  name              String
+  // QUEUED | FETCHING | SAVED | DONE | ERROR | UNKNOWN
+  status            String    @default("QUEUED")
+  responseJson      String?
+  cursor            Int       @default(0)
+  totalAsins        Int       @default(0)
+  queuedCount       Int       @default(0)
+  existingCount     Int       @default(0)
+  duplicateCount    Int       @default(0)
+  error             String?
+  attemptedAt       DateTime?
+  fetchedAt         DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  @@index([status, createdAt])
+}
+
+model KeepaDiscoveryItem {
+  // Global ASIN key prevents duplicates across runs and categories.
+  asin              String    @id
+  categoryId        String
+  categoryName      String
+  bestsellerRank    Int
+  // PENDING | FETCHING | SAVED | IMPORTED | SKIPPED | MISSING | REVIEW | UNKNOWN
+  status            String    @default("PENDING")
+  responseJson      String?
+  error             String?
+  attemptedAt       DateTime?
+  fetchedAt         DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  @@index([status, createdAt, asin])
+  @@index([status, updatedAt])
+}
+
 model MirrorBatch {
   id                    String    @id @default(cuid())
   userId                String
