@@ -21,6 +21,7 @@ import { recalculateAllArbitragePricing } from "@/lib/arbitrage/recalculate-pric
 import { arbitrageSuggestedPriceCents } from "@/lib/arbitrage/pricing";
 import { estimateMargin } from "@/lib/fees";
 import { isAmazonDataFresh, latestAmazonCheckAt, oldestAmazonChecksFirst } from "@/lib/amazon/freshness";
+import { amazonSourceVerification } from "@/lib/amazon/source-verification";
 import { parseBrowserCatalogRefresh, browserCatalogContentPatch } from "@/lib/arbitrage/browser-catalog-refresh";
 
 export type AdminActionResult = {
@@ -67,7 +68,7 @@ export async function adminRecalculateArbitragePricing(): Promise<AdminActionRes
 export async function prepareAdminLiveAmazonRefresh(
   selectedIds?: string[],
   skipRecentlyChecked = true,
-): Promise<{ requests: AdminLiveAmazonRequest[]; skippedFresh: number }> {
+): Promise<{ requests: AdminLiveAmazonRequest[]; skippedFresh: number; publishedFirst: number; awaitingVerification: number }> {
   await requireAdmin();
   const skipFresh = z.boolean().parse(skipRecentlyChecked);
   const ids = selectedIds?.length
@@ -78,13 +79,30 @@ export async function prepareAdminLiveAmazonRefresh(
       status: { not: "ARCHIVED" },
       ...(ids && { id: { in: ids } }),
     },
-    select: { id: true, asin: true, amazonUrl: true, amazonCheckedAt: true, amazonRefreshedAt: true },
+    select: { id: true, asin: true, amazonUrl: true, amazonCheckedAt: true, amazonRefreshedAt: true, amazonInStock: true, amazonShippingVerified: true, amazonImportDetailsJson: true },
     orderBy: [{ amazonRefreshedAt: { sort: "asc", nulls: "first" } }, { updatedAt: "asc" }],
   });
+  // Actual live seller listings, not admin catalog publication or drafts.
+  // Only ASINs are read here; seller identities never leave this action.
+  const publishedProducts = await db.product.findMany({
+    where: { supplierName: "Amazon", listings: { some: { status: "ACTIVE", ebayListingId: { not: null } } } },
+    select: { supplierProductId: true, sku: true },
+  });
+  const publishedAsins = new Set(publishedProducts.map((product) =>
+    (product.supplierProductId || product.sku).trim().toUpperCase(),
+  ));
+  const isPublished = (asin: string) => publishedAsins.has(asin.trim().toUpperCase());
   const grouped = new Map<string, AdminLiveAmazonRequest>();
-  // Only verified data qualifies for the existing freshness skip. Failed
-  // attempts affect ordering, never a mandatory retry exclusion window.
-  const eligibleRows = oldestAmazonChecksFirst(rows.filter((row) => !skipFresh || !isAmazonDataFresh(row.amazonRefreshedAt)), (row) => latestAmazonCheckAt(row.amazonCheckedAt, row.amazonRefreshedAt));
+  // A recent import is not a verification. Live, unverified products bypass
+  // the freshness skip in manual AND scheduled runs. Keep oldest-attempt-first
+  // within each priority tier so a failed check does not monopolize the queue.
+  const eligibleRows = oldestAmazonChecksFirst(rows.filter((row) =>
+    !skipFresh || !isAmazonDataFresh(row.amazonRefreshedAt)
+    || (isPublished(row.asin) && amazonSourceVerification(row).needsVerification),
+  ), (row) => latestAmazonCheckAt(row.amazonCheckedAt, row.amazonRefreshedAt));
+  const priority = (row: typeof rows[number]) => !isPublished(row.asin) ? 2
+    : amazonSourceVerification(row).needsVerification ? 0 : 1;
+  eligibleRows.sort((a, b) => priority(a) - priority(b));
   for (const row of eligibleRows) {
     const requestKey = row.asin.trim().toUpperCase();
     const current = grouped.get(requestKey);
@@ -95,8 +113,13 @@ export async function prepareAdminLiveAmazonRefresh(
       orderIds: [row.id],
     });
   }
-  const requestedCount = ids?.length ?? await db.adminArbitrageProduct.count({ where: { status: { not: "ARCHIVED" } } });
-  return { requests: [...grouped.values()], skippedFresh: Math.max(0, requestedCount - eligibleRows.length) };
+  const requests = [...grouped.values()];
+  return {
+    requests,
+    skippedFresh: rows.length - eligibleRows.length,
+    publishedFirst: requests.filter((request) => isPublished(request.requestKey)).length,
+    awaitingVerification: new Set(eligibleRows.filter((row) => isPublished(row.asin) && amazonSourceVerification(row).needsVerification).map((row) => row.asin.trim().toUpperCase())).size,
+  };
 }
 
 export async function adminUpdateAmazonCostsFromBrowser(

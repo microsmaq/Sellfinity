@@ -48,9 +48,14 @@ export function MirrorForm({
           className="block w-full rounded-lg border border-slate-300 bg-white px-3 py-2 font-mono text-sm text-slate-900 placeholder-slate-400 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
         />
         <p className="mt-2 text-sm text-slate-500">
-          Each product is published directly to eBay at 30% above its live Amazon source price
-          {sitewideDiscountBps > 0 ? ` after your ${(sitewideDiscountBps / 100).toFixed(2).replace(/\.00$/, "")}% sitewide discount` : ""}.
+          Pricing uses saved Amazon costs and your profit, advertising and shipping settings
+          {sitewideDiscountBps > 0 ? `, including your ${(sitewideDiscountBps / 100).toFixed(2).replace(/\.00$/, "")}% sitewide discount` : ""}.
           No drafts are retained when publication fails.
+        </p>
+        <p className="mt-2 text-xs text-amber-700">
+          Unverified Amazon availability or shipping does not block publishing.
+          Costs and profit remain estimates until checked. Live user listings
+          are prioritized in admin Amazon checks.
         </p>
         <div className="mt-4 flex flex-wrap items-center gap-3">
           <Button

@@ -78,6 +78,7 @@ export function BatchProgress({ initial }: { initial: MirrorBatchView }) {
 
   return (
     <div className="space-y-5">
+      {!isActivity && <p className="text-xs text-amber-700">Publishing uses saved Amazon data. Unverified availability or shipping does not block publishing; costs and profit remain estimates until checked. Live user products are prioritized in admin Amazon checks.</p>}
       <PremiumProgress
         title={
           batch.status === "COMPLETED"

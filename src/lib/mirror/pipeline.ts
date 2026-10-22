@@ -98,7 +98,7 @@ export async function mirrorUrl(
     };
   }
   if (scraped.sourceId.toUpperCase() !== inputAsin) return { url, ok: false, error: "The Amazon lookup returned a different ASIN. Review the exact source before publishing." };
-  if (!scraped.inStock || scraped.priceCents <= 0) return { url, ok: false, error: `ASIN ${inputAsin} needs a verified, available Amazon source with a usable purchase price before publishing.` };
+  if ((!scraped.inStock && !scraped.availabilityUnverified) || scraped.priceCents <= 0) return { url, ok: false, error: `ASIN ${inputAsin} needs an available Amazon source with a usable purchase price before publishing.` };
   if (scraped.imageUrls.length === 0) {
     return {
       url,
@@ -160,7 +160,9 @@ export async function mirrorUrl(
     pricingStrategy: user?.pricingStrategy,
   });
   const priceCents = pricingPlan.itemPriceCents;
-  const supplierStock = scraped.inStock ? NOMINAL_IN_STOCK : 0;
+  // A provisional listing quantity is allowed for unknown imported stock.
+  // The shared admin record stays UNKNOWN until an actual browser check.
+  const supplierStock = scraped.inStock || scraped.availabilityUnverified ? NOMINAL_IN_STOCK : 0;
 
   const contentImprovement = opts.improveListingContent
     ? await improveListingContent(scraped)

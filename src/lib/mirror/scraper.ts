@@ -19,6 +19,10 @@ export type ScrapedProduct = {
   /** Shipping charged by the winning Amazon offer for this exact variant. */
   shippingCostCents: number;
   inStock: boolean;
+  /** Publishing may use imported data pending an admin browser check. These
+   * flags must never be persisted as a verified Amazon snapshot. */
+  availabilityUnverified?: boolean;
+  shippingUnverified?: boolean;
 };
 
 export interface ProductPageScraper {

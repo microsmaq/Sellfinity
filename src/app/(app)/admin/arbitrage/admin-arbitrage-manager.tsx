@@ -498,6 +498,7 @@ export function AdminArbitrageManager({
         return;
       }
       if (!scheduled && prepared.requests.length >= 250 && !window.confirm(`This will open and check ${prepared.requests.length.toLocaleString()} unique Amazon products and may take a long time. Continue?`)) return;
+      if (prepared.publishedFirst) setNotice({ text: `${prepared.publishedFirst.toLocaleString()} live user products queued first · ${prepared.awaitingVerification.toLocaleString()} awaiting availability or shipping verification.`, error: false });
       liveAmazonSavePromises.current = [];
       liveAmazonUnavailableIds.current = new Set();
       liveAmazonUpdatedIds.current = new Set();
@@ -985,6 +986,7 @@ export function AdminArbitrageManager({
               <Badge tone="indigo">0 Rainforest credits</Badge>
             </div>
             <p className="mt-1 max-w-3xl text-sm leading-6 text-slate-600">Refresh price, shipping, availability, title, brand, category, variant, description, feature bullets and gallery images in one visit per ASIN. Saves to the shared admin catalog, including on daily runs. Unreadable fields keep their saved values; approved matches and live eBay listings are not changed.</p>
+            <p className="mt-1 text-xs font-medium text-indigo-700">Live user products are checked first, with unverified availability or shipping prioritized even when recently imported. Within each group, never-checked and oldest-checked products come first.</p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <select value={liveAmazonScope} disabled={pending || liveAmazonRunning} onChange={(event) => setLiveAmazonScope(event.target.value as "ALL" | "SELECTED")} className="min-h-10 rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-700" aria-label="Live Amazon refresh scope">

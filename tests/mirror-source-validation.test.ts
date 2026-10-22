@@ -1,7 +1,7 @@
 import { beforeEach, expect, it, vi } from "vitest";
 vi.mock("server-only", () => ({}));
-const mocks = vi.hoisted(() => ({ findProduct: vi.fn(), lookup: vi.fn(), transaction: vi.fn() }));
-vi.mock("@/lib/db", () => ({ db: { product: { findUnique: mocks.findProduct }, $transaction: mocks.transaction } }));
+const mocks = vi.hoisted(() => ({ findProduct: vi.fn(), lookup: vi.fn(), transaction: vi.fn(), user: vi.fn(), createProduct: vi.fn(), createListing: vi.fn() }));
+vi.mock("@/lib/db", () => ({ db: { product: { findUnique: mocks.findProduct }, user: { findUnique: mocks.user }, $transaction: mocks.transaction } }));
 vi.mock("@/lib/mirror/shared-catalog", () => ({ sharedCatalogScraper: { scrape: mocks.lookup } }));
 import { mirrorUrl } from "@/lib/mirror/pipeline";
 beforeEach(() => { vi.resetAllMocks(); mocks.findProduct.mockResolvedValue(null); });
@@ -27,4 +27,15 @@ it.each([{ sourceId: "B0DQJ6FXXL", inStock: false, priceCents: 799 }, { sourceId
   mocks.lookup.mockResolvedValue({ ...product, imageUrls: ["https://example.com/photo.jpg"] });
   expect((await mirrorUrl("user", "B0DQJ6FXXL")).ok).toBe(false);
   expect(mocks.transaction).not.toHaveBeenCalled();
+});
+it("creates a publishable draft for imported unknown availability, using the saved costs", async () => {
+  mocks.lookup.mockResolvedValue({ sourceId: "B0DQJ6FXXL", sourceUrl: "https://www.amazon.com/dp/B0DQJ6FXXL", title: "Saved item", brand: "Brand", description: "Description", bulletPoints: [], category: "Home", inStock: false, availabilityUnverified: true, shippingUnverified: true, priceCents: 799, shippingCostCents: 299, imageUrls: ["https://example.com/photo.jpg"] });
+  mocks.user.mockResolvedValue({ ebayAdRateBps: 900, targetProfitEnabled: true, targetProfitMode: "FIXED", targetProfitCents: 100, pricingStrategy: "FREE_SHIPPING" });
+  mocks.createProduct.mockResolvedValue({ id: "product" });
+  mocks.createListing.mockResolvedValue({ id: "listing" });
+  mocks.transaction.mockImplementation(async (fn) => fn({ product: { create: mocks.createProduct }, listing: { create: mocks.createListing } }));
+  const outcome = await mirrorUrl("user", "B0DQJ6FXXL");
+  expect(outcome).toMatchObject({ ok: true, listingId: "listing", sourcePriceCents: 799 });
+  expect(mocks.createProduct.mock.calls[0][0].data).toMatchObject({ costCents: 799, shippingCostCents: 299, supplierStock: 50 });
+  expect(mocks.createListing.mock.calls[0][0].data.quantity).toBeGreaterThan(0);
 });

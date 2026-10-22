@@ -21,7 +21,7 @@ vi.mock("@/lib/mirror/index", () => ({
   getScraper: () => ({ scrape: mocks.scrape }),
 }));
 
-import { getSharedAmazonProduct, sharedRowToScrapedProduct } from "@/lib/mirror/shared-catalog";
+import { getSharedAmazonProduct, sharedRowToScrapedProduct, sharedCatalogScraper, sharedAmazonSnapshotData } from "@/lib/mirror/shared-catalog";
 import { extractAsin } from "@/lib/mirror/scraper";
 
 const sharedRow = {
@@ -248,6 +248,27 @@ describe("shared Amazon catalog", () => {
     await expect(getSharedAmazonProduct(sharedRow.asin, { requirePurchasable: true })).rejects.toThrow("manual verification");
     mocks.findUnique.mockResolvedValue({ ...sharedRow, amazonImportDetailsJson: '{"availability":"UNKNOWN"}' });
     await expect(getSharedAmazonProduct(sharedRow.asin, { requirePurchasable: true })).rejects.toThrow("manual verification");
+    expect(mocks.scrape).not.toHaveBeenCalled();
+  });
+  it("allows seller publishing of unknown availability from saved data without verifying or overwriting it", async () => {
+    const imported = { ...sharedRow, amazonInStock: false, amazonShippingVerified: false, amazonImportDetailsJson: '{"source":"KEEPA","availability":"UNKNOWN"}' };
+    mocks.findUnique.mockResolvedValue(imported);
+    const product = await sharedCatalogScraper.scrape(sharedRow.amazonUrl);
+    expect(product).toMatchObject({ inStock: false, availabilityUnverified: true, shippingUnverified: true, priceCents: 2499, shippingCostCents: 399 });
+    expect(mocks.upsert).not.toHaveBeenCalled();
+    expect(mocks.scrape).not.toHaveBeenCalled();
+    expect(imported.amazonInStock).toBe(false);
+    expect(() => sharedAmazonSnapshotData(product!)).toThrow("cannot replace a verified");
+  });
+  it("allows seller publishing with unverified shipping without treating it as verified free shipping", async () => {
+    mocks.findUnique.mockResolvedValue({ ...sharedRow, amazonShippingCents: 0, amazonShippingVerified: false });
+    expect(await sharedCatalogScraper.scrape(sharedRow.amazonUrl)).toMatchObject({ shippingUnverified: true, shippingCostCents: 0 });
+    expect(mocks.scrape).not.toHaveBeenCalled();
+    expect(mocks.upsert).not.toHaveBeenCalled();
+  });
+  it("still blocks confirmed unavailability in the relaxed seller publishing path", async () => {
+    mocks.findUnique.mockResolvedValue({ ...sharedRow, amazonInStock: false, amazonShippingVerified: false, amazonImportDetailsJson: '{"availability":"UNAVAILABLE"}' });
+    await expect(sharedCatalogScraper.scrape(sharedRow.amazonUrl)).rejects.toThrow("marks this item unavailable");
     expect(mocks.scrape).not.toHaveBeenCalled();
   });
   it("never saves a provider result for a different ASIN under the requested source", async () => {

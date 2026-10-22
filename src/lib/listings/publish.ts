@@ -58,7 +58,7 @@ export async function publishListingForUser(
   let imageUrls = parseImageUrls(draft.imageUrlsJson);
   if (imageUrls.length === 0 && draft.product.supplierName === "Amazon") {
     try {
-      const source = await getSharedAmazonProduct(draft.product.supplierUrl);
+      const source = await getSharedAmazonProduct(draft.product.supplierUrl, { allowUnverifiedForPublishing: true });
       if (source?.imageUrls.length) {
         imageUrls = source.imageUrls;
         await db.$transaction([
@@ -72,7 +72,7 @@ export async function publishListingForUser(
               supplierUrl: source.sourceUrl,
               costCents: source.priceCents,
               shippingCostCents: source.shippingCostCents,
-              supplierStock: source.inStock ? 50 : 0,
+              supplierStock: source.inStock || source.availabilityUnverified ? 50 : 0,
             },
           }),
           db.listing.update({

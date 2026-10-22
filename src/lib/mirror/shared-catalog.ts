@@ -1,6 +1,7 @@
 import { db } from "@/lib/db";
 import { parseImageUrls, serializeImageUrls } from "@/lib/types";
 import { getScraper } from "./index";
+import { amazonSourceVerification } from "@/lib/amazon/source-verification";
 import {
   extractAsin,
   type ProductPageScraper,
@@ -57,6 +58,9 @@ export function sharedRowToScrapedProduct(row: SharedAmazonRow): ScrapedProduct 
 
 /** Fields every paid Amazon product lookup persists for reuse by all sellers. */
 export function sharedAmazonSnapshotData(product: ScrapedProduct) {
+  if (product.availabilityUnverified || product.shippingUnverified) {
+    throw new Error("Unverified publishing data cannot replace a verified Amazon snapshot.");
+  }
   return {
     amazonTitle: product.title,
     amazonPriceCents: product.priceCents,
@@ -81,6 +85,9 @@ export type SharedAmazonLookupOptions = {
   providerOnCatalogMiss?: boolean;
   /** Publishing needs an actionable reason instead of the null used by sync. */
   requirePurchasable?: boolean;
+  /** Seller publishing only: retain unknown source facts, but do not require
+   * an admin availability/shipping check before creating the listing. */
+  allowUnverifiedForPublishing?: boolean;
 };
 
 /**
@@ -105,18 +112,25 @@ export async function getSharedAmazonProduct(
     return null;
   };
   const purchasable = (product: ScrapedProduct) => {
-    if (!product.inStock) return unavailable("the admin catalog marks this item unavailable. Refresh its live Amazon availability in Product Intelligence before retrying.");
+    if (!product.inStock && !product.availabilityUnverified) return unavailable("the admin catalog marks this item unavailable. Refresh its live Amazon availability in Product Intelligence before retrying.");
     if (product.priceCents <= 0) return unavailable("a usable Amazon purchase price is missing. Refresh its price and shipping in Product Intelligence before retrying.");
     return product;
   };
 
   const existing = await db.adminArbitrageProduct.findUnique({ where: { asin } });
   if (existing) {
-    if (JSON.parse(existing.amazonImportDetailsJson || "{}").availability === "UNKNOWN" || (existing.amazonInStock && existing.amazonShippingVerified === false)) {
+    const verification = amazonSourceVerification(existing);
+    if (verification.needsVerification && !options.allowUnverifiedForPublishing) {
       throw new Error("Imported Amazon availability or shipping needs manual verification before this product can be used.");
     }
-    const stored = sharedRowToScrapedProduct(existing);
-    if (!stored.inStock) return purchasable(stored);
+    const stored = {
+      ...sharedRowToScrapedProduct(existing),
+      ...(options.allowUnverifiedForPublishing && verification.needsVerification && {
+        availabilityUnverified: verification.availabilityUnverified,
+        shippingUnverified: verification.shippingUnverified,
+      }),
+    };
+    if (!stored.inStock && !stored.availabilityUnverified) return purchasable(stored);
     const usableSnapshot = stored.priceCents > 0 && stored.imageUrls.length > 0;
     if (usableSnapshot) return stored;
     if (!options.providerOnCatalogMiss && (!stored.inStock || stored.priceCents <= 0)) return null;
@@ -199,5 +213,9 @@ export async function getSharedAmazonProduct(
 }
 
 export const sharedCatalogScraper: ProductPageScraper = {
-  scrape: (url) => getSharedAmazonProduct(url, { providerOnCatalogMiss: true, requirePurchasable: true }),
+  scrape: (url) => getSharedAmazonProduct(url, {
+    providerOnCatalogMiss: true,
+    requirePurchasable: true,
+    allowUnverifiedForPublishing: true,
+  }),
 };
