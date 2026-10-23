@@ -68,7 +68,7 @@ export async function adminRecalculateArbitragePricing(): Promise<AdminActionRes
 export async function prepareAdminLiveAmazonRefresh(
   selectedIds?: string[],
   skipRecentlyChecked = true,
-): Promise<{ requests: AdminLiveAmazonRequest[]; skippedFresh: number; publishedFirst: number; awaitingVerification: number }> {
+): Promise<{ requests: AdminLiveAmazonRequest[]; skippedFresh: number; userImportedFirst: number; awaitingVerification: number }> {
   await requireAdmin();
   const skipFresh = z.boolean().parse(skipRecentlyChecked);
   const ids = selectedIds?.length
@@ -83,27 +83,24 @@ export async function prepareAdminLiveAmazonRefresh(
     select: { id: true, asin: true, amazonUrl: true, amazonCheckedAt: true, amazonRefreshedAt: true, amazonInStock: true, amazonShippingVerified: true, amazonImportDetailsJson: true },
     orderBy: [{ amazonRefreshedAt: { sort: "asc", nulls: "first" } }, { updatedAt: "asc" }],
   });
-  // Actual live seller listings, not admin catalog publication or drafts.
-  // Only ASINs are read here; seller identities never leave this action.
-  const publishedProducts = await db.product.findMany({
-    where: { supplierName: "Amazon", listings: { some: { status: "ACTIVE", ebayListingId: { not: null } } } },
+  // Every seller import counts, including drafts and products without a live
+  // listing. Only source ASINs are read; seller identities stay on the server.
+  const importedProducts = await db.product.findMany({
+    where: { supplierName: "Amazon" },
     select: { supplierProductId: true, sku: true },
   });
-  const publishedAsins = new Set(publishedProducts.map((product) =>
+  const importedAsins = new Set(importedProducts.map((product) =>
     (product.supplierProductId || product.sku).trim().toUpperCase(),
   ));
-  const isPublished = (asin: string) => publishedAsins.has(asin.trim().toUpperCase());
+  const isUserImported = (asin: string) => importedAsins.has(asin.trim().toUpperCase());
   const grouped = new Map<string, AdminLiveAmazonRequest>();
-  // A recent import is not a verification. Live, unverified products bypass
-  // the freshness skip in manual AND scheduled runs. Keep oldest-attempt-first
-  // within each priority tier so a failed check does not monopolize the queue.
+  // The 24-hour freshness skip applies to all products, including unverified
+  // seller imports. Failed attempts affect ordering, not successful-update age.
   const eligibleRows = oldestAmazonChecksFirst(rows.filter((row) =>
-    !skipFresh || !isAmazonDataFresh(row.amazonRefreshedAt)
-    || (isPublished(row.asin) && amazonSourceVerification(row).needsVerification),
+    !skipFresh || !isAmazonDataFresh(row.amazonRefreshedAt),
   ), (row) => latestAmazonCheckAt(row.amazonCheckedAt, row.amazonRefreshedAt));
-  const priority = (row: typeof rows[number]) => !isPublished(row.asin) ? 2
-    : amazonSourceVerification(row).needsVerification ? 0 : 1;
-  eligibleRows.sort((a, b) => priority(a) - priority(b));
+  // Preserve oldest-attempt-first order inside the seller and catalog groups.
+  eligibleRows.sort((a, b) => Number(isUserImported(b.asin)) - Number(isUserImported(a.asin)));
   for (const row of eligibleRows) {
     const requestKey = row.asin.trim().toUpperCase();
     const current = grouped.get(requestKey);
@@ -118,8 +115,8 @@ export async function prepareAdminLiveAmazonRefresh(
   return {
     requests,
     skippedFresh: rows.length - eligibleRows.length,
-    publishedFirst: requests.filter((request) => isPublished(request.requestKey)).length,
-    awaitingVerification: new Set(eligibleRows.filter((row) => isPublished(row.asin) && amazonSourceVerification(row).needsVerification).map((row) => row.asin.trim().toUpperCase())).size,
+    userImportedFirst: requests.filter((request) => isUserImported(request.requestKey)).length,
+    awaitingVerification: new Set(eligibleRows.filter((row) => isUserImported(row.asin) && amazonSourceVerification(row).needsVerification).map((row) => row.asin.trim().toUpperCase())).size,
   };
 }
 

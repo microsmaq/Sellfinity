@@ -26,7 +26,7 @@ beforeEach(() => {
 });
 
 describe("admin live Amazon check priority (manual and scheduled)", () => {
-  it("puts unverified live products first, other live products next, then the rest", async () => {
+  it("puts all user imports first and skips fresh products even when unverified", async () => {
     mocks.catalog.mockResolvedValue([
       row(1, { amazonRefreshedAt: null }), // Never checked, but not live.
       row(2), // Verified live product.
@@ -36,15 +36,16 @@ describe("admin live Amazon check priority (manual and scheduled)", () => {
     ]);
     mocks.products.mockResolvedValue([live(2), live(3), live(4), live(5), live(3)]);
     const result = await prepareAdminLiveAmazonRefresh(undefined, true);
-    expect(result.requests.map((request) => request.requestKey)).toEqual([asin(4), asin(3), asin(2), asin(1)]);
-    expect(result).toMatchObject({ skippedFresh: 1, publishedFirst: 3, awaitingVerification: 2 });
-    expect(mocks.products.mock.calls[0][0].where).toMatchObject({ supplierName: "Amazon", listings: { some: { status: "ACTIVE", ebayListingId: { not: null } } } });
+    expect(result.requests.map((request) => request.requestKey)).toEqual([asin(4), asin(2), asin(1)]);
+    expect(result).toMatchObject({ skippedFresh: 2, userImportedFirst: 2, awaitingVerification: 1 });
+    // Draft, ended and unlisted imports must not be excluded by listing status.
+    expect(mocks.products.mock.calls[0][0].where).toEqual({ supplierName: "Amazon" });
   });
 
-  it("retries live unknown availability even if shipping is verified and the import is fresh", async () => {
+  it("skips recently updated user imports even when availability is unknown", async () => {
     mocks.catalog.mockResolvedValue([row(1, { amazonRefreshedAt: new Date(), amazonInStock: false, amazonImportDetailsJson: '{"availability":"UNKNOWN"}' })]);
     mocks.products.mockResolvedValue([live(1)]);
-    expect(await prepareAdminLiveAmazonRefresh()).toMatchObject({ requests: [{ requestKey: asin(1) }], skippedFresh: 0, awaitingVerification: 1 });
+    expect(await prepareAdminLiveAmazonRefresh()).toMatchObject({ requests: [], skippedFresh: 1, awaitingVerification: 0 });
   });
 
   it("does not let a recent failed attempt jump ahead of never-checked live products", async () => {
@@ -62,14 +63,14 @@ describe("admin live Amazon check priority (manual and scheduled)", () => {
     const result = await prepareAdminLiveAmazonRefresh(["row-1", "row-1"], false);
     expect(mocks.catalog.mock.calls[0][0].where).toEqual({ status: { not: "ARCHIVED" }, bannedAt: null, id: { in: ["row-1"] } });
     expect(result.requests.map((r) => r.requestKey)).toEqual([asin(1)]);
-    expect(result.publishedFirst).toBe(0);
+    expect(result.userImportedFirst).toBe(0);
   });
 
   it("uses one request for the same ASIN shared by several users and groups row IDs", async () => {
     mocks.catalog.mockResolvedValue([row(1), row(1, { id: "legacy-duplicate", asin: asin(1).toLowerCase() })]);
     mocks.products.mockResolvedValue([live(1), live(1)]);
     expect(await prepareAdminLiveAmazonRefresh(undefined, false)).toMatchObject({
-      requests: [{ requestKey: asin(1), amazonUrl: `https://www.amazon.com/dp/${asin(1)}`, orderIds: ["row-1", "legacy-duplicate"] }], publishedFirst: 1,
+      requests: [{ requestKey: asin(1), amazonUrl: `https://www.amazon.com/dp/${asin(1)}`, orderIds: ["row-1", "legacy-duplicate"] }], userImportedFirst: 1,
     });
   });
 
@@ -84,5 +85,20 @@ describe("admin live Amazon check priority (manual and scheduled)", () => {
     await expect(prepareAdminLiveAmazonRefresh()).rejects.toThrow("Forbidden");
     expect(mocks.catalog).not.toHaveBeenCalled();
     expect(mocks.products).not.toHaveBeenCalled();
+  });
+  it("rechecks a user product older than 24 hours despite a recent failed attempt", async () => {
+    mocks.catalog.mockResolvedValue([row(1, { amazonRefreshedAt: new Date(Date.now() - 25 * 60 * 60 * 1000), amazonCheckedAt: new Date() })]);
+    mocks.products.mockResolvedValue([live(1)]);
+    expect(await prepareAdminLiveAmazonRefresh()).toMatchObject({ requests: [{ requestKey: asin(1) }], userImportedFirst: 1, skippedFresh: 0 });
+  });
+  it("allows a manual force-refresh to include fresh user imports", async () => {
+    mocks.catalog.mockResolvedValue([row(1, { amazonRefreshedAt: new Date(), amazonImportDetailsJson: '{"availability":"UNKNOWN"}' })]);
+    mocks.products.mockResolvedValue([live(1)]);
+    expect(await prepareAdminLiveAmazonRefresh(undefined, false)).toMatchObject({ requests: [{ requestKey: asin(1) }], skippedFresh: 0 });
+  });
+  it("keeps older verified user imports ahead of newer unverified imports", async () => {
+    mocks.catalog.mockResolvedValue([row(1, { amazonRefreshedAt: new Date("2026-01-02"), amazonShippingVerified: false }), row(2)]);
+    mocks.products.mockResolvedValue([live(1), live(2)]);
+    expect((await prepareAdminLiveAmazonRefresh()).requests.map((r) => r.requestKey)).toEqual([asin(2), asin(1)]);
   });
 });
