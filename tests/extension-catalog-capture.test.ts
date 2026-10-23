@@ -16,6 +16,16 @@ function captureRuntime(price: unknown = { unitPriceCents: 1299, shippingCents: 
 }
 
 describe("browser catalog capture", () => {
+  it("saves an invitation-only page as unavailable rather than treating its displayed price as a buyable offer", () => {
+    const runtime = captureRuntime();
+    runInNewContext(readFileSync("browser-extension/sellfinity-tracking-helper/amazon-price.js", "utf8"), runtime);
+    const doc = {
+      readyState: "complete", title: "Product", body: { innerText: "Available by invitation only" },
+      querySelector: (selector: string) => selector === "input#ASIN" ? { value: "B012345678" } : selector === "#productTitle" ? { textContent: "Exact product" } : null,
+      querySelectorAll: (selector: string) => selector === "#desktop_buybox" ? [{ textContent: "Available by invitation only" }] : selector === "#corePrice_feature_div .priceToPay .a-offscreen" ? [{ textContent: "$49.99" }] : [],
+    };
+    expect(runtime.sellfinityCaptureCatalogProduct(doc, "https://www.amazon.com/dp/B012345678")).toMatchObject({ asin: "B012345678", availability: "UNAVAILABLE", priceCents: 0 });
+  });
   it("uses the selected ASIN and preserves unknown shipping", () => {
     const doc = { title: "Product", body: { innerText: "Available product" }, querySelector: (selector: string) => selector === "input#ASIN" ? { value: "B099999999" } : selector === "#productTitle" ? { textContent: "Selected blue variant" } : null, querySelectorAll: () => [] };
     const product = captureRuntime().sellfinityCaptureCatalogProduct(doc, "https://www.amazon.com/dp/B012345678");

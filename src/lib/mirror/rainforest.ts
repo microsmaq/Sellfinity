@@ -202,7 +202,7 @@ export type RainforestProduct = {
   buybox_winner?: {
     price?: { value?: number };
     shipping?: { value?: number; raw?: string };
-    availability?: { type?: string };
+    availability?: { type?: string; raw?: string };
   };
 };
 
@@ -233,8 +233,11 @@ export function mapRainforestProduct(
 ): ScrapedProduct | null {
   const priceValue = product.buybox_winner?.price?.value;
   const shipping = product.buybox_winner?.shipping;
-  const outOfStock = product.buybox_winner?.availability?.type === "out_of_stock";
-  if (!product.title || typeof priceValue !== "number" || priceValue <= 0) {
+  const availability = product.buybox_winner?.availability;
+  const invitationOnly = /\bavailable\s+by\s+invitation\b|\binvit(?:ation|e)[\s-]+only\b|\brequest\s+(?:an?\s+)?invit(?:ation|e)\b/i.test(`${availability?.type?.replace(/_/g, " ") ?? ""} ${availability?.raw ?? ""}`);
+  const outOfStock = availability?.type === "out_of_stock" || invitationOnly;
+  const usablePrice = typeof priceValue === "number" && Number.isFinite(priceValue) && priceValue > 0;
+  if (!product.title || (!usablePrice && !invitationOnly)) {
     return null; // unbuyable/incomplete page — not mirrorable
   }
   if (!outOfStock && !rainforestShippingIsKnown(shipping)) {
@@ -256,7 +259,7 @@ export function mapRainforestProduct(
       (product.feature_bullets ?? []).join(". ").slice(0, 2000),
     category: product.categories?.[0]?.name ?? "Other",
     imageUrls: [...new Set(images)].slice(0, 12),
-    priceCents: Math.round(priceValue * 100),
+    priceCents: usablePrice ? Math.round(priceValue * 100) : 0,
     shippingCostCents: rainforestShippingCents(shipping),
     inStock: !outOfStock,
   };

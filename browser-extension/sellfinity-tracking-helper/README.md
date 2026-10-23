@@ -1,6 +1,19 @@
 # Sellfinity Amazon Tracking Helper
 
-## Full admin catalog refresh (v1.6.12)
+## Invitation-only products (v1.6.13)
+
+“Available by invitation”, “Invitation only” and “Request an invite” in the
+Amazon purchase area are treated as unavailable, even when a price is displayed.
+Manual and daily admin/user price checks report these offers as unavailable
+immediately, using the existing unavailable-product and delisting options.
+Catalog capture records them as unavailable too. CAPTCHA and sign-in pages
+still require verification; they are never treated as confirmed unavailability.
+
+Install the updated helper, reload it in `chrome://extensions`, then refresh
+Sellfinity and any Amazon tabs before checking again. Previously checked items
+are reclassified on their next check; turn off the freshness skip to recheck now.
+
+## Full admin catalog refresh (v1.6.13)
 
 Admin Product Intelligence → **Refresh Amazon details** now reads price, shipping,
 availability, title, brand, category, selected variant, description/A+ text, feature
@@ -16,7 +29,7 @@ not overwrite content. Unknown shipping preserves its saved value. Content-check
 and refresh timestamps are recorded in the catalog audit details. Refresh results
 count product-detail saves separately from prices and warn about price-only reads.
 
-Replace the unpacked helper with v1.6.12, reload it in `chrome://extensions`, then
+Replace the unpacked helper with v1.6.13, reload it in `chrome://extensions`, then
 refresh the Sellfinity and Amazon tabs. Older helpers still save prices, but need
 this update to send product details. To revisit records already checked today,
 turn off **Skip checked in last 24 hours** for a manual run.

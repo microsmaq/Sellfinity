@@ -1,4 +1,7 @@
 globalThis.sellfinityAmazonPriceFromPage = function amazonPriceFromPage(doc = document) {
+  // A visible price does not make an invitation-only offer purchasable.
+  const availability = globalThis.sellfinityAmazonAvailabilityFromPage?.(doc);
+  if (availability === "UNAVAILABLE" || availability === "BLOCKED") return null;
   function centsFromText(text) {
     const match = String(text || "").replace(/,/g, "").match(/\$\s*(\d+(?:\.\d{1,2})?)/);
     return match ? Math.round(Number(match[1]) * 100) : null;
@@ -64,6 +67,12 @@ globalThis.sellfinityAmazonAvailabilityFromPage = function amazonAvailabilityFro
   const title = String(doc.title || "");
 
   if (/enter the characters you see below|not a robot|captcha|verify (?:you are|your identity)|verification required|access denied|automated access|robot check/i.test(`${title} ${pageText}`) || /amazon.*sign[- ]?in|sign[- ]?in.*amazon/i.test(title) || doc.querySelector?.('#authportal-main-section, #ap_signin_form, #cvf-page-content')) return "BLOCKED";
+  const purchaseText = textFor([
+    "#availability", "#outOfStock", "#desktop_buybox", "#buybox",
+    "#apex_desktop", "#apex_mobile", "#rightCol", "#buybox_feature_div"
+  ]);
+  if (/\bavailable\s+by\s+invitation\b|\binvit(?:ation|e)[\s-]+only\b|\brequest\s+(?:an?\s+)?invit(?:ation|e)\b/i.test(purchaseText)
+    || (!purchaseText && /\bavailable\s+by\s+invitation\b/i.test(pageText))) return "UNAVAILABLE";
   if (/currently unavailable|temporarily out of stock|we don(?:'|’)t know when or if this item will be back in stock/i.test(availabilityText)) return "UNAVAILABLE";
   if (/sorry! we couldn(?:'|’)t find that page|page not found/i.test(`${title} ${pageText}`)) return "UNAVAILABLE";
   return "UNKNOWN";

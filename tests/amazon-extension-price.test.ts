@@ -71,6 +71,19 @@ describe("Amazon extension price extraction", () => {
       title: "Amazon verification",
     })).toBe("BLOCKED");
   });
+  it.each(["Available by invitation", "Available\u00a0by\ninvitation only", "Request an invite", "Invitation-only"])('treats the purchase restriction "%s" as unavailable even with a displayed price', (label) => {
+    const prices = page("$49.99", "FREE delivery");
+    const doc = { ...prices, querySelectorAll(selector: string) { return selector === "#desktop_buybox" ? [{ textContent: label }] : prices.querySelectorAll(selector); } };
+    expect(parseAmazonAvailability(doc)).toBe("UNAVAILABLE");
+    expect(parseAmazonPrice(doc)).toBeNull();
+  });
+  it("handles the explicit invitation availability message when the buy-box markup changes", () => {
+    expect(parseAmazonAvailability({ querySelectorAll() { return []; }, body: { innerText: "Available by invitation only" } })).toBe("UNAVAILABLE");
+  });
+  it("does not confuse invitation cards or unrelated customer reviews with restricted purchase availability", () => {
+    const doc = { querySelectorAll(selector: string) { return selector === "#availability" ? [{ textContent: "In Stock" }] : []; }, title: "Birthday invitation cards", body: { innerText: "A review of another item: Available by invitation only" } };
+    expect(parseAmazonAvailability(doc)).toBe("UNKNOWN");
+  });
 
   it("treats access denial as blocked without treating ordinary sign-in navigation as unavailable", () => {
     expect(parseAmazonAvailability({ querySelectorAll() { return []; }, body: { innerText: "Access denied" }, title: "Amazon" })).toBe("BLOCKED");

@@ -77,7 +77,9 @@
       chrome.runtime.sendMessage(result).catch(() => {});
     };
     const inspectPrice = () => {
-      if (globalThis.sellfinityAmazonAvailabilityFromPage?.(document) === "BLOCKED") { finishPrice({ type: "AMAZON_PRICE_NOT_FOUND", blocked: true, unavailable: false, reason: "Amazon verification required." }); return; }
+      const availability = globalThis.sellfinityAmazonAvailabilityFromPage?.(document);
+      if (availability === "BLOCKED") { finishPrice({ type: "AMAZON_PRICE_NOT_FOUND", blocked: true, unavailable: false, reason: "Amazon verification required." }); return; }
+      if (availability === "UNAVAILABLE") { finishPrice({ type: "AMAZON_PRICE_NOT_FOUND", blocked: false, unavailable: true, reason: "Amazon confirms this product is unavailable for direct purchase, including invitation-only offers." }); return; }
       const result = globalThis.sellfinityAmazonPriceFromPage?.(document);
       if (result) {
         let productDetails = null;

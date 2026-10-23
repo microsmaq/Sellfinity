@@ -2,12 +2,12 @@ import { expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { runInNewContext } from "node:vm";
 /* eslint-disable @typescript-eslint/no-explicit-any -- Simulated Chrome content-script runtime. */
-function reader(details: unknown, captureError = false) {
+function reader(details: unknown, captureError = false, availability = "UNKNOWN") {
   const sent: any[] = []; const handlers: any[] = [];
   const context: any = {
     document: { readyState: "complete", documentElement: {}, body: { innerText: "Product" } },
     location: { href: "https://www.amazon.com/dp/B012345678" },
-    sellfinityAmazonAvailabilityFromPage: () => "UNKNOWN", sellfinityTrackingFromPage: () => null,
+    sellfinityAmazonAvailabilityFromPage: () => availability, sellfinityTrackingFromPage: () => null,
     sellfinityAmazonPriceFromPage: () => ({ unitPriceCents: 1299, shippingCents: 399 }),
     sellfinityCaptureCatalogProduct: () => { if (captureError) throw new Error("Unreadable description"); return details; },
     MutationObserver: class { observe() {} disconnect() {} }, setTimeout: () => 1, clearTimeout() {},
@@ -23,6 +23,11 @@ it("captures product content during the existing price inspection without anothe
 });
 it("retains a usable price result when optional page content is unreadable", () => {
   expect(reader(null, true)).toContainEqual({ type: "AMAZON_PRICE_FOUND", unitPriceCents: 1299, shippingCents: 399, productDetails: null });
+});
+it("immediately reports confirmed unavailable offers instead of saving the displayed price", () => {
+  const sent = reader(null, false, "UNAVAILABLE");
+  expect(sent).toContainEqual(expect.objectContaining({ type: "AMAZON_PRICE_NOT_FOUND", unavailable: true, blocked: false }));
+  expect(sent.some((message) => message.type === "AMAZON_PRICE_FOUND")).toBe(false);
 });
 it("loads capture before price inspection and forwards content through both helper bridges", () => {
   const base = "browser-extension/sellfinity-tracking-helper/";
