@@ -38,7 +38,7 @@ describe("automatic pending-review queue", () => {
   it("preserves failed candidates for manual review rather than publishing them", async () => {
     mocks.research.mockRejectedValue(new Error("eBay unavailable"));
     expect(await runAutomaticCatalogReview()).toMatchObject({ processed: 1, published: 0, failed: 1 });
-    expect(mocks.failed).toHaveBeenCalledWith(expect.objectContaining({ where: { id: "one", status: "PENDING" }, data: expect.objectContaining({ status: "NO_MATCH" }) }));
+    expect(mocks.failed).toHaveBeenCalledWith(expect.objectContaining({ where: { id: "one", bannedAt: null, status: "PENDING" }, data: expect.objectContaining({ status: "NO_MATCH" }) }));
   });
   it("scopes selected approval to fresh high-confidence review pairs and skips extra queue-ranking AI", async () => {
     mocks.candidates.mockResolvedValue([{ id: "one", asin: "B012345678", status: "NO_MATCH" }]);

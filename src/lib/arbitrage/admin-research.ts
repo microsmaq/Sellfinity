@@ -65,6 +65,7 @@ function rankAssessment(assessment: ProductMatchAssessment): number {
 export async function researchAdminCatalogProduct(id: string, options: { automatic?: boolean; storedSource?: boolean; ebayOnly?: boolean; reviewOnly?: boolean } = {}): Promise<void> {
   const item = await db.adminArbitrageProduct.findUnique({ where: { id } });
   if (!item) throw new Error("Catalog item no longer exists.");
+  if (item.bannedAt) throw new Error("This product was banned by an administrator.");
 
   if (options.reviewOnly && !["PENDING", "NO_MATCH"].includes(item.status)) throw new Error("This product is already approved or no longer eligible for pending research.");
 
@@ -237,6 +238,7 @@ export async function researchAdminCatalogProduct(id: string, options: { automat
 export async function refreshAdminAmazonCost(id: string): Promise<void> {
   const item = await db.adminArbitrageProduct.findUnique({ where: { id } });
   if (!item) throw new Error("Catalog item no longer exists.");
+  if (item.bannedAt) throw new Error("This product was banned by an administrator.");
   const source = await getScraper().scrape(item.amazonUrl);
   if (!source || !source.inStock || source.priceCents <= 0) {
     await db.adminArbitrageProduct.update({

@@ -9,6 +9,7 @@ import {
   adminApproveEbayCandidate,
   adminRejectEbayCandidate,
   adminArchiveItem,
+  adminBanItems,
   adminPublishItem,
   adminRecalculateArbitragePricing,
   adminRefreshCatalogBatch,
@@ -68,12 +69,13 @@ const statusOptions: { value: AdminCatalogStatus; label: string }[] = [
   { value: "PENDING", label: "Pending" },
   { value: "NO_MATCH", label: "Needs review" },
   { value: "ARCHIVED", label: "Archived" },
+  { value: "BANNED", label: "Banned products" },
 ];
 
 function statusTone(status: string): "green" | "amber" | "red" | "slate" {
   if (status === "PUBLISHED") return "green";
   if (status === "PENDING") return "amber";
-  if (status === "NO_MATCH") return "red";
+  if (status === "NO_MATCH" || status === "BANNED") return "red";
   return "slate";
 }
 
@@ -155,7 +157,7 @@ function CatalogRow({
 }: {
   row: AdminCatalogRow;
   busy: boolean;
-  run: (kind: "research" | "publish" | "approve" | "reject" | "archive", id: string) => void;
+  run: (kind: "research" | "publish" | "approve" | "reject" | "archive" | "ban", id: string) => void;
   selected: boolean;
   toggleSelected: (id: string) => void;
   attachCandidate: (id: string, input: string) => void;
@@ -294,7 +296,7 @@ function CatalogRow({
           <Button
             size="sm"
             variant="secondary"
-            disabled={busy}
+            disabled={busy || Boolean(row.bannedAt)}
             title="Full Amazon + eBay research. Uses up to 1 Rainforest credit when the Amazon response is not cached."
             onClick={() => run("research", row.id)}
           >
@@ -319,8 +321,9 @@ function CatalogRow({
               </form>
             </details>
           )}
-          {row.status !== "PUBLISHED" && !row.amazonInStock && <p className="rounded-lg bg-red-50 px-2 py-1.5 text-[11px] leading-4 text-red-700">Refresh or replace the unavailable Amazon source before matching.</p>}
-          {row.status !== "ARCHIVED" && (
+          {row.status !== "PUBLISHED" && !row.amazonInStock && <p className="rounded-lg bg-red-50 px-2 py-1.5 text-[11px] leading-4 text-red-700">{row.bannedAt ? "Banned for every store. Publishing and relisting are blocked." : "Refresh or replace the unavailable Amazon source before matching."}</p>}
+          {!row.bannedAt && <Button size="sm" variant="danger" disabled={busy} onClick={() => run("ban", row.id)}>Ban &amp; remove</Button>}
+          {row.status !== "ARCHIVED" && !row.bannedAt && (
             <Button
               size="sm"
               variant="ghost"
@@ -766,7 +769,22 @@ export function AdminArbitrageManager({
     });
   }
 
-  function run(kind: "research" | "publish" | "approve" | "reject" | "archive", id: string) {
+  function banProducts(ids: string[]) {
+    if (!ids.length || !window.confirm(`Ban and remove ${ids.length} product${ids.length === 1 ? "" : "s"}? This marks them unavailable for every user and ends their eBay listings on the next refresh or sync, including protected listings.`)) return;
+    setNotice(null);
+    setOperation("Banning products and marking them unavailable for all users");
+    startTransition(async () => {
+      try {
+        const result = await adminBanItems(ids);
+        if (result.ok) setSelected(new Set());
+        finish(result);
+      } catch { setNotice({ text: "Could not ban these products. Please try again.", error: true }); }
+      finally { setOperation(null); }
+    });
+  }
+
+  function run(kind: "research" | "publish" | "approve" | "reject" | "archive" | "ban", id: string) {
+    if (kind === "ban") { banProducts([id]); return; }
     setBusyId(id);
     setScanProgress(null);
     setRefreshProgress(null);
@@ -1107,6 +1125,7 @@ export function AdminArbitrageManager({
             <div className="flex items-center gap-2">
               <Button type="button" variant="secondary" size="sm" onClick={toggleCurrentPage}>{allPageSelected ? "Clear page selection" : "Select this page"}</Button>
               {selected.size > 0 && <Badge tone="indigo">{selected.size.toLocaleString()} selected</Badge>}
+              {selected.size > 0 && filters.status !== "BANNED" && <Button type="button" size="sm" variant="danger" disabled={pending} onClick={() => banProducts([...selected])}>Ban &amp; remove selected</Button>}
               <span className="text-xs text-slate-500">
                 {data.total.toLocaleString()} results
               </span>

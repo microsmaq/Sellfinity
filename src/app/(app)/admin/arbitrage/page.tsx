@@ -29,6 +29,7 @@ export default async function AdminArbitragePage({
     "PUBLISHED",
     "NO_MATCH",
     "ARCHIVED",
+    "BANNED",
   ].includes(rawStatus)
     ? (rawStatus as AdminCatalogStatus)
     : "ALL";

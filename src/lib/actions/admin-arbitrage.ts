@@ -77,6 +77,7 @@ export async function prepareAdminLiveAmazonRefresh(
   const rows = await db.adminArbitrageProduct.findMany({
     where: {
       status: { not: "ARCHIVED" },
+      bannedAt: null,
       ...(ids && { id: { in: ids } }),
     },
     select: { id: true, asin: true, amazonUrl: true, amazonCheckedAt: true, amazonRefreshedAt: true, amazonInStock: true, amazonShippingVerified: true, amazonImportDetailsJson: true },
@@ -136,7 +137,7 @@ export async function adminUpdateAmazonCostsFromBrowser(
     || (shippingCents !== null && (!Number.isFinite(shippingCents) || shippingCents < 0 || shippingCents > 100_000))) {
     return { error: "Amazon returned an invalid price or shipping amount." };
   }
-  const rows = await db.adminArbitrageProduct.findMany({ where: { id: { in: ids } } });
+  const rows = await db.adminArbitrageProduct.findMany({ where: { id: { in: ids }, bannedAt: null } });
   if (!rows.length) return { error: "No matching admin catalog products were found." };
   let productDetails: ReturnType<typeof parseBrowserCatalogRefresh>;
   const checkedAt = new Date();
@@ -306,6 +307,27 @@ export async function adminArchiveItem(id: string): Promise<AdminActionResult> {
   }
 }
 
+export async function adminBanItems(rawIds: string[]): Promise<AdminActionResult> {
+  await requireAdmin();
+  try {
+    const ids = z.array(z.string().min(1).max(100)).min(1).max(5_000).parse([...new Set(rawIds)]);
+    const count = await db.$transaction(async (tx) => {
+      const rows = await tx.adminArbitrageProduct.findMany({ where: { id: { in: ids } }, select: { id: true, asin: true } });
+      if (!rows.length) throw new Error("No catalog products were found.");
+      const asins = rows.map((row) => row.asin);
+      await tx.adminArbitrageProduct.updateMany({ where: { id: { in: rows.map((row) => row.id) } }, data: { bannedAt: new Date(), status: "ARCHIVED", amazonInStock: false } });
+      await tx.arbitrageItem.deleteMany({ where: { asin: { in: asins } } });
+      await tx.product.updateMany({
+        where: { supplierName: "Amazon", OR: [{ supplierProductId: { in: asins } }, { sku: { in: asins } }] },
+        data: { supplierStock: 0 },
+      });
+      return rows.length;
+    });
+    for (const path of ["/admin/arbitrage", "/arbitrage", "/listings", "/inventory"]) revalidatePath(path);
+    return { ok: true, message: `${count} product${count === 1 ? "" : "s"} banned and removed from the catalog. Marked unavailable for every user; live listings will be ended on their next refresh or sync.` };
+  } catch (error) { return { ok: false, message: message(error) }; }
+}
+
 export async function adminScanBestSellers(
   count: number,
 ): Promise<AdminScanResult> {
@@ -350,6 +372,7 @@ export async function prepareAdminCatalogRefresh(
   const rows = await db.adminArbitrageProduct.findMany({
     where: {
       status: { not: "ARCHIVED" },
+      bannedAt: null,
       ...(parsedMode === "MARKET" && { ebayItemId: { not: null } }),
     },
     orderBy: parsedMode === "AMAZON"

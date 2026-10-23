@@ -20,6 +20,7 @@ type SharedAmazonRow = {
   amazonBulletPointsJson: string;
   amazonImageUrlsJson: string;
   amazonInStock: boolean;
+  bannedAt?: Date | null;
   category: string;
 };
 
@@ -52,7 +53,7 @@ export function sharedRowToScrapedProduct(row: SharedAmazonRow): ScrapedProduct 
     imageUrls,
     priceCents: row.amazonPriceCents,
     shippingCostCents: row.amazonShippingCents,
-    inStock: row.amazonInStock,
+    inStock: !row.bannedAt && row.amazonInStock,
   };
 }
 
@@ -119,6 +120,7 @@ export async function getSharedAmazonProduct(
 
   const existing = await db.adminArbitrageProduct.findUnique({ where: { asin } });
   if (existing) {
+    if (existing.bannedAt) return unavailable("this product was banned by an administrator and is unavailable for all stores.");
     const verification = amazonSourceVerification(existing);
     if (verification.needsVerification && !options.allowUnverifiedForPublishing) {
       throw new Error("Imported Amazon availability or shipping needs manual verification before this product can be used.");

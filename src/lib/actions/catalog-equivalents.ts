@@ -11,6 +11,7 @@ export async function prepareCatalogEquivalentResearch(selectedIds?: string[]) {
   const rows = await db.adminArbitrageProduct.findMany({
     where: {
       status: ids ? { in: ["PENDING", "NO_MATCH"] } : "PENDING",
+      bannedAt: null,
       ...(ids && { id: { in: ids } }),
       amazonTitle: { not: "" },
     },
@@ -24,8 +25,8 @@ export async function prepareCatalogEquivalentResearch(selectedIds?: string[]) {
 export async function researchCatalogEquivalent(id: string) {
   await requireAdmin();
   const parsed = z.string().min(1).max(100).parse(id);
-  const item = await db.adminArbitrageProduct.findUnique({ where: { id: parsed }, select: { status: true, amazonTitle: true } });
-  if (!item || !["PENDING", "NO_MATCH"].includes(item.status)) return { ok: true, outcome: "skipped" as const, title: item?.amazonTitle ?? "Product", message: "Already approved or no longer eligible.", pause: false };
+  const item = await db.adminArbitrageProduct.findUnique({ where: { id: parsed }, select: { status: true, amazonTitle: true, bannedAt: true } });
+  if (!item || item.bannedAt || !["PENDING", "NO_MATCH"].includes(item.status)) return { ok: true, outcome: "skipped" as const, title: item?.amazonTitle ?? "Product", message: "Already approved or no longer eligible.", pause: false };
   try {
     await researchAdminCatalogProduct(parsed, { storedSource: true, ebayOnly: true, reviewOnly: true });
     const saved = await db.adminArbitrageProduct.findUnique({ where: { id: parsed }, select: { ebayItemId: true, matchReason: true } });

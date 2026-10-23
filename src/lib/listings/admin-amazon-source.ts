@@ -18,6 +18,7 @@ export class NoUsableAmazonSourceError extends Error {
 export async function getAdminAmazonSourceWithFallback(rawAsin: string, storedOnly = false) {
   const asin = rawAsin.trim().toUpperCase();
   let source = await db.adminArbitrageProduct.findUnique({ where: { asin } });
+  if (source?.bannedAt) return { ...source, amazonInStock: false, sharedCatalogPopulated: false };
   if (source?.amazonImportDetailsJson && JSON.parse(source.amazonImportDetailsJson).availability === "UNKNOWN") {
     throw new Error("Amazon availability is unverified. Review the imported product before syncing.");
   }

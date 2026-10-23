@@ -60,7 +60,7 @@ describe("admin live Amazon check priority (manual and scheduled)", () => {
     mocks.catalog.mockResolvedValue([row(1)]);
     mocks.products.mockResolvedValue([live(2)]);
     const result = await prepareAdminLiveAmazonRefresh(["row-1", "row-1"], false);
-    expect(mocks.catalog.mock.calls[0][0].where).toEqual({ status: { not: "ARCHIVED" }, id: { in: ["row-1"] } });
+    expect(mocks.catalog.mock.calls[0][0].where).toEqual({ status: { not: "ARCHIVED" }, bannedAt: null, id: { in: ["row-1"] } });
     expect(result.requests.map((r) => r.requestKey)).toEqual([asin(1)]);
     expect(result.publishedFirst).toBe(0);
   });

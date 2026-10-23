@@ -68,6 +68,13 @@ describe("shared Amazon catalog", () => {
       ],
     });
   });
+  it("blocks a durable admin ban even when later imports say in stock and unverified publishing is permitted", async () => {
+    mocks.findUnique.mockResolvedValue({ ...sharedRow, bannedAt: new Date(), amazonInStock: true });
+    await expect(sharedCatalogScraper.scrape(sharedRow.amazonUrl)).rejects.toThrow("banned by an administrator");
+    expect(await getSharedAmazonProduct(sharedRow.amazonUrl)).toBeNull();
+    expect(mocks.scrape).not.toHaveBeenCalled();
+    expect(mocks.upsert).not.toHaveBeenCalled();
+  });
 
   it("calls the provider once for a new ASIN and saves the complete response", async () => {
     const scraped = {

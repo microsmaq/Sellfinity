@@ -9,12 +9,12 @@ beforeEach(() => {
 });
 it("does not publish a candidate changed or rejected during AI review", async () => {
   mocks.guard.mockResolvedValue({ count: 0 });
-  await expect(publishCatalogProductToUsers("a", { updatedAt, confidence: 95, reason: "Verified" })).rejects.toThrow("changed during automatic approval");
+  await expect(publishCatalogProductToUsers("a", { updatedAt, confidence: 95, reason: "Verified" })).rejects.toThrow("changed or was banned");
   expect(mocks.upsert).not.toHaveBeenCalled(); expect(mocks.update).not.toHaveBeenCalled();
 });
 it("records the actual approval confidence and Decisions method without claiming manual verification", async () => {
   await publishCatalogProductToUsers("a", { updatedAt, confidence: 95, reason: "Verified" });
-  expect(mocks.guard.mock.calls[0][0].where).toEqual({ id: "a", status: "NO_MATCH", updatedAt });
+  expect(mocks.guard.mock.calls[0][0].where).toEqual({ id: "a", bannedAt: null, status: "NO_MATCH", updatedAt });
   expect(mocks.upsert.mock.calls[0][0].create).toMatchObject({ matchVerdict: "MATCH", matchConfidence: 95, matchMethod: "DECISIONS" });
   expect(mocks.update.mock.calls[0][0].data).toMatchObject({ status: "PUBLISHED", matchConfidence: 95, matchMethod: "DECISIONS" });
 });
@@ -28,4 +28,9 @@ it("permits identity-only catalog approval without certifying commercial source 
 it("retains source checks for publication callers that do not request identity-only catalog approval", async () => {
   mocks.find.mockResolvedValue({ amazonInStock: false, amazonShippingVerified: false });
   await expect(publishCatalogProductToUsers("a")).rejects.toThrow("Verify Amazon availability and shipping"); expect(mocks.upsert).not.toHaveBeenCalled();
+});
+it("refuses an identity-only approval for a banned catalog product", async () => {
+  mocks.find.mockResolvedValue({ bannedAt: new Date() });
+  await expect(publishCatalogProductToUsers("a", undefined, { identityOnly: true })).rejects.toThrow("banned");
+  expect(mocks.guard).not.toHaveBeenCalled(); expect(mocks.upsert).not.toHaveBeenCalled();
 });

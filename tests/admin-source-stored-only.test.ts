@@ -6,6 +6,11 @@ vi.mock("@/lib/mirror/shared-catalog", () => ({ getSharedAmazonProduct: mocks.lo
 import { getAdminAmazonSourceWithFallback } from "@/lib/listings/admin-amazon-source";
 describe("daily user sync saved Amazon data", () => {
   beforeEach(() => vi.resetAllMocks());
+  it("treats a banned product as unavailable regardless of imported unknown flags or a newer in-stock snapshot", async () => {
+    mocks.findUnique.mockResolvedValue({ bannedAt: new Date(), amazonInStock: true, amazonPriceCents: 0, amazonShippingVerified: false, amazonImportDetailsJson: '{"availability":"UNKNOWN"}' });
+    expect(await getAdminAmazonSourceWithFallback("B012345678", true)).toMatchObject({ amazonInStock: false, sharedCatalogPopulated: false });
+    expect(mocks.lookup).not.toHaveBeenCalled();
+  });
   it("retains confirmed unavailability even without a saved price", async () => {
     mocks.findUnique.mockResolvedValue({ amazonInStock: false, amazonPriceCents: 0 });
     expect(await getAdminAmazonSourceWithFallback("B012345678", true)).toMatchObject({ amazonInStock: false, sharedCatalogPopulated: false });

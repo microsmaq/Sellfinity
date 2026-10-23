@@ -1,11 +1,13 @@
 import { db } from "@/lib/db";
 import { getEbayClientForUser } from "@/lib/ebay";
 import type { EbayClient } from "@/lib/ebay/client";
+import { isAlreadyEndedEbayError } from "@/lib/ebay/errors";
 import { getSupplierProvider } from "@/lib/sourcing";
 import type { SupplierProvider } from "@/lib/sourcing/provider";
 import { getProtectedPriceListings } from "@/lib/listings/winner";
 import { detectIssues, type DetectedIssue } from "./detect";
 import { resolveTargetProfitCents } from "@/lib/listings/target-profit";
+import { bannedAmazonAsins } from "@/lib/amazon/admin-bans";
 
 export type SyncDeps = {
   provider: SupplierProvider;
@@ -79,8 +81,23 @@ export async function runSync(
   const run = await db.syncRun.create({ data: { userId } });
   let issuesFound = 0;
   let issuesAutoFixed = 0;
+  const banned = await bannedAmazonAsins();
 
   for (const listing of listings) {
+    if (listing.product.supplierName === "Amazon" && (banned.has(listing.product.supplierProductId.trim().toUpperCase()) || banned.has(listing.product.sku.trim().toUpperCase()))) {
+      // A ban is an explicit admin removal, even if an old stock issue was ignored.
+      if (listing.ebayListingId) {
+        try { await deps.ebay.endListing(listing.ebayListingId); }
+        catch (error) { if (!(error instanceof Error) || !isAlreadyEndedEbayError(error.message)) throw error; }
+      }
+      await db.$transaction([
+        db.product.update({ where: { id: listing.product.id }, data: { supplierStock: 0 } }),
+        db.listing.update({ where: { id: listing.id }, data: { status: "ENDED", quantity: 0, endedAt: new Date(), endedReason: "ADMIN_BANNED" } }),
+      ]);
+      issuesFound++;
+      issuesAutoFixed++;
+      continue;
+    }
     const state = await deps.provider.getProductState(listing.product.supplierProductId);
 
     // Refresh the product snapshot so the rest of the app sees current truth.

@@ -46,6 +46,7 @@ import { getAdminAmazonSourceWithFallback, NoUsableAmazonSourceError } from "@/l
 import { applyShippingStrategyToDescription, applyShippingStrategyToTitle } from "@/lib/ebay/description";
 import { resolveTargetProfitCents } from "@/lib/listings/target-profit";
 import { LISTING_QUANTITY_CAP } from "@/lib/listings/generate";
+import { bannedAmazonAsins } from "@/lib/amazon/admin-bans";
 
 export type EbayListingResult = { error?: string };
 
@@ -941,7 +942,7 @@ export async function enhanceEbayListing(
 async function endEbayListingForUser(
   userId: string,
   ebayListingId: string,
-  endedReason: "MANUAL" | "SOURCE_UNAVAILABLE" = "MANUAL",
+  endedReason: "MANUAL" | "SOURCE_UNAVAILABLE" | "ADMIN_BANNED" = "MANUAL",
 ): Promise<EbayListingResult> {
   const listing = await db.listing.findFirst({
     where: { userId, ebayListingId },
@@ -955,8 +956,8 @@ async function endEbayListingForUser(
       if (!isAlreadyEndedEbayError(e.message)) {
         await recordListingActivity({
           userId,
-          source: endedReason === "SOURCE_UNAVAILABLE" ? "LISTING_SYNC" : "LISTING_END",
-          trigger: endedReason === "SOURCE_UNAVAILABLE" ? "AUTOMATIC" : "MANUAL",
+          source: endedReason !== "MANUAL" ? "LISTING_SYNC" : "LISTING_END",
+          trigger: endedReason !== "MANUAL" ? "AUTOMATIC" : "MANUAL",
           items: [{
             title: listing?.title ?? `eBay listing ${ebayListingId}`,
             listingId: listing?.id,
@@ -987,8 +988,8 @@ async function endEbayListingForUser(
   ]);
   await recordListingActivity({
     userId,
-    source: endedReason === "SOURCE_UNAVAILABLE" ? "LISTING_SYNC" : "LISTING_END",
-    trigger: endedReason === "SOURCE_UNAVAILABLE" ? "AUTOMATIC" : "MANUAL",
+    source: endedReason !== "MANUAL" ? "LISTING_SYNC" : "LISTING_END",
+    trigger: endedReason !== "MANUAL" ? "AUTOMATIC" : "MANUAL",
     items: [{
       title: listing?.title ?? `eBay listing ${ebayListingId}`,
       listingId: listing?.id,
@@ -1420,9 +1421,14 @@ export async function prepareConfigurableSmartSync(
     options.applySuggestedPrices ||
     options.updateListingImages ||
     options.endUnavailableListings;
+  const banned = await bannedAmazonAsins();
+  const bannedSource = { OR: [{ supplierProductId: { in: [...banned] } }, { sku: { in: [...banned] } }] };
   const listingScopes = [
     ...(activeListingActionSelected
       ? [{ status: "ACTIVE" as const, ebayListingId: { not: null } }]
+      : []),
+    ...(!activeListingActionSelected && banned.size
+      ? [{ status: "ACTIVE" as const, ebayListingId: { not: null }, product: { supplierName: "Amazon", ...bannedSource } }]
       : []),
     ...(options.relistRecoveredProducts
       ? [{ status: "ENDED" as const, endedReason: { in: [...SMART_SYNC_RECOVERABLE_END_REASONS] } }]
@@ -1451,13 +1457,23 @@ export async function prepareConfigurableSmartSync(
           ...(retryListingIds && { id: { in: retryListingIds } }),
           ...(selectedEbayListingIds?.length && { ebayListingId: { in: [...new Set(selectedEbayListingIds)].slice(0, 1_000) } }),
         },
-        select: { id: true, ebayListingId: true, title: true },
+        select: { id: true, ebayListingId: true, title: true, product: { select: { supplierProductId: true, sku: true } } },
         orderBy: [{ status: "asc" }, { publishedAt: "asc" }, { id: "asc" }],
         ...(scheduled ? {} : { take: 1_000 }),
       })
     : [];
+  // Mandatory bans must not sit behind the normal 1,000-item sync limit.
+  const bannedCandidates = banned.size ? await db.listing.findMany({
+    where: {
+      userId: user.id, status: "ACTIVE", ebayListingId: { not: null },
+      product: { supplierName: "Amazon", ...bannedSource },
+      ...(selectedEbayListingIds?.length && { ebayListingId: { in: [...new Set(selectedEbayListingIds)].slice(0, 1_000) } }),
+    },
+    select: { id: true, ebayListingId: true, title: true, product: { select: { supplierProductId: true, sku: true } } },
+  }) : [];
+  const uniqueCandidates = [...new Map([...bannedCandidates, ...candidates].map((listing) => [listing.id, listing])).values()];
   return {
-    candidates: candidates.map((listing) => ({ listingId: listing.id, ebayListingId: listing.ebayListingId, title: listing.title })),
+    candidates: uniqueCandidates.sort((a, b) => Number(banned.has(b.product.supplierProductId.toUpperCase()) || banned.has(b.product.sku.toUpperCase())) - Number(banned.has(a.product.supplierProductId.toUpperCase()) || banned.has(a.product.sku.toUpperCase()))).map((listing) => ({ listingId: listing.id, ebayListingId: listing.ebayListingId, title: listing.title })),
     ebayRefresh,
   };
 }
@@ -1554,6 +1570,22 @@ export async function processConfigurableSmartSyncItem(
   };
   const actions: string[] = [];
 
+  const applyAdminBan = async (): Promise<SmartSyncItemResult> => {
+    await db.product.update({ where: { id: listing.product.id }, data: { supplierStock: 0 } });
+    if (listing.status === "ACTIVE" && listing.ebayListingId) {
+      const ended = await endEbayListingForUser(user.id, listing.ebayListingId, "ADMIN_BANNED");
+      if (ended.error) throw new Error(`Admin banned this product, but eBay could not end it: ${ended.error}`);
+    } else {
+      await db.listing.update({ where: { id: listing.id }, data: { status: "ENDED", quantity: 0, endedReason: "ADMIN_BANNED", endedAt: new Date() } });
+    }
+    return { ...base, status: "success", outcome: "ended", actions: ["Product banned by administrator", "Listing removed; publishing and automatic relisting blocked"], newPriceCents: listing.priceCents };
+  };
+  const adminBan = listing.product.supplierName === "Amazon" ? await db.adminArbitrageProduct.findUnique({
+    where: { asin: listing.product.supplierProductId.trim().toUpperCase() }, select: { bannedAt: true },
+  }) : null;
+  // Admin bans override refresh options, live browser results and price locks.
+  if (adminBan?.bannedAt) return applyAdminBan();
+
   if (liveAmazonUnavailableConfirmed) {
     await db.product.update({ where: { id: listing.product.id }, data: { supplierStock: 0 } });
     actions.push("Signed-in Amazon page confirmed the product is unavailable");
@@ -1604,6 +1636,7 @@ export async function processConfigurableSmartSyncItem(
       throw error;
     }
     if (adminSource.sharedCatalogPopulated) actions.push("Amazon data retrieved once and saved to the admin catalog");
+    if (adminSource.bannedAt) return applyAdminBan();
     const effectiveAmazonPriceCents = liveAmazonPriceChecked
       ? listing.product.costCents
       : adminSource.amazonPriceCents;

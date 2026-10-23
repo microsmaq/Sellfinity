@@ -235,6 +235,7 @@ export async function listArbitragePage(
   const query = params.query.trim();
   const where: Prisma.AdminArbitrageProductWhereInput = {
     status: "PUBLISHED",
+    bannedAt: null,
     ebayItemId: { not: null, ...(hiddenIds.length && { notIn: hiddenIds }) },
     ...(ownedAsins.length > 0 && { asin: { notIn: ownedAsins } }),
     ...(params.category !== "all" && { category: params.category }),
@@ -273,12 +274,13 @@ export async function listArbitragePage(
   const [databaseTotal, publishedRows, qualifiedCandidates, categoryRows] = await Promise.all([
     db.adminArbitrageProduct.count({ where }),
     db.adminArbitrageProduct.findMany({
-      where: { status: "PUBLISHED", ebayItemId: { not: null } },
+      where: { status: "PUBLISHED", bannedAt: null, ebayItemId: { not: null } },
       select: { asin: true },
     }),
     db.adminArbitrageProduct.findMany({
       where: {
         status: "PUBLISHED",
+        bannedAt: null,
         ebayItemId: { not: null },
         matchVerdict: { in: ["MATCH", "LIKELY"] },
         matchConfidence: { gte: 95 },
@@ -297,7 +299,7 @@ export async function listArbitragePage(
       },
     }),
     db.adminArbitrageProduct.findMany({
-      where: { status: "PUBLISHED" },
+      where: { status: "PUBLISHED", bannedAt: null },
       distinct: ["category"],
       select: { category: true },
       orderBy: { category: "asc" },

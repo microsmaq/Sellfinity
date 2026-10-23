@@ -10,6 +10,7 @@ export async function catalogReviewSettings() {
 
 export function highConfidenceCatalogWhere(ids?: string[]) {
   return {
+    bannedAt: null,
     status: "NO_MATCH", matchConfidence: { gte: 95 }, matchVerdict: { not: "REJECTED" }, matchMethod: { not: "MANUAL_REJECTED" }, ebayItemId: { not: null },
     ...(ids && { id: { in: ids } }),
   };
@@ -30,6 +31,7 @@ export async function runAutomaticCatalogReview(force = false, reviewOnly = fals
   try {
     const savedReview = { status: "NO_MATCH", matchConfidence: { gte: 95 }, matchVerdict: { not: "REJECTED" }, matchMethod: { not: "MANUAL_REJECTED" }, ebayItemId: { not: null } };
     const where = reviewOnly ? highConfidenceCatalogWhere(options.ids) : {
+      bannedAt: null,
       OR: [{ status: "PENDING", lastResearchedAt: null }, savedReview],
       ...(options.ids && { id: { in: options.ids } }),
     };
@@ -52,7 +54,7 @@ export async function runAutomaticCatalogReview(force = false, reviewOnly = fals
         summary.items.push({ id: candidate.id, asin: candidate.asin, outcome: published ? "published" : "review", reason: result?.matchReason ?? "Manual review required." });
       } catch (error) {
         const reason = error instanceof Error ? error.message.slice(0, 500) : "Automatic research failed.";
-        await db.adminArbitrageProduct.updateMany({ where: { id: candidate.id, status: candidate.status || "PENDING" }, data: { status: "NO_MATCH", matchReason: `Automatic review could not finish: ${reason}` } });
+        await db.adminArbitrageProduct.updateMany({ where: { id: candidate.id, bannedAt: null, status: candidate.status || "PENDING" }, data: { status: "NO_MATCH", matchReason: `Automatic review could not finish: ${reason}` } });
         summary.failed++;
         summary.items.push({ id: candidate.id, asin: candidate.asin, outcome: "failed", reason });
       }

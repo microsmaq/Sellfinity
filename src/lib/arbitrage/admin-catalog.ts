@@ -13,7 +13,8 @@ export type AdminCatalogStatus =
   | "PENDING"
   | "PUBLISHED"
   | "NO_MATCH"
-  | "ARCHIVED";
+  | "ARCHIVED"
+  | "BANNED";
 
 export type AdminCatalogSortKey =
   | "newest"
@@ -58,6 +59,7 @@ export type AdminCatalogRow = {
   amazonInStock: boolean;
   amazonRefreshedAt: string | null;
   amazonCheckedAt?: string | null;
+  bannedAt?: string | null;
   amazonUrl: string;
   amazonImageUrl: string | null;
   contentWarnings?: string[];
@@ -123,7 +125,8 @@ export async function listAdminCatalog(params: {
     ? filters.pageSize
     : ADMIN_CATALOG_PAGE_SIZE;
   const where: Prisma.AdminArbitrageProductWhereInput = {
-    ...(filters.status !== "ALL" && { status: filters.status }),
+    bannedAt: filters.status === "BANNED" ? { not: null } : null,
+    ...(!["ALL", "BANNED"].includes(filters.status) && { status: filters.status }),
     ...(filters.category !== "ALL" && { category: filters.category }),
     ...(filters.matchVerdict !== "ALL" && {
       matchVerdict: filters.matchVerdict,
@@ -200,11 +203,11 @@ export async function listAdminCatalog(params: {
   const [databaseTotal, all, published, pending, noMatch, archived, categoryRows] =
     await Promise.all([
       db.adminArbitrageProduct.count({ where }),
-      db.adminArbitrageProduct.count(),
-      db.adminArbitrageProduct.count({ where: { status: "PUBLISHED" } }),
-      db.adminArbitrageProduct.count({ where: { status: "PENDING" } }),
-      db.adminArbitrageProduct.count({ where: { status: "NO_MATCH" } }),
-      db.adminArbitrageProduct.count({ where: { status: "ARCHIVED" } }),
+      db.adminArbitrageProduct.count({ where: { bannedAt: null } }),
+      db.adminArbitrageProduct.count({ where: { status: "PUBLISHED", bannedAt: null } }),
+      db.adminArbitrageProduct.count({ where: { status: "PENDING", bannedAt: null } }),
+      db.adminArbitrageProduct.count({ where: { status: "NO_MATCH", bannedAt: null } }),
+      db.adminArbitrageProduct.count({ where: { status: "ARCHIVED", bannedAt: null } }),
       db.adminArbitrageProduct.findMany({
         distinct: ["category"],
         select: { category: true },
@@ -287,6 +290,9 @@ export async function listAdminCatalog(params: {
         : null;
       return {
         ...item,
+        status: item.bannedAt ? "BANNED" : item.status,
+        bannedAt: item.bannedAt?.toISOString() ?? null,
+        amazonInStock: !item.bannedAt && item.amazonInStock,
         contentWarnings: catalogContentWarnings(item),
         suggestedPriceCents: suggestedPrice,
         estimatedProfitCents: margin?.estimatedProfitCents ?? null,
@@ -310,6 +316,7 @@ export async function listAdminCatalog(params: {
  * Finder without disrupting its publishing, hiding, sorting, or export flows. */
 export async function publishCatalogProductToUsers(id: string, approval?: { updatedAt: Date; confidence: number; reason: string }, options: { identityOnly?: boolean } = {}): Promise<void> {
   const item = await db.adminArbitrageProduct.findUnique({ where: { id } });
+  if (item?.bannedAt) throw new Error("This product is banned and cannot be published to users.");
   // Identity approval only exposes a catalog pair; it never lists to eBay.
   // Do not change source flags or freshness to make the pair appear sellable.
   if (!options.identityOnly && item?.amazonImportDetailsJson && item.amazonImportDetailsJson !== "{}") requireCatalogContent(item);
@@ -338,10 +345,11 @@ export async function publishCatalogProductToUsers(id: string, approval?: { upda
     item.amazonShippingCents,
   );
   await db.$transaction(async (tx) => {
-    if (approval) {
-      const lease = await tx.adminArbitrageProduct.updateMany({ where: { id, status: "NO_MATCH", updatedAt: approval.updatedAt }, data: { updatedAt: new Date() } });
-      if (!lease.count) throw new Error("Candidate changed during automatic approval. Nothing was published.");
-    }
+    const lease = await tx.adminArbitrageProduct.updateMany({
+      where: { id, bannedAt: null, ...(approval && { status: "NO_MATCH", updatedAt: approval.updatedAt }) },
+      data: { updatedAt: new Date() },
+    });
+    if (!lease.count) throw new Error("Candidate changed or was banned during approval. Nothing was published.");
     await tx.arbitrageItem.upsert({
       where: { ebayItemId: reference.id },
       create: {

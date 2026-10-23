@@ -54,6 +54,12 @@ export async function publishListingForUser(
     include: { product: true },
   });
   if (!draft) return { ok: false, error: "The mirrored draft is no longer available." };
+  if (draft.product.supplierName === "Amazon") {
+    const source = await db.adminArbitrageProduct.findUnique({
+      where: { asin: draft.product.supplierProductId.trim().toUpperCase() }, select: { bannedAt: true },
+    });
+    if (source?.bannedAt) return { ok: false, error: "This product was banned by an administrator and cannot be published or relisted." };
+  }
 
   let imageUrls = parseImageUrls(draft.imageUrlsJson);
   if (imageUrls.length === 0 && draft.product.supplierName === "Amazon") {

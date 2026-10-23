@@ -8,7 +8,7 @@ import { publishCatalogProductToUsers } from "./admin-catalog";
 /** Reassess a saved pair, not a new paid research/search. Never override seller/admin rejection. */
 export async function reviewSavedCatalogCandidate(id: string) {
   const item = await db.adminArbitrageProduct.findUnique({ where: { id } });
-  if (!item || item.status !== "NO_MATCH" || item.matchConfidence < 95 || item.matchVerdict === "REJECTED" || /REJECTED/.test(item.matchMethod) || !item.ebayTitle || !item.ebayItemId) return;
+  if (!item || item.bannedAt || item.status !== "NO_MATCH" || item.matchConfidence < 95 || item.matchVerdict === "REJECTED" || /REJECTED/.test(item.matchMethod) || !item.ebayTitle || !item.ebayItemId) return;
   const hold = async (reason: string) => {
     await db.adminArbitrageProduct.updateMany({ where: { id, status: "NO_MATCH", updatedAt: item.updatedAt }, data: { matchReason: reason.slice(0, 1000) } });
   };
