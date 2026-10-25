@@ -112,7 +112,7 @@ it("uses Jev on exhausted credits, preserving image inputs and caching its own a
   expect(fetcher.mock.calls[1][1].headers.authorization).toBe("Bearer gateway-key");
   const openai = JSON.parse(fetcher.mock.calls[0][1].body);
   const jev = JSON.parse(fetcher.mock.calls[1][1].body);
-  expect(jev).toEqual({ ...openai, model: "typesafe-ai/jev" });
+  expect(jev).toEqual({ ...openai, model: "typesafe-ai/jev-1.14.0" });
   expect(provider).toHaveBeenLastCalledWith("Jev fallback");
   await evaluateJevDecision({ title: "A" }, questions, false, undefined, images);
   expect(fetcher).toHaveBeenCalledTimes(2);
@@ -157,4 +157,51 @@ it("reports successful fallback diagnostics and permits a later primary retry", 
   expect(fetcher.mock.calls[1][1].headers.authorization).toBe("Bearer identity-key");
   expect(await screenProductPairWithJev("A", "B", true)).toMatchObject({ provider: "OpenAI Decisions" });
   expect(fetcher.mock.calls[2][0]).toBe("https://api.openai.com/v1/decisions");
+});
+
+it("reports the actual Jev failure in normal approval calls with secrets removed", async () => {
+  vi.stubEnv("AI_GATEWAY_API_KEY", "gateway-secret");
+  const fetcher = vi.fn().mockResolvedValueOnce(Response.json({ error: { code: "credit_balance_exhausted" } }, { status: 429 }))
+    .mockResolvedValueOnce(Response.json({ error: { message: "Image input rejected for gateway-secret Bearer hidden at https://private.test" } }, { status: 400 }));
+  vi.stubGlobal("fetch", fetcher);
+  const { evaluateJevDecision } = await import("@/lib/ai/jev");
+  const report = vi.fn();
+  expect(await evaluateJevDecision({}, { same: { type: "boolean", instructions: "Same?" } }, false, report, ["https://example.com/a.jpg"])).toBeNull();
+  expect(report).toHaveBeenCalledWith(expect.stringContaining("Jev fallback returned HTTP 400"));
+  expect(report.mock.calls[0][0]).not.toMatch(/gateway-secret|Bearer hidden|private\.test/);
+});
+
+it("does not keep extending Jev cooldown as more products are checked", async () => {
+  const started = Date.now();
+  const now = vi.spyOn(Date, "now").mockReturnValue(started);
+  try {
+    vi.stubEnv("AI_GATEWAY_API_KEY", "gateway-key");
+    const fetcher = vi.fn().mockResolvedValueOnce(Response.json({ error: { code: "credit_balance_exhausted" } }, { status: 429 }))
+      .mockResolvedValueOnce(new Response(null, { status: 503 }))
+      .mockImplementation(async () => Response.json({ answers: [{ name: "same", type: "predicate", probability: 0.98 }] }));
+    vi.stubGlobal("fetch", fetcher);
+    const { evaluateJevDecision } = await import("@/lib/ai/jev");
+    const questions = { same: { type: "boolean" as const, instructions: "Same?" } };
+    const report = vi.fn();
+    expect(await evaluateJevDecision({ item: 0 }, questions)).toBeNull();
+    for (const seconds of [20, 40, 59]) {
+      now.mockReturnValue(started + seconds * 1000);
+      expect(await evaluateJevDecision({ item: seconds }, questions, false, report)).toBeNull();
+    }
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(report).toHaveBeenLastCalledWith(expect.stringContaining("Retry in 1 seconds"));
+    now.mockReturnValue(started + 60_001);
+    expect(await evaluateJevDecision({ item: 60 }, questions)).toMatchObject({ same: { probability: 0.98 } });
+    expect(fetcher).toHaveBeenCalledTimes(3);
+    expect(JSON.parse(fetcher.mock.calls[2][1].body).model).toBe("typesafe-ai/jev");
+  } finally { now.mockRestore(); }
+});
+
+it("reports invalid image inputs without contacting either provider", async () => {
+  const fetcher = vi.fn(); vi.stubGlobal("fetch", fetcher);
+  const { evaluateJevDecision } = await import("@/lib/ai/jev");
+  const report = vi.fn();
+  expect(await evaluateJevDecision({}, { same: { type: "boolean", instructions: "Same?" } }, false, report, [""])).toBeNull();
+  expect(report).toHaveBeenCalledWith(expect.stringContaining("valid HTTPS image URL"));
+  expect(fetcher).not.toHaveBeenCalled();
 });

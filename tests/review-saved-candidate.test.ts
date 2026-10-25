@@ -40,6 +40,15 @@ it("distinguishes unavailable Decisions verification from a low identity score",
   mocks.decisions.mockResolvedValue(null); await reviewSavedCatalogCandidate("a");
   expect(mocks.hold.mock.calls[0][0].data.matchReason).toContain("unavailable or returned an unusable response");
 });
+it("stores the real fallback error instead of discarding it during automatic approval", async () => {
+  mocks.decisions.mockImplementation(async (_state, _questions, _diagnostic, reportFailure) => {
+    reportFailure("Jev fallback returned HTTP 400: Image input unavailable.");
+    return null;
+  });
+  await reviewSavedCatalogCandidate("a");
+  expect(mocks.publish).not.toHaveBeenCalled();
+  expect(mocks.hold.mock.calls[0][0].data.matchReason).toContain("Jev fallback returned HTTP 400: Image input unavailable.");
+});
 it("supplies both images, separates missing details from contradictions and does not anchor Decisions to a prior score", async () => {
   const item = { ...row(), matchConfidence: 100, amazonImageUrl: "https://example.com/amazon.jpg", ebayImageUrl: "https://example.com/ebay.jpg", amazonImportDetailsJson: '{"variant":"Black"}' };
   mocks.find.mockResolvedValue(item); await reviewSavedCatalogCandidate("a");
