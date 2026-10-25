@@ -125,13 +125,14 @@
     reportBulkProgress(bulkProgress.processed >= bulkProgress.total ? "complete" : "running");
   }
 
-  function reportAmazonPriceProgress(status = "running") {
+  function reportAmazonPriceProgress(status = "running", error) {
     if (!amazonPriceProgress) return;
     document.dispatchEvent(new CustomEvent("sellfinity:amazon-price-helper-progress", { detail: {
       status,
       total: amazonPriceProgress.total,
       processed: amazonPriceProgress.processed,
-      found: amazonPriceProgress.found
+      found: amazonPriceProgress.found,
+      ...(error ? { error } : {})
     } }));
   }
 
@@ -185,18 +186,24 @@
     // than the UI's helper-detection window even though the extension is fine.
     amazonPriceProgress = { total: requests.length, processed: 0, found: 0 };
     reportAmazonPriceProgress();
-    chrome.runtime.sendMessage({ type: "BEGIN_BULK_AMAZON_PRICE_CHECK", requests })
+    Promise.resolve().then(() => chrome.runtime.sendMessage({ type: "BEGIN_BULK_AMAZON_PRICE_CHECK", requests }))
       .then((result) => {
+        if (!result?.ok || !Number.isInteger(result.queued) || result.queued < 1) {
+          throw new Error(result?.error || "The helper did not acknowledge the price check. Reload the helper, then reload this Sellfinity page and try again.");
+        }
         if (result?.queued) {
           amazonPriceProgress.total = result.queued;
           reportAmazonPriceProgress();
           toast(`Checking ${result.queued} unique Amazon product${result.queued === 1 ? "" : "s"} for current price and shipping…`);
         }
       })
-      .catch(() => {
-        reportAmazonPriceProgress("error");
+      .catch((error) => {
+        const reason = /extension context invalidated/i.test(error?.message || "")
+          ? "The helper was updated or reloaded. Reload this Sellfinity page, then start the price check again."
+          : error?.message || "The helper connection was lost. Reload the helper, then reload this Sellfinity page and try again.";
+        reportAmazonPriceProgress("error", reason);
         amazonPriceProgress = null;
-        toast("The Amazon price checker could not start.", "error");
+        toast(reason, "error");
       });
   });
 
@@ -293,6 +300,11 @@
     }
     if (message?.type === "AMAZON_WORKLOAD_STATUS") {
       toast(message.reason || "Amazon browsing paused. Resume from the extension popup.", "error");
+    }
+    if (message?.type === "AMAZON_PRICE_RUN_FAILED") {
+      reportAmazonPriceProgress("error", message.error);
+      amazonPriceProgress = null;
+      toast(message.error, "error");
     }
     if (message?.type === "BULK_RUN_CANCELLED") {
       if (!message.mode || message.mode === "PRICE") {

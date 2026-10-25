@@ -34,11 +34,11 @@ describe("Chrome helper control center", () => {
     expect(immediateProgress).toBeLessThan(backgroundRequest);
   });
 
-  it("ships the popup script in helper version 1.6.13", () => {
+  it("ships the popup script in helper version 1.6.14", () => {
     const manifest = JSON.parse(extensionFile("manifest.json")) as { version: string };
     const popup = extensionFile("popup.html");
 
-    expect(manifest.version).toBe("1.6.13");
+    expect(manifest.version).toBe("1.6.14");
     expect(popup).toContain('<script src="popup.js"></script>');
   });
 

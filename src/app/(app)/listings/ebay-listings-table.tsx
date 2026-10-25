@@ -846,7 +846,7 @@ export function EbayListingsTable({
       amazonPriceSavePromises.current.push(save);
     }
     function receiveAmazonPriceProgress(event: Event) {
-      const detail = (event as CustomEvent<{ status?: "running" | "complete" | "cancelled" | "error"; total?: number; processed?: number; found?: number }>).detail;
+      const detail = (event as CustomEvent<{ status?: "running" | "complete" | "cancelled" | "error"; error?: string; total?: number; processed?: number; found?: number }>).detail;
       if (!detail?.status) return;
       if (amazonPriceStartupTimer.current !== null) {
         window.clearTimeout(amazonPriceStartupTimer.current);
@@ -878,7 +878,7 @@ export function EbayListingsTable({
         const reject = amazonPriceRejecter.current;
         amazonPriceResolver.current = null;
         amazonPriceRejecter.current = null;
-        reject(new Error("The Chrome helper could not start the Amazon price check. Reload it and try again."));
+        reject(new Error(detail.error || "The Chrome helper could not start the Amazon price check. Reload the helper and this Sellfinity page, then try again."));
       }
     }
     function receiveAmazonAttempt(event: Event) {
@@ -942,7 +942,7 @@ export function EbayListingsTable({
         amazonPriceResolver.current = null;
         amazonPriceRejecter.current = null;
         setAmazonPriceProgress(null);
-        reject(new Error("The Chrome helper did not respond. Reload helper v1.6.13, refresh this Sellfinity tab, then try again."));
+        reject(new Error("The Chrome helper did not respond. Reload helper v1.6.14, refresh this Sellfinity tab, then try again."));
       }, 8_000);
       document.dispatchEvent(new CustomEvent("sellfinity:bulk-amazon-price-check", { detail: { requests } }));
     });
@@ -1968,7 +1968,7 @@ export function EbayListingsTable({
               </div>
               <p className="mt-3 max-w-3xl text-xs leading-5 text-slate-600">Administrator data remains the normal shared source. Enable live Amazon checking when you want the signed-in Chrome helper to verify current item price and shipping before Smart Sync calculates profit.</p>
             </div>
-            <div className="flex flex-wrap items-center gap-2"><a href="/downloads/sellfinity-tracking-helper.zip?v=1.6.13" download className="text-xs font-semibold text-indigo-700 hover:underline">Chrome helper v1.6.13</a><Badge tone="indigo">{selectedSmartSyncOptionCount(smartSyncOptions)} selected</Badge></div>
+            <div className="flex flex-wrap items-center gap-2"><a href="/downloads/sellfinity-tracking-helper.zip?v=1.6.14" download className="text-xs font-semibold text-indigo-700 hover:underline">Chrome helper v1.6.14</a><Badge tone="indigo">{selectedSmartSyncOptionCount(smartSyncOptions)} selected</Badge></div>
           </div>
           <div className="border-b border-slate-100 bg-white/70 px-4 py-3 sm:px-5">
             <p className="mb-2 text-[10px] font-semibold uppercase tracking-[.1em] text-slate-400">Run on</p>

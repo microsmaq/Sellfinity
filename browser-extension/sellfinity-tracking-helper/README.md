@@ -1,5 +1,13 @@
 # Sellfinity Amazon Tracking Helper
 
+## Price checker startup recovery (v1.6.14)
+
+Startup failures now show the actual reason instead of a generic error. Reload
+Sellfinity after updating the helper. If another tab already owns the saved
+price check, resume or stop it in the helper before starting again. Duplicate
+requests are queued once, and Amazon tabs open in the originating Chrome window.
+Workload limits and verification pauses are unchanged.
+
 ## Invitation-only products (v1.6.13)
 
 “Available by invitation”, “Invitation only” and “Request an invite” in the
@@ -29,7 +37,7 @@ not overwrite content. Unknown shipping preserves its saved value. Content-check
 and refresh timestamps are recorded in the catalog audit details. Refresh results
 count product-detail saves separately from prices and warn about price-only reads.
 
-Replace the unpacked helper with v1.6.13, reload it in `chrome://extensions`, then
+Replace the unpacked helper with v1.6.14, reload it in `chrome://extensions`, then
 refresh the Sellfinity and Amazon tabs. Older helpers still save prices, but need
 this update to send product details. To revisit records already checked today,
 turn off **Skip checked in last 24 hours** for a manual run.

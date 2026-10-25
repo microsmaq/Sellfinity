@@ -96,7 +96,8 @@ async function processBulkQueue(sourceTabId) {
   if (queueProcessing) return;
   queueProcessing = true;
   try {
-  try { await chrome.tabs.get(sourceTabId); } catch { return; }
+  let sourceTab;
+  try { sourceTab = await chrome.tabs.get(sourceTabId); } catch { return; }
   const catalog = await catalogJob();
   if (catalog?.status === "running") return;
   const initialRequests = await pendingRequests();
@@ -111,7 +112,7 @@ async function processBulkQueue(sourceTabId) {
       // Register the destination before loading Amazon. A fast cached page can
       // report tracking immediately; previously that response raced the final
       // storage write and was discarded because its tab was still unknown.
-      const tab = await chrome.tabs.create({ url: "about:blank", active: false });
+      const tab = await chrome.tabs.create({ url: "about:blank", active: false, ...(Number.isInteger(sourceTab.windowId) && sourceTab.windowId >= 0 ? { windowId: sourceTab.windowId } : {}) });
       openedTabId = tab.id || null;
       const latest = await pendingRequests();
       const liveRequest = latest.find((candidate) => candidate.requestId === request.requestId);
@@ -226,14 +227,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message?.type === "BEGIN_BULK_AMAZON_PRICE_CHECK" && sender.tab?.id) {
+    let acknowledged = false;
     (async () => {
       const requests = await pendingRequests();
       const existingKeys = new Set(requests.filter((request) => request.mode === "PRICE").map((request) => request.requestKey));
-      for (const item of message.requests || []) {
+      for (const item of Array.isArray(message.requests) ? message.requests : []) {
         let url;
         try { url = new URL(item.amazonUrl); } catch { continue; }
         const isAmazon = url.protocol === "https:" && (url.hostname === "amazon.com" || url.hostname.endsWith(".amazon.com"));
         if (!isAmazon || !item.requestKey || !item.orderIds?.length || existingKeys.has(item.requestKey)) continue;
+        existingKeys.add(item.requestKey);
         requests.push({
           requestId: crypto.randomUUID(),
           requestKey: item.requestKey,
@@ -246,12 +249,22 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           createdAt: Date.now()
         });
       }
-      await savePending(requests);
       const queued = requests.filter((request) => request.bulk && request.mode === "PRICE" && request.sourceTabId === sender.tab.id).length;
+      if (!queued) throw new Error(existingKeys.size
+        ? "These products are already queued in another Sellfinity tab. Resume or stop the saved price check in the Chrome helper, then try again."
+        : "No valid Amazon products were supplied for the price check.");
+      await savePending(requests);
       await startRun(sender.tab.id, "PRICE", queued);
       sendResponse({ ok: true, queued });
+      acknowledged = true;
       await processBulkQueue(sender.tab.id);
-    })();
+    })().catch(async (error) => {
+      const reason = `The Amazon price check could not start: ${error?.message || "Chrome helper storage or background worker is unavailable. Reload the helper and this Sellfinity page."}`;
+      if (!acknowledged) sendResponse({ ok: false, error: reason });
+      else {
+        try { await chrome.tabs.sendMessage(sender.tab.id, { type: "AMAZON_PRICE_RUN_FAILED", error: reason }); } catch { /* The source tab may have closed. */ }
+      }
+    });
     return true;
   }
 
