@@ -14,6 +14,14 @@ beforeEach(() => { vi.resetAllMocks(); mocks.find.mockResolvedValue(row()); mock
 it("publishes with a concurrency guard only after both AI and Decisions checks pass", async () => {
   await reviewSavedCatalogCandidate("a"); expect(mocks.publish).toHaveBeenCalledWith("a", expect.objectContaining({ updatedAt: expect.any(Date), confidence: 98, reason: expect.stringContaining("99.5%") }), { identityOnly: true });
 });
+it("records Jev fallback approvals without changing identity thresholds", async () => {
+  mocks.decisions.mockImplementation(async (_state, _questions, _diagnostic, _failure, _images, reportProvider) => {
+    reportProvider("Jev fallback");
+    return { sameProduct: { type: "boolean", probability: 0.97 }, conflict: { type: "boolean", probability: 0.02 } };
+  });
+  await reviewSavedCatalogCandidate("a");
+  expect(mocks.publish).toHaveBeenCalledWith("a", expect.objectContaining({ confidence: 97, reason: expect.stringContaining("Jev fallback match score") }), { identityOnly: true });
+});
 it.each([null, {}, { sameProduct: { type: "boolean", probability: 0.949 }, conflict: { type: "boolean", probability: 0 } }, { sameProduct: { type: "boolean", probability: 1 }, conflict: { type: "boolean", probability: 0.1 } }])("holds missing or uncertain Decisions answers", async (answers) => {
   mocks.decisions.mockResolvedValue(answers); await reviewSavedCatalogCandidate("a"); expect(mocks.publish).not.toHaveBeenCalled(); expect(mocks.hold).toHaveBeenCalled();
 });

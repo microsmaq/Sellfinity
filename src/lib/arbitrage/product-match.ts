@@ -264,7 +264,7 @@ export async function assessProductMatch(
   if (rules.verdict === "REJECTED") return rules;
   const screening = await screenProductPairWithJev(amazon.title, ebay.title);
   if (screening && shouldSkipVisualVerification(screening)) {
-    return { verdict: "REJECTED", confidence: Math.floor(screening.conflictProbability * 100), reason: "OpenAI Decisions screening found strong evidence of an incompatible product or variant. Manual review remains available.", method: "DECISIONS" };
+    return { verdict: "REJECTED", confidence: Math.floor(screening.conflictProbability * 100), reason: `${screening.provider || "OpenAI Decisions"} screening found strong evidence of an incompatible product or variant. Manual review remains available.`, method: "DECISIONS" };
   }
   return (await assessWithAi(ebay, amazon)) ?? rules;
 }

@@ -1,6 +1,6 @@
 import { beforeEach, afterEach, expect, it, vi } from "vitest";
 vi.mock("server-only", () => ({}));
-beforeEach(() => { vi.resetModules(); vi.stubEnv("OPENAI_API_KEY", "test-key"); vi.stubEnv("OPENAI_DECISIONS_ENABLED", "true"); vi.stubEnv("OPENAI_DECISIONS_MODEL", "gpt-6-luna"); });
+beforeEach(() => { vi.resetModules(); vi.stubEnv("OPENAI_API_KEY", "test-key"); vi.stubEnv("OPENAI_DECISIONS_ENABLED", "true"); vi.stubEnv("OPENAI_DECISIONS_MODEL", "gpt-6-luna"); vi.stubEnv("AI_GATEWAY_API_KEY", ""); vi.stubEnv("VERCEL_OIDC_TOKEN", ""); vi.stubEnv("JEV_ENABLED", "true"); });
 afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); });
 function response(same = 0.001, conflict = 0.999, route = "REJECT") {
   return Response.json({ answers: [
@@ -95,4 +95,66 @@ it("reports provider errors with secrets redacted", async () => {
   expect(await screenProductPairWithJev("A", "B", true, report)).toBeNull();
   expect(report).toHaveBeenCalledWith(expect.stringContaining("HTTP 400"));
   expect(report.mock.calls[0][0]).not.toContain("test-key"); expect(report.mock.calls[0][0]).not.toContain("sensitive-token");
+});
+
+it("uses Jev on exhausted credits, preserving image inputs and caching its own answers", async () => {
+  vi.stubEnv("AI_GATEWAY_API_KEY", "gateway-key");
+  const fetcher = vi.fn().mockResolvedValueOnce(Response.json({ error: { code: "credit_balance_exhausted", message: "You have no credits remaining" } }, { status: 429 }))
+    .mockImplementation(async () => Response.json({ answers: [{ name: "same", type: "predicate", probability: 0.98 }] }));
+  vi.stubGlobal("fetch", fetcher);
+  const { evaluateJevDecision } = await import("@/lib/ai/jev");
+  const questions = { same: { type: "boolean" as const, instructions: "Compare exact identity" } };
+  const images = ["https://example.com/amazon.jpg", "https://example.com/ebay.jpg"];
+  const provider = vi.fn();
+  expect(await evaluateJevDecision({ title: "A" }, questions, false, undefined, images, provider)).toMatchObject({ same: { probability: 0.98 } });
+  expect(fetcher.mock.calls[0][1].headers.authorization).toBe("Bearer test-key");
+  expect(fetcher.mock.calls[1][0]).toBe("https://ai-gateway.vercel.sh/v1/decisions");
+  expect(fetcher.mock.calls[1][1].headers.authorization).toBe("Bearer gateway-key");
+  const openai = JSON.parse(fetcher.mock.calls[0][1].body);
+  const jev = JSON.parse(fetcher.mock.calls[1][1].body);
+  expect(jev).toEqual({ ...openai, model: "typesafe-ai/jev" });
+  expect(provider).toHaveBeenLastCalledWith("Jev fallback");
+  await evaluateJevDecision({ title: "A" }, questions, false, undefined, images);
+  expect(fetcher).toHaveBeenCalledTimes(2);
+  await evaluateJevDecision({ title: "B" }, questions);
+  expect(fetcher.mock.calls.map(([url]) => url)).toEqual(["https://api.openai.com/v1/decisions", "https://ai-gateway.vercel.sh/v1/decisions", "https://ai-gateway.vercel.sh/v1/decisions"]);
+});
+
+it.each([401, 403, 400, 429, 500])("does not switch providers for unrelated HTTP %s failures", async (status) => {
+  vi.stubEnv("AI_GATEWAY_API_KEY", "gateway-key");
+  const fetcher = vi.fn().mockResolvedValue(Response.json({ error: { code: "rate_limit_exceeded" } }, { status })); vi.stubGlobal("fetch", fetcher);
+  const { screenProductPairWithJev } = await import("@/lib/ai/jev");
+  expect(await screenProductPairWithJev("A", "B")).toBeNull();
+  expect(fetcher).toHaveBeenCalledTimes(1);
+});
+
+it("does not use fallback to override an uncertain or rejected answer", async () => {
+  vi.stubEnv("AI_GATEWAY_API_KEY", "gateway-key");
+  const fetcher = vi.fn().mockResolvedValue(response()); vi.stubGlobal("fetch", fetcher);
+  const { screenProductPairWithJev } = await import("@/lib/ai/jev");
+  expect(await screenProductPairWithJev("A", "B")).toMatchObject({ route: "REJECT", provider: "OpenAI Decisions" });
+  expect(fetcher).toHaveBeenCalledTimes(1);
+});
+
+it.each(["disabled", "missing", "invalid", "failed"])("holds approval if Jev fallback is %s", async (mode) => {
+  if (mode !== "missing") vi.stubEnv("AI_GATEWAY_API_KEY", "gateway-key");
+  if (mode === "disabled") vi.stubEnv("JEV_ENABLED", "false");
+  const fetcher = vi.fn().mockResolvedValueOnce(Response.json({ error: { code: "insufficient_quota" } }, { status: 429 }))
+    .mockImplementation(async () => mode === "failed" ? new Response(null, { status: 503 }) : Response.json({ answers: [{ name: "same", type: "predicate", probability: 4 }] }));
+  vi.stubGlobal("fetch", fetcher);
+  const { evaluateJevDecision } = await import("@/lib/ai/jev");
+  expect(await evaluateJevDecision({}, { same: { type: "boolean", instructions: "Same?" } })).toBeNull();
+  expect(fetcher).toHaveBeenCalledTimes(["missing", "disabled"].includes(mode) ? 1 : 2);
+});
+
+it("reports successful fallback diagnostics and permits a later primary retry", async () => {
+  vi.stubEnv("VERCEL_OIDC_TOKEN", "identity-key");
+  const fetcher = vi.fn().mockResolvedValueOnce(Response.json({ error: { message: "You have no credits remaining" } }, { status: 429 }))
+    .mockImplementation(async () => response());
+  vi.stubGlobal("fetch", fetcher);
+  const { screenProductPairWithJev } = await import("@/lib/ai/jev");
+  expect(await screenProductPairWithJev("A", "B", true)).toMatchObject({ provider: "Jev fallback" });
+  expect(fetcher.mock.calls[1][1].headers.authorization).toBe("Bearer identity-key");
+  expect(await screenProductPairWithJev("A", "B", true)).toMatchObject({ provider: "OpenAI Decisions" });
+  expect(fetcher.mock.calls[2][0]).toBe("https://api.openai.com/v1/decisions");
 });

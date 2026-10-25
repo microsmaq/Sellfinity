@@ -9,5 +9,5 @@ export async function testJevConnection() {
   let failure = "OpenAI Decisions did not return a valid response.";
   const result = await screenProductPairWithJev("Acme AB123 Black Knee Strap 2 Pack", "Acme CD456 Red Knee Strap 10 Pack", true, (reason) => { failure = reason; });
   if (!result) return { ok: false, message: `${failure} Matching continues with the existing AI.` };
-  return { ok: true, message: `OpenAI Decisions responded in ${result.durationMs} ms. Test routing: ${result.route}. Conflict probability: ${(result.conflictProbability * 100).toFixed(1)}%.` };
+  return { ok: true, message: `${result.provider || "OpenAI Decisions"} responded in ${result.durationMs} ms.${result.provider === "Jev fallback" ? " OpenAI credits are exhausted; Jev is handling verification through Vercel AI Gateway." : ""} Test routing: ${result.route}. Conflict probability: ${(result.conflictProbability * 100).toFixed(1)}%.` };
 }
