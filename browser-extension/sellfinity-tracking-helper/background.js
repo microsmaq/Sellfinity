@@ -259,7 +259,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       acknowledged = true;
       await processBulkQueue(sender.tab.id);
     })().catch(async (error) => {
-      const reason = `The Amazon price check could not start: ${error?.message || "Chrome helper storage or background worker is unavailable. Reload the helper and this Sellfinity page."}`;
+      const reason = /quota.?bytes|kquotabytes|quota.*exceed/i.test(error?.message || "")
+        ? "The Chrome helper reached its local storage limit. Update to helper v1.6.15 with larger queue storage enabled, reload it in Chrome Extensions, then refresh Sellfinity and retry. Keep the existing installation to preserve your settings and unfinished checks."
+        : `The Amazon price check could not start: ${error?.message || "Chrome helper storage or background worker is unavailable. Reload the helper and this Sellfinity page."}`;
       if (!acknowledged) sendResponse({ ok: false, error: reason });
       else {
         try { await chrome.tabs.sendMessage(sender.tab.id, { type: "AMAZON_PRICE_RUN_FAILED", error: reason }); } catch { /* The source tab may have closed. */ }

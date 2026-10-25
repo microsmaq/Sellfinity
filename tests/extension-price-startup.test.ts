@@ -38,7 +38,7 @@ it("preserves a successful queued response", async () => {
   expect((await content(async () => ({ ok: true, queued: 1 }))).at(-1)).toMatchObject({ status: "running", total: 1 });
 });
 
-function worker(initial: any[] = [], storageError = false) {
+function worker(initial: any[] = [], storageError = false, writeError = "") {
   let listener: any;
   const data: Record<string, any> = { pendingTrackingRequests: initial };
   const opened: any[] = [];
@@ -48,8 +48,8 @@ function worker(initial: any[] = [], storageError = false) {
     chrome: {
       runtime: { onMessage: { addListener(fn: any) { listener = fn; } } },
       storage: { local: {
-        async get(key: string) { if (storageError) throw new Error("Storage unavailable"); return { [key]: data[key] }; },
-        async set(values: any) { Object.assign(data, values); },
+        async get(key: string) { if (storageError) throw new Error("Storage unavailable"); return structuredClone({ [key]: data[key] }); },
+        async set(values: any) { if (writeError) throw new Error(writeError); Object.assign(data, values); },
       } },
       tabs: {
         onUpdated: { addListener() {} }, onCreated: { addListener() {} }, onRemoved: { addListener() {} },
@@ -67,6 +67,15 @@ function worker(initial: any[] = [], storageError = false) {
 }
 it("returns a useful response when background storage fails", async () => {
   expect(await worker([], true).send([product])).toMatchObject({ ok: false, error: expect.stringContaining("Storage unavailable") });
+});
+it("explains quota failures without clearing settings or unfinished work", async () => {
+  const env = worker([], false, "Resource::kQuotaBytes quota exceeded");
+  env.data.amazonWorkloadControls = { dailyLimit: 100, paused: true };
+  env.data.pendingTrackingRequests = [{ mode: "TRACKING", createdAt: Date.now(), requestId: "unfinished" }];
+  const before = JSON.stringify(env.data);
+  expect(await env.send([product])).toMatchObject({ ok: false, error: expect.stringContaining("larger queue storage") });
+  expect(JSON.stringify(env.data)).toBe(before);
+  expect(env.opened).toHaveLength(0);
 });
 it("does not acknowledge zero jobs when another tab owns the products", async () => {
   const env = worker([{ ...product, mode: "PRICE", bulk: true, sourceTabId: 2, createdAt: Date.now() }]);

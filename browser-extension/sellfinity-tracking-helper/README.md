@@ -1,5 +1,17 @@
 # Sellfinity Amazon Tracking Helper
 
+## Larger saved queues (v1.6.15)
+
+The helper requests Chrome's `unlimitedStorage` permission so large saved queues
+do not hit the default extension-local storage cap. No website permissions have
+been added. Settings, schedules and unfinished checks stay in the same storage;
+this update does not clear or reset them. Workload and verification pauses remain
+unchanged. Disk space still needs to be available on the computer.
+
+Replace the files in the existing unpacked helper folder, reload that same
+installation in `chrome://extensions`, then refresh Sellfinity. Do not uninstall
+or reset the helper to apply this update.
+
 ## Price checker startup recovery (v1.6.14)
 
 Startup failures now show the actual reason instead of a generic error. Reload
@@ -37,7 +49,7 @@ not overwrite content. Unknown shipping preserves its saved value. Content-check
 and refresh timestamps are recorded in the catalog audit details. Refresh results
 count product-detail saves separately from prices and warn about price-only reads.
 
-Replace the unpacked helper with v1.6.14, reload it in `chrome://extensions`, then
+Replace the unpacked helper with v1.6.15, reload it in `chrome://extensions`, then
 refresh the Sellfinity and Amazon tabs. Older helpers still save prices, but need
 this update to send product details. To revisit records already checked today,
 turn off **Skip checked in last 24 hours** for a manual run.

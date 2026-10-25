@@ -427,7 +427,7 @@ export function AdminArbitrageManager({
           const failed = Math.max(0, next.total - updated - unavailable);
           setLiveAmazonProgress({ ...next, unavailable });
           setNotice({
-            text: `Live Amazon refresh complete: ${updated} prices updated, ${contentUpdated} product details refreshed, ${unavailable} confirmed unavailable${failed ? `, and ${failed} could not be verified` : ""}${liveAmazonSkippedFresh.current ? `. ${liveAmazonSkippedFresh.current.toLocaleString()} recently checked product${liveAmazonSkippedFresh.current === 1 ? " was" : "s were"} skipped` : ""}. No Rainforest credits used.${priceOnly ? ` ${priceOnly} price-only results: product content was not returned. Reload helper v1.6.14 to refresh all readable details.` : ""}${liveAmazonSaveErrors.current[0] ? ` ${liveAmazonSaveErrors.current[0]}` : ""}`,
+            text: `Live Amazon refresh complete: ${updated} prices updated, ${contentUpdated} product details refreshed, ${unavailable} confirmed unavailable${failed ? `, and ${failed} could not be verified` : ""}${liveAmazonSkippedFresh.current ? `. ${liveAmazonSkippedFresh.current.toLocaleString()} recently checked product${liveAmazonSkippedFresh.current === 1 ? " was" : "s were"} skipped` : ""}. No Rainforest credits used.${priceOnly ? ` ${priceOnly} price-only results: product content was not returned. Reload helper v1.6.15 to refresh all readable details.` : ""}${liveAmazonSaveErrors.current[0] ? ` ${liveAmazonSaveErrors.current[0]}` : ""}`,
             error: failed > 0 || priceOnly > 0,
           });
           router.refresh();
@@ -513,7 +513,7 @@ export function AdminArbitrageManager({
       await new Promise<void>((resolve) => window.requestAnimationFrame(() => window.requestAnimationFrame(() => resolve())));
       liveAmazonStartupTimer.current = window.setTimeout(() => {
         setLiveAmazonProgress((current) => current?.status === "starting" ? { ...current, status: "error" } : current);
-        setNotice({ text: "The Chrome helper did not respond. Reload helper v1.6.14, refresh this page, then try again.", error: true });
+        setNotice({ text: "The Chrome helper did not respond. Reload helper v1.6.15, refresh this page, then try again.", error: true });
       }, 8_000);
       document.dispatchEvent(new CustomEvent("sellfinity:bulk-amazon-price-check", { detail: { requests: prepared.requests } }));
     });
@@ -1018,7 +1018,7 @@ export function AdminArbitrageManager({
             </label>
             <Button type="button" disabled={pending || liveAmazonRunning || (liveAmazonScope === "SELECTED" && selected.size === 0)} onClick={() => startLiveAmazonRefresh()}>{liveAmazonRunning ? "Refreshing Amazon…" : "Refresh Amazon details"}</Button>
             {liveAmazonRunning && <Button type="button" variant="danger" onClick={stopLiveAmazonRefresh}>Stop</Button>}
-            <a href="/downloads/sellfinity-tracking-helper.zip?v=1.6.14" download className="text-xs font-semibold text-indigo-700 hover:underline">Chrome helper v1.6.14</a>
+            <a href="/downloads/sellfinity-tracking-helper.zip?v=1.6.15" download className="text-xs font-semibold text-indigo-700 hover:underline">Chrome helper v1.6.15</a>
           </div>
         </div>
       </Card>
