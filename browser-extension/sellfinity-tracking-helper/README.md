@@ -1,5 +1,16 @@
 # Sellfinity Amazon Tracking Helper
 
+## Higher daily ceiling (v1.6.17)
+
+Maximum pages per day now accepts 1–10,000 in both popup and background
+validation. Existing saved values and the 100-page initial default are unchanged.
+After updating the helper, enter your preferred ceiling in Workload controls and
+save. Page spacing, breaks, one-page concurrency, error waits and verification
+pauses are unchanged. This allowance is shared by price checks and discovery on
+this computer, counts page visits rather than successful updates, and is not a
+guarantee that 10,000 pages can be processed in a day. Per-import targets remain
+unchanged.
+
 ## Lightweight popup status (v1.6.16)
 
 Opening the helper reads compact status only; it never starts a scan. Status
@@ -65,7 +76,7 @@ not overwrite content. Unknown shipping preserves its saved value. Content-check
 and refresh timestamps are recorded in the catalog audit details. Refresh results
 count product-detail saves separately from prices and warn about price-only reads.
 
-Replace the unpacked helper with v1.6.16, reload it in `chrome://extensions`, then
+Replace the unpacked helper with v1.6.17, reload it in `chrome://extensions`, then
 refresh the Sellfinity and Amazon tabs. Older helpers still save prices, but need
 this update to send product details. To revisit records already checked today,
 turn off **Skip checked in last 24 hours** for a manual run.

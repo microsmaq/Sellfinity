@@ -65,7 +65,7 @@ chrome.runtime.onMessage.addListener((message, _sender, respond) => {
     if (message.type === "GET_WORKLOAD_SETTINGS") return respond({ ok: true, settings: await workloadState() });
     if (message.type === "SAVE_WORKLOAD_SETTINGS") {
       const input = message.settings || {};
-      const bounds = { intervalSeconds: [30, 3600], dailyLimit: [1, 1000], batchSize: [1, 100], breakMinutes: [1, 240] };
+      const bounds = { intervalSeconds: [30, 3600], dailyLimit: [1, 10000], batchSize: [1, 100], breakMinutes: [1, 240] };
       for (const [field, [min, max]] of Object.entries(bounds)) {
         if (!Number.isInteger(input[field]) || input[field] < min || input[field] > max) return respond({ ok: false, error: `${field} must be a whole number from ${min} to ${max}.` });
       }

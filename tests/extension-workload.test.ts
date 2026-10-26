@@ -128,6 +128,20 @@ describe("Amazon workload controls", () => {
   });
   it("explains which limit prevents saving", async () => {
     const w = workload();
-    expect(await w.message({ type: "SAVE_WORKLOAD_SETTINGS", settings: { intervalSeconds: 60, dailyLimit: 2000, batchSize: 20, breakMinutes: 15 } })).toMatchObject({ ok: false, error: "dailyLimit must be a whole number from 1 to 1000." });
+    expect(await w.message({ type: "SAVE_WORKLOAD_SETTINGS", settings: { intervalSeconds: 60, dailyLimit: 10001, batchSize: 20, breakMinutes: 15 } })).toMatchObject({ ok: false, error: "dailyLimit must be a whole number from 1 to 10000." });
   });
+});
+it("accepts the higher daily ceiling without clearing pauses, usage, spacing or breaks", async () => {
+  const w = workload();
+  await w.run('saveWorkload({paused:true, verification:true, used:1000, nextAt:Date.now()+900000})');
+  expect(await w.message({ type: "SAVE_WORKLOAD_SETTINGS", settings: { intervalSeconds: 120, dailyLimit: 10000, batchSize: 10, breakMinutes: 20 } })).toMatchObject({ ok: true });
+  expect(await w.run("workloadState()")).toMatchObject({ paused: true, verification: true, used: 1000, intervalSeconds: 120, dailyLimit: 10000, batchSize: 10, breakMinutes: 20 });
+  expect(await w.run("reserveAmazonPage()")).toMatchObject({ ok: false });
+});
+it("continues beyond 1,000 checks but stops at the configured 10,000 ceiling", async () => {
+  const w = workload();
+  await w.run("saveWorkload({dailyLimit:10000, used:1000})");
+  expect(await w.run("reserveAmazonPage()")).toMatchObject({ ok: true });
+  await w.run("saveWorkload({used:10000, nextAt:0})");
+  expect(await w.run("reserveAmazonPage()")).toMatchObject({ ok: false, reason: expect.stringContaining("Daily page limit") });
 });

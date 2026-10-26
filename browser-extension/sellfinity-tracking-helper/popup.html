@@ -28,7 +28,8 @@
       <strong>Amazon workload controls</strong>
       <p class="detail">Limits reduce unnecessary traffic; they do not guarantee Amazon access. Verification requires you to complete the check manually.</p>
       <label>Seconds between pages <input id="work-interval" type="number" min="30" max="3600" value="60"></label>
-      <label>Maximum pages per day <input id="work-limit" type="number" min="1" max="1000" value="100"></label>
+      <label>Maximum pages per day <input id="work-limit" type="number" min="1" max="10000" value="100"></label>
+      <p class="detail">Choose up to 10,000 page checks per day. This is a ceiling, not a target; page spacing, breaks and verification pauses still apply.</p>
       <label>Pages before a break <input id="work-batch" type="number" min="1" max="100" value="20"></label>
       <label>Break length (minutes) <input id="work-break" type="number" min="1" max="240" value="15"></label>
       <button id="save-work" type="button">Save workload limits</button>
