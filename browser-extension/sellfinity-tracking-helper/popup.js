@@ -2,6 +2,14 @@ const modes = {
   PRICE: { prefix: "price", idle: "No price check is running." },
   TRACKING: { prefix: "tracking", idle: "No tracking check is running." }
 };
+// Older machines must not accumulate status requests while a large saved queue
+// is being read. Opening the popup only reads compact status; it starts no jobs.
+const STATUS_REFRESH_MS = 5000;
+let statusRefreshing = false;
+let statusTimer = null;
+let popupClosed = false;
+let settingsLoaded = false;
+globalThis.addEventListener?.("pagehide", () => { popupClosed = true; if (statusTimer) clearTimeout(statusTimer); });
 
 document.getElementById("version").textContent = `Version ${chrome.runtime.getManifest().version}`;
 
@@ -33,6 +41,9 @@ function renderMode(mode, response) {
 }
 
 async function refreshStatus() {
+  if (statusRefreshing || popupClosed) return;
+  statusRefreshing = true;
+  if (statusTimer) clearTimeout(statusTimer);
   try {
     const response = await chrome.runtime.sendMessage({ type: "GET_HELPER_STATUS" }).catch(() => null) || { statuses: [] };
     if (!Array.isArray(response.statuses)) response.statuses = [];
@@ -43,12 +54,33 @@ async function refreshStatus() {
       document.getElementById("work-detail").textContent = `${state.used || 0}/${state.dailyLimit} pages today · ${state.paused ? state.reason : (state.nextAt > Date.now() ? `${state.reason} Next check after ${new Date(state.nextAt).toLocaleTimeString()}.` : "Ready")}`;
       document.getElementById("pause-work").disabled = !!state.paused;
       document.getElementById("resume-work").disabled = !state.paused;
+      if (!settingsLoaded) for (const [id, field] of [["interval", "intervalSeconds"], ["limit", "dailyLimit"], ["batch", "batchSize"], ["break", "breakMinutes"]]) document.getElementById(`work-${id}`).value = state[field];
     }
     renderMode("PRICE", response);
     renderMode("TRACKING", response);
     const daily = await chrome.runtime.sendMessage({ type: "GET_DAILY_SETTINGS" }).catch(() => null);
     if (daily?.ok) document.getElementById("daily-detail").textContent = `${daily.settings.status || "Ready"} · ${daily.settings.detail || "Daily scheduling is off until enabled."}`;
-    const catalog = await chrome.runtime.sendMessage({ type: "GET_CATALOG_IMPORT_STATUS" });
+    if (!settingsLoaded && daily?.ok) {
+      document.getElementById("daily-enabled").checked = daily.settings.enabled;
+      document.getElementById("daily-time").value = daily.settings.time;
+      document.getElementById("daily-mode").value = daily.settings.mode || "ADMIN";
+    }
+    const catalog = await chrome.runtime.sendMessage({ type: "GET_CATALOG_IMPORT_STATUS", compact: true });
+    if (!settingsLoaded && catalog?.ok) {
+      const repair = catalog.repairSchedule;
+      if (repair) {
+        document.getElementById("repair-enabled").checked = repair.enabled;
+        document.getElementById("repair-time").value = repair.time;
+        document.getElementById("repair-limit").value = repair.limit;
+      }
+      const schedule = catalog.schedule;
+      if (schedule) {
+        document.getElementById("discovery-enabled").checked = schedule.enabled;
+        document.getElementById("discovery-time").value = schedule.time;
+        document.getElementById("discovery-limit").value = schedule.limit;
+        document.getElementById("discovery-pages").value = (schedule.pages || []).join("\n");
+      }
+    }
     const activity = catalog?.activity;
     if (activity) {
       document.getElementById("catalog-status").textContent = activity.state;
@@ -61,9 +93,13 @@ async function refreshStatus() {
       document.getElementById("resume-catalog").disabled = !activity.canResume;
       document.getElementById("resume-catalog").textContent = activity.canResume ? "Resume unfinished import" : "No unfinished import to resume";
     }
+    if (workload?.ok && daily?.ok && catalog?.ok) settingsLoaded = true;
 
   } catch {
     document.querySelectorAll(".detail:not(#work-feedback)").forEach((element) => { element.textContent = "Helper status is temporarily unavailable."; });
+  } finally {
+    statusRefreshing = false;
+    if (!popupClosed) statusTimer = setTimeout(() => void refreshStatus(), STATUS_REFRESH_MS);
   }
 }
 
@@ -81,13 +117,6 @@ async function stop(mode) {
 document.getElementById("stop-price").addEventListener("click", () => stop("PRICE"));
 document.getElementById("stop-tracking").addEventListener("click", () => stop("TRACKING"));
 void refreshStatus();
-setInterval(refreshStatus, 1000);
-
-void chrome.runtime.sendMessage({ type: "GET_WORKLOAD_SETTINGS" }).then((response) => {
-  if (!response?.ok) return;
-  const state = response.settings;
-  for (const [id, field] of [["interval", "intervalSeconds"], ["limit", "dailyLimit"], ["batch", "batchSize"], ["break", "breakMinutes"]]) document.getElementById(`work-${id}`).value = state[field];
-}).catch(() => { document.getElementById("work-feedback").textContent = "Settings could not load. Reload the extension, then reopen this popup."; });
 document.getElementById("save-work").addEventListener("click", async () => {
   const feedback = document.getElementById("work-feedback");
   const button = document.getElementById("save-work");
@@ -123,12 +152,6 @@ document.getElementById("resume-work").addEventListener("click", async () => {
   await refreshStatus();
 });
 
-void chrome.runtime.sendMessage({ type: "GET_DAILY_SETTINGS" }).then((response) => {
-  if (!response?.ok) return;
-  document.getElementById("daily-enabled").checked = response.settings.enabled;
-  document.getElementById("daily-time").value = response.settings.time;
-  document.getElementById("daily-mode").value = response.settings.mode || "ADMIN";
-});
 document.getElementById("save-daily").addEventListener("click", async () => {
   const enabled = document.getElementById("daily-enabled").checked;
   const time = document.getElementById("daily-time").value;
@@ -164,17 +187,3 @@ document.getElementById("save-discovery").addEventListener("click", () => catalo
   limit: Number(document.getElementById("discovery-limit").value),
   pages: document.getElementById("discovery-pages").value.split(/\r?\n/).map((line) => line.trim()).filter(Boolean),
 }));
-void chrome.runtime.sendMessage({ type: "GET_CATALOG_IMPORT_STATUS" }).then((response) => {
-  const repair = response?.repairSchedule;
-  if (repair) {
-    document.getElementById("repair-enabled").checked = repair.enabled;
-    document.getElementById("repair-time").value = repair.time;
-    document.getElementById("repair-limit").value = repair.limit;
-  }
-  const schedule = response?.schedule;
-  if (!schedule) return;
-  document.getElementById("discovery-enabled").checked = schedule.enabled;
-  document.getElementById("discovery-time").value = schedule.time;
-  document.getElementById("discovery-limit").value = schedule.limit;
-  document.getElementById("discovery-pages").value = schedule.pages.join("\n");
-});

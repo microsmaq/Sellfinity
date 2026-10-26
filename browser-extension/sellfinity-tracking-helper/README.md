@@ -1,5 +1,21 @@
 # Sellfinity Amazon Tracking Helper
 
+## Lightweight popup status (v1.6.16)
+
+Opening the helper reads compact status only; it never starts a scan. Status
+refreshes every five seconds after the previous refresh finishes, so slow
+computers cannot accumulate overlapping refreshes. Initial settings share the
+first status pass instead of sending duplicate requests. Closing the popup stops
+its refresh timer. Discovery status reads the saved job once, sends no product
+queue or captured product payload to the popup, and bounds displayed errors.
+
+This update does not clear settings, discard unfinished checks, change daily
+schedules, or remove larger-queue storage support. Replace files in the existing
+helper folder, reload that installation, then refresh Sellfinity. The popup load
+reduction is tested with a 20,000-product job; old-Mac hardware validation is
+still required and this does not establish a specific macOS/Chrome compatibility
+guarantee.
+
 ## Larger saved queues (v1.6.15)
 
 The helper requests Chrome's `unlimitedStorage` permission so large saved queues
@@ -49,7 +65,7 @@ not overwrite content. Unknown shipping preserves its saved value. Content-check
 and refresh timestamps are recorded in the catalog audit details. Refresh results
 count product-detail saves separately from prices and warn about price-only reads.
 
-Replace the unpacked helper with v1.6.15, reload it in `chrome://extensions`, then
+Replace the unpacked helper with v1.6.16, reload it in `chrome://extensions`, then
 refresh the Sellfinity and Amazon tabs. Older helpers still save prices, but need
 this update to send product details. To revisit records already checked today,
 turn off **Skip checked in last 24 hours** for a manual run.

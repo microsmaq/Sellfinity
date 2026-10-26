@@ -79,10 +79,10 @@ async function continueDiscovery() {
 }
 
 async function catalogJob() { return (await chrome.storage.local.get(CATALOG_JOB_KEY))[CATALOG_JOB_KEY]; }
-async function catalogActivity() {
-  const job = await catalogJob();
-  const settings = await discoverySettings();
-  const work = await workloadState();
+async function catalogActivity(snapshot) {
+  const job = snapshot ? snapshot.job : await catalogJob();
+  const settings = snapshot ? snapshot.settings : await discoverySettings();
+  const work = snapshot ? snapshot.work : await workloadState();
   const enabled = Boolean(settings?.enabled);
   let state = job?.status || (enabled ? "waiting" : "off");
   let reason = job?.stage || job?.detail || "Discovery is off. Start continuous discovery or save a daily schedule.";
@@ -110,7 +110,7 @@ async function catalogActivity() {
     }
   }
   const categoryChecks = (settings?.pages || []).map((page) => settings.pageChecks?.[page]);
-  return { state, reason, nextAt, canResume: ["error", "cancelled"].includes(job?.status) && catalogHasRemaining(job), categoriesSuccessful: categoryChecks.filter((check) => check?.status === "success").length, categoriesRetrying: categoryChecks.filter((check) => ["failed", "checking", "unknown"].includes(check?.status)).length, categoriesUnattempted: categoryChecks.filter((check) => !check).length, continuous: Boolean(enabled && settings.continuous), enabled, currentUrl: job?.currentUrl || "", currentAsin: job?.currentAsin || "", processed: job?.cursor || 0, total: job?.candidates?.length || 0, pagesChecked: job?.pageCursor || 0, pagesTotal: job?.pages?.length || 0, pagesFailed: job?.pagesFailed || 0, added: job?.added || 0, enriched: job?.updated || 0, skipped: job?.skipped || 0, failed: (job?.failed || 0) + (job?.pagesFailed || 0), errors: job?.errors || [], updatedAt: job?.updatedAt || null };
+  return { state, reason, nextAt, canResume: ["error", "cancelled"].includes(job?.status) && catalogHasRemaining(job), categoriesSuccessful: categoryChecks.filter((check) => check?.status === "success").length, categoriesRetrying: categoryChecks.filter((check) => ["failed", "checking", "unknown"].includes(check?.status)).length, categoriesUnattempted: categoryChecks.filter((check) => !check).length, continuous: Boolean(enabled && settings.continuous), enabled, currentUrl: job?.currentUrl || "", currentAsin: job?.currentAsin || "", processed: job?.cursor || 0, total: job?.candidates?.length || 0, pagesChecked: job?.pageCursor || 0, pagesTotal: job?.pages?.length || 0, pagesFailed: job?.pagesFailed || 0, added: job?.added || 0, enriched: job?.updated || 0, skipped: job?.skipped || 0, failed: (job?.failed || 0) + (job?.pagesFailed || 0), errors: (job?.errors || []).slice(-20).map((error) => String(error).slice(0, 1000)), updatedAt: job?.updatedAt || null };
 }
 async function saveCatalogJob(job, resume = false) {
   const current = await catalogJob();
@@ -276,7 +276,12 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   void (async () => {
     try {
       if (message.type === "GET_CATALOG_IMPORT_STATUS") {
-        sendResponse({ ok: true, job: await catalogJob(), activity: await catalogActivity(), schedule: await discoverySettings(), repairSchedule: (await chrome.storage.local.get(REPAIR_KEY))[REPAIR_KEY] }); return;
+        const job = await catalogJob();
+        const schedule = await discoverySettings();
+        const work = await workloadState();
+        sendResponse({ ok: true, ...(message.compact ? {} : { job }), activity: await catalogActivity({ job, settings: schedule, work }),
+          schedule: message.compact && schedule ? { enabled: schedule.enabled, continuous: schedule.continuous, time: schedule.time, limit: schedule.limit, pages: schedule.pages } : schedule,
+          repairSchedule: (await chrome.storage.local.get(REPAIR_KEY))[REPAIR_KEY] }); return;
       }
       if (message.type === "STOP_CATALOG_IMPORT") {
         await updateDiscovery((settings) => settings?.continuous ? { ...settings, enabled: false, continuous: false } : settings);

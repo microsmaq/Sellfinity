@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Sellfinity Amazon Tracking Helper",
-  "version": "1.6.15",
+  "version": "1.6.16",
   "description": "Automatically checks Amazon tracking pages and saves carrier tracking to Sellfinity fulfillment.",
   "permissions": ["tabs", "storage", "unlimitedStorage", "alarms"],
   "host_permissions": [
