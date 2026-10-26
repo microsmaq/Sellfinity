@@ -3,9 +3,9 @@ vi.mock("server-only", () => ({}));
 vi.mock("@/lib/db", () => ({ db: {} }));
 vi.mock("@/lib/ai/jev", async (importOriginal) => {
   const original = await importOriginal<typeof import("@/lib/ai/jev")>();
-  return { ...original, screenProductPairWithJev: vi.fn().mockResolvedValue(null) };
+  return { ...original, screenProductPairWithJev: vi.fn().mockResolvedValue(null), evaluateJevDecision: vi.fn().mockResolvedValue(null) };
 });
-import { screenProductPairWithJev } from "@/lib/ai/jev";
+import { evaluateJevDecision, screenProductPairWithJev } from "@/lib/ai/jev";
 import {
   assessProductMatch,
   assessProductMatchRules,
@@ -16,6 +16,7 @@ describe("arbitrage product identity", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
     vi.mocked(screenProductPairWithJev).mockResolvedValue(null);
+    vi.mocked(evaluateJevDecision).mockReset().mockResolvedValue(null);
   });
 
   it("keeps strong Jev conflicts out of approval without a visual API call", async () => {
@@ -112,5 +113,38 @@ describe("arbitrage product identity", () => {
       Authorization: "Bearer test-openrouter-key",
       "X-OpenRouter-Title": "Sellfinity",
     });
+  });
+
+  it("uses an image-aware decision fallback only after the visual provider runs out of credits", async () => {
+    vi.stubEnv("OPENROUTER_API_KEY", "router-key");
+    const fetcher = vi.fn().mockImplementation(async () => Response.json({ error: { message: "Insufficient credits" } }, { status: 402 }));
+    vi.stubGlobal("fetch", fetcher);
+    vi.mocked(evaluateJevDecision).mockImplementation(async (_state, _questions, _diagnostic, _failure, _images, provider) => {
+      provider?.("Jev fallback");
+      return { sameVisualProduct: { type: "boolean", probability: 0.98 }, visualConflict: { type: "boolean", probability: 0.01 } };
+    });
+    const result = await assessProductMatch({ title: "Acme Black Lamp", imageUrl: "https://i.ebayimg.com/a.jpg" }, { title: "Acme Black Lamp", imageUrl: "https://m.media-amazon.com/a.jpg" });
+    expect(result).toMatchObject({ method: "AI", verdict: "MATCH", confidence: 98, reason: expect.stringContaining("Jev fallback image verification") });
+    expect(vi.mocked(evaluateJevDecision).mock.calls[0][4]).toEqual(["https://m.media-amazon.com/a.jpg", "https://i.ebayimg.com/a.jpg"]);
+    vi.unstubAllEnvs();
+  });
+
+  it.each([401, 429, 500])("reports visual HTTP %s failures without overriding them through another provider", async (status) => {
+    vi.stubEnv("OPENROUTER_API_KEY", "router-key");
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(async () => Response.json({ error: { message: "Failure" } }, { status })));
+    const report = vi.fn();
+    const result = await assessProductMatch({ title: "Acme Lamp" }, { title: "Acme Lamp" }, report);
+    expect(result.method).toBe("RULES");
+    expect(evaluateJevDecision).not.toHaveBeenCalled();
+    expect(report).toHaveBeenCalledWith(expect.stringContaining(`HTTP ${status}`));
+    vi.unstubAllEnvs();
+  });
+
+  it("keeps uncertain fallback image scores in review", async () => {
+    vi.stubEnv("OPENROUTER_API_KEY", "router-key");
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(async () => new Response(null, { status: 402 })));
+    vi.mocked(evaluateJevDecision).mockResolvedValue({ sameVisualProduct: { type: "boolean", probability: 0.94 }, visualConflict: { type: "boolean", probability: 0.02 } });
+    expect(await assessProductMatch({ title: "Acme Lamp", imageUrl: "https://i.ebayimg.com/a" }, { title: "Acme Lamp", imageUrl: "https://m.media-amazon.com/a" })).toMatchObject({ verdict: "REVIEW", confidence: 94 });
+    vi.unstubAllEnvs();
   });
 });

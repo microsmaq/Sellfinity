@@ -49,6 +49,15 @@ it("stores the real fallback error instead of discarding it during automatic app
   expect(mocks.publish).not.toHaveBeenCalled();
   expect(mocks.hold.mock.calls[0][0].data.matchReason).toContain("Jev fallback returned HTTP 400: Image input unavailable.");
 });
+it("preserves the specific image-aware matcher failure for the item", async () => {
+  mocks.assess.mockImplementation(async (_ebay, _amazon, reportFailure) => {
+    reportFailure("Product photo 2: Product image download failed (HTTP 404).");
+    return { method: "RULES", verdict: "LIKELY", confidence: 90 };
+  });
+  await reviewSavedCatalogCandidate("a");
+  expect(mocks.publish).not.toHaveBeenCalled();
+  expect(mocks.hold.mock.calls[0][0].data.matchReason).toContain("Product photo 2");
+});
 it("supplies both images, separates missing details from contradictions and does not anchor Decisions to a prior score", async () => {
   const item = { ...row(), matchConfidence: 100, amazonImageUrl: "https://example.com/amazon.jpg", ebayImageUrl: "https://example.com/ebay.jpg", amazonImportDetailsJson: '{"variant":"Black"}' };
   mocks.find.mockResolvedValue(item); await reviewSavedCatalogCandidate("a");

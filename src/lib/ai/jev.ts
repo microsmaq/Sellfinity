@@ -1,6 +1,7 @@
 import "server-only";
 import { z } from "zod";
 import { createHash } from "node:crypto";
+import { DecisionImageError, prepareDecisionImages } from "./decision-images";
 
 // Compatibility names preserve callers; OpenAI is primary, Jev handles exhausted credits.
 export type JevScreen = { sameProductProbability: number; conflictProbability: number; route: "VERIFY" | "REVIEW" | "REJECT"; durationMs: number; provider?: string };
@@ -75,12 +76,18 @@ export async function evaluateJevDecision(state: unknown, questions: Record<stri
       const gatewayKey = jevFallbackKey();
       if (!gatewayKey) throw new Error("OpenAI Decisions returned HTTP 429: No credits remaining. Jev fallback is not configured or is disabled.");
       provider = "Jev fallback";
-      const jevBody = JSON.stringify({ ...request, model: imageUrls.length ? "typesafe-ai/jev-1.14.0" : "typesafe-ai/jev" });
-      resultKey = createHash("sha256").update(jevBody).digest("hex");
+      const jevRequest = { ...request, model: imageUrls.length ? "typesafe-ai/jev-1.14.0" : "typesafe-ai/jev" };
+      // Cache by source evidence, not large inline photo payloads.
+      resultKey = createHash("sha256").update(JSON.stringify(jevRequest)).digest("hex");
       const fallbackSaved = cache.get(resultKey);
       if (!diagnostic && fallbackSaved && fallbackSaved.expires > Date.now()) { reportProvider?.(provider); return fallbackSaved.result; }
       // Waiting is not another provider failure: never extend the cooldown here.
       if (!diagnostic && Date.now() < jevUnavailableUntil) return fail(`${lastJevFailure || "Jev fallback is unavailable."} Retry in ${Math.ceil((jevUnavailableUntil - Date.now()) / 1000)} seconds.`);
+      const encoded = await prepareDecisionImages(imageUrls);
+      const jevBody = JSON.stringify({ ...jevRequest, input: encoded.length ? [{ role: "user", content: [
+        { type: "input_text", text: evidence },
+        ...encoded.map((image_url) => ({ type: "input_image", image_url, detail: "high" })),
+      ] }] : evidence });
       response = await fetch("https://ai-gateway.vercel.sh/v1/decisions", {
         method: "POST", headers: { authorization: `Bearer ${gatewayKey}`, "content-type": "application/json" },
         signal: AbortSignal.timeout(12_000), body: jevBody,
@@ -111,6 +118,8 @@ export async function evaluateJevDecision(state: unknown, questions: Record<stri
     reportProvider?.(provider);
     return answers;
   } catch (error) {
+    // A bad photo affects this product, not every other product in the batch.
+    if (error instanceof DecisionImageError) return fail(error.message);
     const reason = error instanceof Error && /^(OpenAI Decisions|Jev fallback)/.test(error.message) ? sanitizeJevDiagnostic(error.message)
       : error instanceof Error && /TimeoutError|AbortError/.test(error.name) ? `${provider} timed out.`
       : error instanceof z.ZodError ? `${provider} returned an unexpected answer format (${error.issues.map((issue) => issue.path.join(".")).slice(0, 3).join(", ")}).`
@@ -141,6 +150,6 @@ export async function screenProductPairWithJev(amazonTitle: string, ebayTitle: s
 /** Provider errors may echo credentials. Never return them. */
 export function sanitizeJevDiagnostic(message: string): string {
   let safe = message;
-  for (const secret of [process.env.OPENAI_API_KEY, process.env.AI_GATEWAY_API_KEY, process.env.VERCEL_OIDC_TOKEN]) if (secret?.trim()) safe = safe.split(secret.trim()).join("[redacted]");
-  return safe.replace(/Bearer\s+\S+/gi, "Bearer [redacted]").replace(/(?:sk-|vck_)[A-Za-z0-9_-]+/g, "[redacted]").replace(/https?:\/\/\S+/gi, "[URL]").replace(/[\r\n]+/g, " ").slice(0, 350);
+  for (const secret of [process.env.OPENAI_API_KEY, process.env.OPENROUTER_API_KEY, process.env.AI_GATEWAY_API_KEY, process.env.VERCEL_OIDC_TOKEN]) if (secret?.trim()) safe = safe.split(secret.trim()).join("[redacted]");
+  return safe.replace(/Bearer\s+\S+/gi, "Bearer [redacted]").replace(/(?:sk-|vck_)[A-Za-z0-9_-]+/g, "[redacted]").replace(/data:image\/[a-z0-9.+-]+;base64,[a-z0-9+/=]+/gi, "[image data]").replace(/https?:\/\/\S+/gi, "[URL]").replace(/[\r\n]+/g, " ").slice(0, 350);
 }

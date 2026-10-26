@@ -5,7 +5,14 @@ evidence (`credit_balance_exhausted`, legacy `insufficient_quota`, or the explic
 no-credits message), the shared decision adapter retries the same questions and
 input via Vercel AI Gateway's OpenAI-compatible `/v1/decisions` endpoint using
 `typesafe-ai/jev` for text and the explicit image-capable `typesafe-ai/jev-1.14.0`
-for image requests. Image parts are retained, not converted to plain URL text.
+for image requests. Gateway requires inline base64 image data, not external photo
+URLs. The server downloads both trusted marketplace photos, decodes and normalizes
+them to JPEG, and embeds actual bytes in the same labeled image parts. Downloads
+are limited to 8 MB, 10 seconds and three validated redirects; decoded images are
+limited to 25 megapixels and normalized to at most 1536 pixels and 2 MB each.
+The process-local photo cache is bounded to 64 photos / 16 MB with a ten-minute
+TTL. No photo bytes are added to database records, logs or extension storage.
+Failure to prepare either photo holds only that item, not unrelated products.
 
 Gateway authentication uses the existing `AI_GATEWAY_API_KEY`, falling back to
 `VERCEL_OIDC_TOKEN`. These credentials are never sent to OpenAI. Set `JEV_ENABLED=false`
@@ -27,6 +34,9 @@ negative product decisions do not trigger fallback. No fallback result can bypas
 the existing image-aware assessment, match policy, admin rejections, ban checks,
 95% identity / 5% conflict thresholds, or database concurrency guard. Failed or
 unusable Jev responses leave items unapproved. Approval notes identify Jev when used.
+The first image-aware matcher also uses this adapter on explicit OpenAI credit
+exhaustion or OpenRouter HTTP 402; other failures and actual negative decisions
+do not trigger it. Both photos and the existing approval checks remain mandatory.
 
 Reference: https://vercel.com/i/jev-integrations
 

@@ -1,6 +1,8 @@
 import { beforeEach, afterEach, expect, it, vi } from "vitest";
 vi.mock("server-only", () => ({}));
-beforeEach(() => { vi.resetModules(); vi.stubEnv("OPENAI_API_KEY", "test-key"); vi.stubEnv("OPENAI_DECISIONS_ENABLED", "true"); vi.stubEnv("OPENAI_DECISIONS_MODEL", "gpt-6-luna"); vi.stubEnv("AI_GATEWAY_API_KEY", ""); vi.stubEnv("VERCEL_OIDC_TOKEN", ""); vi.stubEnv("JEV_ENABLED", "true"); });
+const imageMocks = vi.hoisted(() => ({ prepare: vi.fn() }));
+vi.mock("@/lib/ai/decision-images", async (original) => ({ ...await original<typeof import("@/lib/ai/decision-images")>(), prepareDecisionImages: imageMocks.prepare }));
+beforeEach(() => { vi.resetModules(); imageMocks.prepare.mockReset().mockImplementation(async (urls: string[]) => urls.map((_, index) => `data:image/jpeg;base64,photo${index}`)); vi.stubEnv("OPENAI_API_KEY", "test-key"); vi.stubEnv("OPENAI_DECISIONS_ENABLED", "true"); vi.stubEnv("OPENAI_DECISIONS_MODEL", "gpt-6-luna"); vi.stubEnv("AI_GATEWAY_API_KEY", ""); vi.stubEnv("VERCEL_OIDC_TOKEN", ""); vi.stubEnv("JEV_ENABLED", "true"); });
 afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); });
 function response(same = 0.001, conflict = 0.999, route = "REJECT") {
   return Response.json({ answers: [
@@ -112,10 +114,17 @@ it("uses Jev on exhausted credits, preserving image inputs and caching its own a
   expect(fetcher.mock.calls[1][1].headers.authorization).toBe("Bearer gateway-key");
   const openai = JSON.parse(fetcher.mock.calls[0][1].body);
   const jev = JSON.parse(fetcher.mock.calls[1][1].body);
-  expect(jev).toEqual({ ...openai, model: "typesafe-ai/jev-1.14.0" });
+  expect(jev.questions).toEqual(openai.questions);
+  expect(jev.model).toBe("typesafe-ai/jev-1.14.0");
+  expect(jev.input[0].content).toEqual([
+    { type: "input_text", text: JSON.stringify({ title: "A" }) },
+    ...images.map((_, index) => ({ type: "input_image", image_url: `data:image/jpeg;base64,photo${index}`, detail: "high" })),
+  ]);
+  expect(imageMocks.prepare).toHaveBeenCalledWith(images);
   expect(provider).toHaveBeenLastCalledWith("Jev fallback");
   await evaluateJevDecision({ title: "A" }, questions, false, undefined, images);
   expect(fetcher).toHaveBeenCalledTimes(2);
+  expect(imageMocks.prepare).toHaveBeenCalledTimes(1);
   await evaluateJevDecision({ title: "B" }, questions);
   expect(fetcher.mock.calls.map(([url]) => url)).toEqual(["https://api.openai.com/v1/decisions", "https://ai-gateway.vercel.sh/v1/decisions", "https://ai-gateway.vercel.sh/v1/decisions"]);
 });
@@ -204,4 +213,20 @@ it("reports invalid image inputs without contacting either provider", async () =
   expect(await evaluateJevDecision({}, { same: { type: "boolean", instructions: "Same?" } }, false, report, [""])).toBeNull();
   expect(report).toHaveBeenCalledWith(expect.stringContaining("valid HTTPS image URL"));
   expect(fetcher).not.toHaveBeenCalled();
+});
+
+it("holds a bad photo without cooling down verification for unrelated products", async () => {
+  vi.stubEnv("AI_GATEWAY_API_KEY", "gateway-key");
+  const { DecisionImageError } = await import("@/lib/ai/decision-images");
+  imageMocks.prepare.mockRejectedValueOnce(new DecisionImageError("Product photo 1 could not be read."));
+  const fetcher = vi.fn().mockResolvedValueOnce(Response.json({ error: { code: "credit_balance_exhausted" } }, { status: 429 }))
+    .mockImplementation(async () => Response.json({ answers: [{ name: "same", type: "predicate", probability: 0.98 }] }));
+  vi.stubGlobal("fetch", fetcher);
+  const { evaluateJevDecision } = await import("@/lib/ai/jev");
+  const questions = { same: { type: "boolean" as const, instructions: "Same?" } };
+  const report = vi.fn();
+  expect(await evaluateJevDecision({ item: 1 }, questions, false, report, ["https://example.com/a.jpg"])).toBeNull();
+  expect(report).toHaveBeenCalledWith("Product photo 1 could not be read.");
+  expect(fetcher).toHaveBeenCalledTimes(1);
+  expect(await evaluateJevDecision({ item: 2 }, questions, false, report, ["https://example.com/b.jpg"])).toMatchObject({ same: { probability: 0.98 } });
 });
