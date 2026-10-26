@@ -1,10 +1,10 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Badge, Button } from "@/components/ui";
 import { prepareCatalogAutoApproval, reviewHighConfidenceCatalogNow } from "@/lib/actions/catalog-review";
-import { processCatalogApprovalQueue, type ApprovalProgress } from "@/lib/arbitrage/catalog-approval-queue";
+import { processCatalogApprovalQueue, type ApprovalProgress, type ApprovalWait } from "@/lib/arbitrage/catalog-approval-queue";
 
 export function CatalogAutoApproval({ selectedIds, disabled, onRunningChange }: { selectedIds: string[]; disabled: boolean; onRunningChange: (running: boolean) => void }) {
   const router = useRouter();
@@ -15,6 +15,8 @@ export function CatalogAutoApproval({ selectedIds, disabled, onRunningChange }: 
   const [limit, setLimit] = useState<number | "ALL">(25);
   const [progress, setProgress] = useState<ApprovalProgress>({ total: 0, done: 0, published: 0, review: 0, failed: 0, skipped: 0, items: [] });
   const [message, setMessage] = useState("");
+  const [waiting, setWaiting] = useState<ApprovalWait | null>(null);
+  useEffect(() => () => { stop.current = true; }, []);
 
   async function run(selected: boolean) {
     if (active.current) return;
@@ -32,12 +34,16 @@ export function CatalogAutoApproval({ selectedIds, disabled, onRunningChange }: 
       const outcome = await processCatalogApprovalQueue(prepared.ids, (ids) => reviewHighConfidenceCatalogNow(ids, ids.length), {
         shouldStop: () => stop.current,
         onProgress: (next) => { setProgress(next); setMessage(stop.current ? "Stopping after the current group…" : `Checking saved matches · ${next.done}/${next.total} processed…`); },
+        onWaiting: (next) => {
+          setWaiting(next);
+          setMessage(next ? `Waiting for AI service · resumes automatically in ${next.remainingSeconds}s. ${next.reason}` : "Resuming saved match checks…");
+        },
       });
       setMessage(outcome.pauseReason ? `Paused: ${outcome.pauseReason}` : outcome.stopped ? "Stopped after the current group. Completed approvals are saved." : "Review complete. Approved products are available in Arbitrage Finder; uncertain products remain in Needs review.");
     } catch {
       setMessage("Approval could not complete. Saved results are kept. Refresh Product Intelligence and check Admin Settings → Decisions connection before retrying.");
     } finally {
-      active.current = false; setRunning(false); setStopping(false); onRunningChange(false); router.refresh();
+      active.current = false; setRunning(false); setStopping(false); setWaiting(null); onRunningChange(false); router.refresh();
     }
   }
 
@@ -46,20 +52,20 @@ export function CatalogAutoApproval({ selectedIds, disabled, onRunningChange }: 
       <div className="max-w-2xl"><div className="flex flex-wrap items-center gap-2"><h2 className="font-semibold text-slate-950">Auto-approve matching products</h2><Badge tone="green">Decisions API</Badge></div>
         <p className="mt-1 text-xs leading-5 text-slate-600">Identity-only review for saved matches at 95%+. Visual AI and Decisions must each score the match at least 95%, with an explicit conflict score no higher than 5%. Both product images are checked; shorter titles and omitted details alone are not conflicts. Different brands, models, pack quantities, sizes or variants still need review. Uncertain products stay in review.</p>
         <p className="mt-1 text-xs text-slate-500">Profit, competitive pricing, sales metrics, stock, shipping and price-data age do not block admin match approval. Cost figures remain informational; each seller decides whether to list and under which pricing strategy.</p>
-        <p className="mt-1 text-xs text-slate-500">Uses saved comparisons, not new Amazon or eBay research. AI usage applies. Keep this tab open; large runs use small checkpoints and each queued product is checked once per run. Daily automation limits are unchanged.</p>
+        <p className="mt-1 text-xs text-slate-500">Uses saved comparisons, not new Amazon or eBay research. AI usage applies. OpenRouter rate limits use Jev fallback when available. Otherwise the batch waits and resumes automatically, retrying only rate-limited items; completed approvals stay saved. Keep this tab open. Daily automation limits are unchanged.</p>
       </div>
       <div className="flex shrink-0 flex-wrap items-end gap-2">
         <label className="text-xs font-medium text-slate-600">Products to check<select className="mt-1 block min-h-10 rounded-lg border border-emerald-200 bg-white px-3 text-sm" disabled={disabled || running} value={limit} onChange={(event) => setLimit(event.target.value === "ALL" ? "ALL" : Number(event.target.value))}>{[5, 10, 25, 50, 100].map((value) => <option key={value} value={value}>{value} products</option>)}<option value="ALL">All eligible products</option></select></label>
         <Button variant="secondary" disabled={disabled || running || !selectedIds.length} onClick={() => void run(true)}>Auto-approve selected ({selectedIds.length})</Button>
         <Button disabled={disabled || running} onClick={() => void run(false)}>{running ? "Checking matches…" : limit === "ALL" ? "Auto-approve all eligible" : "Auto-approve high matches"}</Button>
-        {running && <Button variant="secondary" disabled={stopping} onClick={() => { stop.current = true; setStopping(true); setMessage("Stopping after the current group…"); }}>{stopping ? "Stopping…" : "Stop after current group"}</Button>}
+        {running && <Button variant="secondary" disabled={stopping} onClick={() => { stop.current = true; setStopping(true); setMessage(waiting ? "Stopping automatic resume…" : "Stopping after the current group…"); }}>{stopping ? "Stopping…" : waiting ? "Stop automatic resume" : "Stop after current group"}</Button>}
       </div>
     </div>
     {(running || message) && <div className="mt-4" aria-live="polite">
       <div className="mb-2 flex flex-wrap justify-between gap-1 text-xs text-slate-600"><span>{progress.done}/{progress.total} processed</span><span>{progress.published} approved · {progress.review} need review · {progress.failed} failed · {progress.skipped} no longer eligible</span></div>
       <div role="progressbar" aria-label="Automatic match approval" aria-valuemin={0} aria-valuemax={progress.total || 1} aria-valuenow={progress.done} className="h-1.5 overflow-hidden rounded-full bg-emerald-100"><div className={`h-full rounded-full bg-emerald-600 transition-[width] duration-500 motion-reduce:transition-none ${running ? "motion-safe:animate-pulse" : ""}`} style={{ width: `${progress.total ? progress.done / progress.total * 100 : 0}%` }} /></div>
       <p className="mt-2 text-xs leading-5 text-slate-600">{message}</p>
-      {progress.items.length > 0 && <details className="mt-3 text-xs"><summary className="cursor-pointer font-medium text-emerald-800">Show approval activity and reasons</summary><ul className="mt-2 max-h-64 space-y-2 overflow-auto">{progress.items.slice(-200).map((item) => <li key={item.id} className="rounded-lg border border-emerald-100 bg-white p-3"><p className="font-semibold text-slate-800">{item.asin} · {item.outcome === "published" ? "Approved" : item.outcome === "failed" ? "Failed" : "Needs review"}</p><p className="mt-1 text-slate-500">{item.reason}</p></li>)}</ul>{progress.items.length > 200 && <p className="mt-2 text-slate-500">Showing the latest 200 results. Product review reasons are saved in the catalog.</p>}</details>}
+      {progress.items.length > 0 && <details className="mt-3 text-xs"><summary className="cursor-pointer font-medium text-emerald-800">Show approval activity and reasons</summary><ul className="mt-2 max-h-64 space-y-2 overflow-auto">{progress.items.slice(-200).map((item) => <li key={item.id} className="rounded-lg border border-emerald-100 bg-white p-3"><p className="font-semibold text-slate-800">{item.asin} · {item.outcome === "published" ? "Approved" : item.outcome === "failed" ? "Failed" : item.outcome === "waiting" ? "Waiting to retry" : "Needs review"}</p><p className="mt-1 text-slate-500">{item.reason}</p></li>)}</ul>{progress.items.length > 200 && <p className="mt-2 text-slate-500">Showing the latest 200 results. Product review reasons are saved in the catalog.</p>}</details>}
     </div>}
   </section>;
 }

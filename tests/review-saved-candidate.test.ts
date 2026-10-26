@@ -67,6 +67,11 @@ it("tells the caller to pause rather than consume the rest of a rate-limited bat
   expect(mocks.decisions).not.toHaveBeenCalled();
   expect(mocks.publish).not.toHaveBeenCalled();
 });
+it("returns structured retry information if the final verification is rate limited", async () => {
+  mocks.decisions.mockImplementation(async (_state, _questions, _diagnostic, reportFailure) => { reportFailure("Jev fallback returned HTTP 429.", 90); return null; });
+  expect(await reviewSavedCatalogCandidate("a")).toMatchObject({ retryAfterSeconds: 90, pauseReason: expect.stringContaining("429") });
+  expect(mocks.publish).not.toHaveBeenCalled();
+});
 it("supplies both images, separates missing details from contradictions and does not anchor Decisions to a prior score", async () => {
   const item = { ...row(), matchConfidence: 100, amazonImageUrl: "https://example.com/amazon.jpg", ebayImageUrl: "https://example.com/ebay.jpg", amazonImportDetailsJson: '{"variant":"Black"}' };
   mocks.find.mockResolvedValue(item); await reviewSavedCatalogCandidate("a");

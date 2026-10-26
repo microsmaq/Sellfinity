@@ -33,20 +33,32 @@ specific. The admin connection test bypasses cooldown/cache to test current acce
 and reports the successful provider. A later successful primary request restores
 normal primary routing. These cooldowns are process-local, not a global quota manager.
 
-Rate limiting, malformed requests, authentication failures, refusals, ambiguous or
-negative product decisions do not trigger fallback. No fallback result can bypass
+Native OpenAI Decisions rate limits, malformed requests, authentication failures,
+refusals, ambiguous or negative product decisions do not trigger model fallback.
+The OpenRouter image matcher now explicitly permits Jev fallback on HTTP 429;
+warm workers use Jev during OpenRouter's reported cooldown without calling the
+throttled visual endpoint again. This direct Jev route uses the same encoded
+photos, thresholds and separate final confirmation, not an approval shortcut.
+No fallback result can bypass
 the existing image-aware assessment, match policy, admin rejections, ban checks,
 95% identity / 5% conflict thresholds, or database concurrency guard. Failed or
 unusable Jev responses leave items unapproved. Approval notes identify Jev when used.
 The first image-aware matcher also uses this adapter on explicit OpenAI credit
-exhaustion or OpenRouter HTTP 402; other failures and actual negative decisions
-do not trigger it. Both photos and the existing approval checks remain mandatory.
+exhaustion, OpenRouter HTTP 402, or the explicitly enabled OpenRouter HTTP 429
+fallback; other failures and actual negative decisions do not trigger it. Both
+photos and the existing approval checks remain mandatory.
 OpenRouter/OpenAI visual HTTP 429 rate limits honor `Retry-After` (seconds or date;
 60-second fallback). Warm-worker cooldowns avoid more visual requests while
 waiting. Saved-match server batches and client checkpoints pause at the affected
 item; untouched items are not marked reviewed, skipped or failed. Completed
-approvals remain saved. The user can retry after the reported delay; no automatic
-provider switching is performed to evade a rate limit.
+approvals remain saved. Structured retry metadata identifies the affected item
+and delay; the open admin page counts down and automatically resumes the frozen
+queue, retaining rate-limited items without counting them as completed reviews.
+Waiting is cancellable every second. Closing/leaving the page stops this local
+run; this does not create a new server scheduler. Authentication, credit or
+malformed-image failures without retry metadata do not loop automatically.
+Jev's own HTTP 429 and the final verification's HTTP 429 also propagate retry
+delays; their endpoints are not retried before those delays have elapsed.
 
 Reference: https://vercel.com/i/jev-integrations
 

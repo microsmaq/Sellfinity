@@ -14,7 +14,7 @@ import {
 
 describe("arbitrage product identity", () => {
   let modelSequence = 0;
-  beforeEach(() => { vi.stubEnv("OPENROUTER_MATCH_MODEL", `test-model-${modelSequence++}`); });
+  beforeEach(() => { vi.stubEnv("OPENROUTER_MATCH_MODEL", `test-model-${modelSequence++}`); vi.stubEnv("AI_GATEWAY_API_KEY", ""); vi.stubEnv("VERCEL_OIDC_TOKEN", ""); });
   afterEach(() => {
     vi.unstubAllGlobals();
     vi.unstubAllEnvs();
@@ -160,5 +160,21 @@ describe("arbitrage product identity", () => {
     expect(report.mock.calls[0][1]).toBe(120);
     expect(report.mock.calls[2][1]).toBeGreaterThan(115);
     expect(evaluateJevDecision).not.toHaveBeenCalled();
+  });
+  it("uses Jev directly when OpenRouter is rate limited and during its cooldown", async () => {
+    vi.stubEnv("OPENROUTER_API_KEY", "router-key"); vi.stubEnv("AI_GATEWAY_API_KEY", "gateway-key"); vi.stubEnv("JEV_ENABLED", "true"); vi.stubEnv("OPENAI_DECISIONS_ENABLED", "true");
+    const fetcher = vi.fn().mockImplementation(async () => new Response(null, { status: 429, headers: { "retry-after": "120" } })); vi.stubGlobal("fetch", fetcher);
+    vi.mocked(evaluateJevDecision).mockImplementation(async (_state, _questions, _diagnostic, _failure, _images, provider) => {
+      provider?.("Jev fallback");
+      return { sameVisualProduct: { type: "boolean", probability: 0.98 }, visualConflict: { type: "boolean", probability: 0.01 } };
+    });
+    const ebay = { title: "Acme Lamp", imageUrl: "https://i.ebayimg.com/a" };
+    const amazon = { title: "Acme Lamp", imageUrl: "https://m.media-amazon.com/a" };
+    expect(await assessProductMatch(ebay, amazon)).toMatchObject({ method: "AI", verdict: "MATCH", confidence: 98 });
+    expect(await assessProductMatch(ebay, amazon)).toMatchObject({ method: "AI", verdict: "MATCH" });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(evaluateJevDecision).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(evaluateJevDecision).mock.calls[0][6]).toBe(true);
+    expect(vi.mocked(evaluateJevDecision).mock.calls[1][4]).toEqual([amazon.imageUrl, ebay.imageUrl]);
   });
 });

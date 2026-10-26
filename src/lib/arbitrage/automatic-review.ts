@@ -26,7 +26,7 @@ export async function runAutomaticCatalogReview(force = false, reviewOnly = fals
     data: { lockUntil: new Date(now.getTime() + 15 * 60 * 1000) },
   });
   if (!lease.count) return { skipped: true, reason: "Another catalog review is running." };
-  const summary = { processed: 0, published: 0, review: 0, failed: 0, queued: 0, pauseReason: "", eligibleIds: [] as string[], items: [] as { id: string; asin: string; outcome: string; reason: string }[] };
+  const summary = { processed: 0, published: 0, review: 0, failed: 0, queued: 0, pauseReason: "", retryAfterSeconds: 0, retryIds: [] as string[], eligibleIds: [] as string[], items: [] as { id: string; asin: string; outcome: string; reason: string }[] };
   const deadline = Date.now() + 220_000;
   try {
     const savedReview = { status: "NO_MATCH", matchConfidence: { gte: 95 }, matchVerdict: { not: "REJECTED" }, matchMethod: { not: "MANUAL_REJECTED" }, ebayItemId: { not: null } };
@@ -48,13 +48,19 @@ export async function runAutomaticCatalogReview(force = false, reviewOnly = fals
       try {
         if (candidate.status === "NO_MATCH") {
           const reviewed = await reviewSavedCatalogCandidate(candidate.id);
-          if (reviewed?.pauseReason) summary.pauseReason = reviewed.pauseReason;
+          if (reviewed?.pauseReason) {
+            summary.pauseReason = reviewed.pauseReason;
+            summary.retryAfterSeconds = reviewed.retryAfterSeconds;
+            summary.retryIds = [candidate.id];
+          }
         }
         else await researchAdminCatalogProduct(candidate.id, { automatic: true, ebayOnly: true });
         const result = await db.adminArbitrageProduct.findUnique({ where: { id: candidate.id }, select: { status: true, matchReason: true } });
         const published = result?.status === "PUBLISHED";
-        if (published) summary.published++; else summary.review++;
-        summary.items.push({ id: candidate.id, asin: candidate.asin, outcome: published ? "published" : "review", reason: result?.matchReason ?? "Manual review required." });
+        const waiting = !published && summary.retryIds.includes(candidate.id);
+        if (published) summary.published++; else if (!waiting) summary.review++;
+        if (published) summary.retryIds = summary.retryIds.filter((id) => id !== candidate.id);
+        summary.items.push({ id: candidate.id, asin: candidate.asin, outcome: published ? "published" : waiting ? "waiting" : "review", reason: result?.matchReason ?? "Manual review required." });
       } catch (error) {
         const reason = error instanceof Error ? error.message.slice(0, 500) : "Automatic research failed.";
         await db.adminArbitrageProduct.updateMany({ where: { id: candidate.id, bannedAt: null, status: candidate.status || "PENDING" }, data: { status: "NO_MATCH", matchReason: `Automatic review could not finish: ${reason}` } });

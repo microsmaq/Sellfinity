@@ -19,6 +19,16 @@ let creditsExhaustedUntil = 0;
 let jevUnavailableUntil = 0;
 let lastPrimaryFailure = "";
 let lastJevFailure = "";
+let primaryRetryable = false;
+let jevRetryable = false;
+
+function retrySeconds(value: string | null): number {
+  if (!value) return 60;
+  const seconds = Number(value);
+  if (Number.isFinite(seconds) && seconds >= 0) return Math.max(1, Math.ceil(seconds));
+  const date = Date.parse(value);
+  return Number.isFinite(date) ? Math.max(1, Math.ceil((date - Date.now()) / 1000)) : 60;
+}
 
 function jevFallbackKey() {
   return process.env.JEV_ENABLED !== "false" ? process.env.AI_GATEWAY_API_KEY?.trim() || process.env.VERCEL_OIDC_TOKEN?.trim() : undefined;
@@ -30,12 +40,15 @@ export function jevConfiguration() {
 }
 
 /** Bounded advisory decisions; refusals and malformed responses fall back safely. */
-export async function evaluateJevDecision(state: unknown, questions: Record<string, JevQuestion>, diagnostic = false, reportFailure?: (reason: string) => void, imageUrls: string[] = [], reportProvider?: (provider: string) => void): Promise<JevAnswers | null> {
+export async function evaluateJevDecision(state: unknown, questions: Record<string, JevQuestion>, diagnostic = false, reportFailure?: (reason: string, retryAfterSeconds?: number) => void, imageUrls: string[] = [], reportProvider?: (provider: string) => void, preferJev = false): Promise<JevAnswers | null> {
   const config = jevConfiguration();
-  const fail = (reason: string) => { reportFailure?.(reason); return null; };
+  const fail = (reason: string, seconds?: number) => { if (seconds) reportFailure?.(reason, seconds); else reportFailure?.(reason); return null; };
   if (!config.enabled) return fail("AI Decisions verification is disabled in the server configuration.");
-  if (!config.configured) return fail("OpenAI Decisions authentication is not configured.");
-  if (!diagnostic && Date.now() < unavailableUntil) return fail(`${lastPrimaryFailure || "OpenAI Decisions is unavailable."} Retry in ${Math.ceil((unavailableUntil - Date.now()) / 1000)} seconds.`);
+  if (!config.configured && !preferJev) return fail("OpenAI Decisions authentication is not configured.");
+  if (!preferJev && !diagnostic && Date.now() < unavailableUntil) {
+    const seconds = Math.ceil((unavailableUntil - Date.now()) / 1000);
+    return fail(`${lastPrimaryFailure || "OpenAI Decisions is unavailable."} Retry in ${seconds} seconds.`, primaryRetryable ? seconds : undefined);
+  }
   const entries = Object.entries(questions);
   if (!entries.length || entries.length > 25) return fail("Decision verification requires between 1 and 25 questions.");
   if (imageUrls.length > 2 || imageUrls.some((url) => { try { return new URL(url).protocol !== "https:"; } catch { return true; } })) return fail("Product image evidence is missing a valid HTTPS image URL or contains too many images. Review the saved product images.");
@@ -51,12 +64,13 @@ export async function evaluateJevDecision(state: unknown, questions: Record<stri
   if (body.length > 40_000) return fail("Decision verification input exceeds the 40,000-character limit. Review the saved product details.");
   const key = createHash("sha256").update(body).digest("hex");
   const saved = cache.get(key);
-  if (!diagnostic && saved && saved.expires > Date.now()) { reportProvider?.("OpenAI Decisions"); return saved.result; }
+  if (!preferJev && !diagnostic && saved && saved.expires > Date.now()) { reportProvider?.("OpenAI Decisions"); return saved.result; }
   let provider = "OpenAI Decisions";
   let resultKey = key;
+  let retryAfter = 0;
   try {
     let response: Response | undefined;
-    let creditFailure = !diagnostic && Date.now() < creditsExhaustedUntil;
+    let creditFailure = preferJev || (!diagnostic && Date.now() < creditsExhaustedUntil);
     let detail = "";
     if (!creditFailure) {
       response = await fetch("https://api.openai.com/v1/decisions", {
@@ -68,13 +82,16 @@ export async function evaluateJevDecision(state: unknown, questions: Record<stri
         const code = payload?.error?.code;
         detail = typeof payload?.error?.message === "string" ? sanitizeJevDiagnostic(payload.error.message) : "";
         creditFailure = response.status === 429 && (["credit_balance_exhausted", "insufficient_quota"].includes(code) || /no credits remaining|credit balance.*exhaust|insufficient_quota/i.test(detail));
-        if (!creditFailure) throw new Error(`OpenAI Decisions returned HTTP ${response.status}${detail ? `: ${detail}` : "."}`);
+        if (!creditFailure) {
+          if (response.status === 429) retryAfter = retrySeconds(response.headers.get("retry-after"));
+          throw new Error(`OpenAI Decisions returned HTTP ${response.status}${detail ? `: ${detail}` : "."}`);
+        }
         creditsExhaustedUntil = Date.now() + 5 * 60_000;
       } else creditsExhaustedUntil = 0;
     }
     if (creditFailure) {
       const gatewayKey = jevFallbackKey();
-      if (!gatewayKey) throw new Error("OpenAI Decisions returned HTTP 429: No credits remaining. Jev fallback is not configured or is disabled.");
+      if (!gatewayKey) throw new Error("Jev fallback is not configured or is disabled. Check AI Gateway authentication in Admin Settings.");
       provider = "Jev fallback";
       const jevRequest = { ...request, model: imageUrls.length ? "typesafe-ai/jev-1.14.0" : "typesafe-ai/jev" };
       // Cache by source evidence, not large inline photo payloads.
@@ -82,7 +99,10 @@ export async function evaluateJevDecision(state: unknown, questions: Record<stri
       const fallbackSaved = cache.get(resultKey);
       if (!diagnostic && fallbackSaved && fallbackSaved.expires > Date.now()) { reportProvider?.(provider); return fallbackSaved.result; }
       // Waiting is not another provider failure: never extend the cooldown here.
-      if (!diagnostic && Date.now() < jevUnavailableUntil) return fail(`${lastJevFailure || "Jev fallback is unavailable."} Retry in ${Math.ceil((jevUnavailableUntil - Date.now()) / 1000)} seconds.`);
+      if (!diagnostic && Date.now() < jevUnavailableUntil) {
+        const seconds = Math.ceil((jevUnavailableUntil - Date.now()) / 1000);
+        return fail(`${lastJevFailure || "Jev fallback is unavailable."} Retry in ${seconds} seconds.`, jevRetryable ? seconds : undefined);
+      }
       const encoded = await prepareDecisionImages(imageUrls);
       const jevBody = JSON.stringify({ ...jevRequest, input: encoded.length ? [{ role: "user", content: [
         { type: "input_text", text: evidence },
@@ -98,6 +118,8 @@ export async function evaluateJevDecision(state: unknown, questions: Record<stri
       const payload = await response.json().catch(() => null);
       const detail = typeof payload?.error?.message === "string" ? sanitizeJevDiagnostic(payload.error.message) : "";
       if (provider === "Jev fallback" && response.status === 400 && /image|dimensions/i.test(detail)) throw new DecisionImageError(`Jev rejected this product's photos (HTTP 400): ${detail} Other products can still be checked.`);
+      const exhausted = ["credit_balance_exhausted", "insufficient_quota"].includes(payload?.error?.code) || /no credits remaining|insufficient_quota|credit balance.*exhaust/i.test(detail);
+      if (response.status === 429 && !exhausted) retryAfter = retrySeconds(response.headers.get("retry-after"));
       throw new Error(`${provider} returned HTTP ${response.status}${detail ? `: ${detail}` : "."}`);
     }
     const parsed = responseSchema.parse(await response.json());
@@ -114,8 +136,8 @@ export async function evaluateJevDecision(state: unknown, questions: Record<stri
     if (cache.size >= 250) cache.delete(cache.keys().next().value!);
     cache.set(resultKey, { expires: Date.now() + 3_600_000, result: answers });
     unavailableUntil = 0;
-    if (provider === "Jev fallback") { jevUnavailableUntil = 0; lastJevFailure = ""; }
-    else lastPrimaryFailure = "";
+    if (provider === "Jev fallback") { jevUnavailableUntil = 0; lastJevFailure = ""; jevRetryable = false; }
+    else { lastPrimaryFailure = ""; primaryRetryable = false; }
     reportProvider?.(provider);
     return answers;
   } catch (error) {
@@ -125,9 +147,9 @@ export async function evaluateJevDecision(state: unknown, questions: Record<stri
       : error instanceof Error && /TimeoutError|AbortError/.test(error.name) ? `${provider} timed out.`
       : error instanceof z.ZodError ? `${provider} returned an unexpected answer format (${error.issues.map((issue) => issue.path.join(".")).slice(0, 3).join(", ")}).`
       : `${provider} returned incomplete, refused or unusable answers, or could not complete the request.`;
-    if (provider === "Jev fallback") { jevUnavailableUntil = Date.now() + 60_000; lastJevFailure = reason; }
-    else { unavailableUntil = Date.now() + 60_000; lastPrimaryFailure = reason; }
-    return fail(reason);
+    if (provider === "Jev fallback") { jevUnavailableUntil = Date.now() + (retryAfter || 60) * 1000; lastJevFailure = reason; jevRetryable = retryAfter > 0; }
+    else { unavailableUntil = Date.now() + (retryAfter || 60) * 1000; lastPrimaryFailure = reason; primaryRetryable = retryAfter > 0; }
+    return fail(reason, retryAfter || undefined);
   }
 }
 

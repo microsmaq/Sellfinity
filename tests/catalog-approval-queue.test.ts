@@ -43,3 +43,41 @@ it("pauses on rate limits without marking untouched checkpoint items as reviewed
   expect(result).toMatchObject({ total: 3, done: 1, review: 1, failed: 0, skipped: 0, pauseReason: expect.stringContaining("120 seconds") });
   expect(review).toHaveBeenCalledTimes(1);
 });
+it("automatically resumes after the delay and retries only unfinished rate-limited items", async () => {
+  let now = 1000;
+  const clock = vi.spyOn(Date, "now").mockImplementation(() => now);
+  try {
+    const waiting = vi.fn();
+    const review = vi.fn().mockResolvedValueOnce({ eligibleIds: ["one", "two", "three"], items: [item("one", "published"), item("two", "waiting")], pauseReason: "Rate limited", retryAfterSeconds: 2, retryIds: ["two"] })
+      .mockResolvedValueOnce({ eligibleIds: ["two", "three"], items: [item("two", "published"), item("three")] });
+    const result = await processCatalogApprovalQueue(["one", "two", "three"], review, { shouldStop: () => false, onProgress: vi.fn(), onWaiting: waiting, wait: async (ms) => { now += ms; } });
+    expect(review.mock.calls).toEqual([[["one", "two", "three"]], [["two", "three"]]]);
+    expect(now).toBe(3000);
+    expect(result).toMatchObject({ total: 3, done: 3, published: 2, review: 1, failed: 0, skipped: 0 });
+    expect(result.items).toHaveLength(3);
+    expect(result.items.filter((row) => row.id === "two")).toEqual([item("two", "published")]);
+    expect(waiting).toHaveBeenCalledWith({ reason: "Rate limited", remainingSeconds: 2 });
+    expect(waiting).toHaveBeenLastCalledWith(null);
+  } finally { clock.mockRestore(); }
+});
+it("stops during the countdown without issuing a resumed request", async () => {
+  let now = 0; let stopped = false;
+  const clock = vi.spyOn(Date, "now").mockImplementation(() => now);
+  try {
+    const review = vi.fn().mockResolvedValue({ eligibleIds: ["one"], items: [item("one", "waiting")], pauseReason: "Wait", retryAfterSeconds: 60, retryIds: ["one"] });
+    const result = await processCatalogApprovalQueue(["one"], review, { shouldStop: () => stopped, onProgress: vi.fn(), wait: async (ms) => { now += ms; stopped = true; } });
+    expect(result).toMatchObject({ done: 0, total: 1, stopped: true, review: 0 });
+    expect(review).toHaveBeenCalledTimes(1);
+  } finally { clock.mockRestore(); }
+});
+it("can wait repeatedly without counting a pending item more than once", async () => {
+  let now = 0; let calls = 0;
+  const clock = vi.spyOn(Date, "now").mockImplementation(() => now);
+  try {
+    const result = await processCatalogApprovalQueue(["one"], async () => ++calls < 3
+      ? { eligibleIds: ["one"], items: [item("one", "waiting")], pauseReason: "Wait", retryAfterSeconds: 1, retryIds: ["one"] }
+      : { eligibleIds: ["one"], items: [item("one", "published")] }, { shouldStop: () => false, onProgress: vi.fn(), wait: async (ms) => { now += ms; } });
+    expect(calls).toBe(3); expect(now).toBe(2000);
+    expect(result).toMatchObject({ done: 1, published: 1, review: 0 }); expect(result.items).toHaveLength(1);
+  } finally { clock.mockRestore(); }
+});

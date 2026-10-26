@@ -244,3 +244,31 @@ it("does not pause other products when Jev rejects one product's image dimension
   expect(await evaluateJevDecision({ item: 2 }, questions, false, report, ["https://example.com/b.jpg"])).toMatchObject({ same: { probability: 0.98 } });
   expect(fetcher).toHaveBeenCalledTimes(3);
 });
+it("supports explicitly authorized Jev routing without sending a request to OpenAI", async () => {
+  vi.stubEnv("OPENAI_API_KEY", ""); vi.stubEnv("AI_GATEWAY_API_KEY", "gateway-key");
+  const fetcher = vi.fn().mockImplementation(async () => Response.json({ answers: [{ name: "same", type: "predicate", probability: 0.98 }] })); vi.stubGlobal("fetch", fetcher);
+  const { evaluateJevDecision } = await import("@/lib/ai/jev");
+  expect(await evaluateJevDecision({}, { same: { type: "boolean", instructions: "Same?" } }, false, undefined, ["https://example.com/a.jpg"], undefined, true)).toMatchObject({ same: { probability: 0.98 } });
+  expect(fetcher).toHaveBeenCalledTimes(1);
+  expect(fetcher.mock.calls[0][0]).toBe("https://ai-gateway.vercel.sh/v1/decisions");
+});
+it("reports a structured retry delay when Jev itself is rate limited", async () => {
+  vi.stubEnv("AI_GATEWAY_API_KEY", "gateway-key");
+  const fetcher = vi.fn().mockImplementation(async () => new Response(null, { status: 429, headers: { "retry-after": "90" } })); vi.stubGlobal("fetch", fetcher);
+  const { evaluateJevDecision } = await import("@/lib/ai/jev");
+  const report = vi.fn();
+  const questions = { same: { type: "boolean" as const, instructions: "Same?" } };
+  expect(await evaluateJevDecision({}, questions, false, report, [], undefined, true)).toBeNull();
+  expect(report).toHaveBeenCalledWith(expect.stringContaining("HTTP 429"), 90);
+  await evaluateJevDecision({ other: 1 }, questions, false, report, [], undefined, true);
+  expect(fetcher).toHaveBeenCalledTimes(1);
+  expect(report.mock.calls[1][1]).toBeGreaterThanOrEqual(89);
+});
+it("does not schedule automatic retries for exhausted Jev credits", async () => {
+  vi.stubEnv("AI_GATEWAY_API_KEY", "gateway-key");
+  vi.stubGlobal("fetch", vi.fn().mockImplementation(async () => Response.json({ error: { code: "insufficient_quota", message: "No credits remaining" } }, { status: 429 })));
+  const { evaluateJevDecision } = await import("@/lib/ai/jev");
+  const report = vi.fn();
+  expect(await evaluateJevDecision({}, { same: { type: "boolean", instructions: "Same?" } }, false, report, [], undefined, true)).toBeNull();
+  expect(report.mock.calls[0]).toHaveLength(1);
+});

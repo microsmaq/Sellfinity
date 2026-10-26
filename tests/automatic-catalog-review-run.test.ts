@@ -58,7 +58,7 @@ describe("automatic pending-review queue", () => {
     mocks.research.mockResolvedValue({ pauseReason: "OpenRouter rate limited. Retry after 120 seconds.", retryAfterSeconds: 120 });
     mocks.result.mockResolvedValue({ status: "NO_MATCH", matchReason: "Retry after 120 seconds" });
     const result = await runAutomaticCatalogReview(true, true);
-    expect(result).toMatchObject({ processed: 1, review: 1, pauseReason: expect.stringContaining("120 seconds") });
+    expect(result).toMatchObject({ processed: 1, review: 0, retryIds: ["one"], retryAfterSeconds: 120, pauseReason: expect.stringContaining("120 seconds") });
     expect(mocks.research).toHaveBeenCalledTimes(1);
   });
 });
