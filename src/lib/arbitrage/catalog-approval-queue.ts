@@ -1,6 +1,6 @@
 export type ApprovalItem = { id: string; asin: string; outcome: string; reason: string };
 export type ApprovalProgress = { total: number; done: number; published: number; review: number; failed: number; skipped: number; items: ApprovalItem[] };
-type Checkpoint = { skipped: boolean; reason: string } | { eligibleIds: string[]; items: ApprovalItem[] };
+type Checkpoint = { skipped: boolean; reason: string } | { eligibleIds: string[]; items: ApprovalItem[]; pauseReason?: string };
 
 /** A frozen queue prevents held candidates being selected again in this run.
  * Small checkpoints stay within server time limits and permit safe stopping. */
@@ -29,6 +29,7 @@ export async function processCatalogApprovalQueue(ids: string[], review: (ids: s
     progress.items = [...progress.items, ...completed];
     remaining = remaining.filter((id) => !finished.has(id));
     controls.onProgress({ ...progress });
+    if (result.pauseReason) return { ...progress, stopped: false, pauseReason: result.pauseReason };
   }
   return { ...progress, stopped: remaining.length > 0, pauseReason: "" };
 }

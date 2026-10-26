@@ -176,7 +176,7 @@ it("reports the actual Jev failure in normal approval calls with secrets removed
   const { evaluateJevDecision } = await import("@/lib/ai/jev");
   const report = vi.fn();
   expect(await evaluateJevDecision({}, { same: { type: "boolean", instructions: "Same?" } }, false, report, ["https://example.com/a.jpg"])).toBeNull();
-  expect(report).toHaveBeenCalledWith(expect.stringContaining("Jev fallback returned HTTP 400"));
+  expect(report).toHaveBeenCalledWith(expect.stringContaining("Jev rejected this product's photos (HTTP 400)"));
   expect(report.mock.calls[0][0]).not.toMatch(/gateway-secret|Bearer hidden|private\.test/);
 });
 
@@ -229,4 +229,18 @@ it("holds a bad photo without cooling down verification for unrelated products",
   expect(report).toHaveBeenCalledWith("Product photo 1 could not be read.");
   expect(fetcher).toHaveBeenCalledTimes(1);
   expect(await evaluateJevDecision({ item: 2 }, questions, false, report, ["https://example.com/b.jpg"])).toMatchObject({ same: { probability: 0.98 } });
+});
+it("does not pause other products when Jev rejects one product's image dimensions", async () => {
+  vi.stubEnv("AI_GATEWAY_API_KEY", "gateway-key");
+  const fetcher = vi.fn().mockResolvedValueOnce(Response.json({ error: { code: "credit_balance_exhausted" } }, { status: 429 }))
+    .mockResolvedValueOnce(Response.json({ error: { message: '{"error_type":"api_usage_error","message":"Invalid image dimensions."}' } }, { status: 400 }))
+    .mockImplementation(async () => Response.json({ answers: [{ name: "same", type: "predicate", probability: 0.98 }] }));
+  vi.stubGlobal("fetch", fetcher);
+  const { evaluateJevDecision } = await import("@/lib/ai/jev");
+  const questions = { same: { type: "boolean" as const, instructions: "Same?" } };
+  const report = vi.fn();
+  expect(await evaluateJevDecision({ item: 1 }, questions, false, report, ["https://example.com/a.jpg"])).toBeNull();
+  expect(report).toHaveBeenCalledWith(expect.stringContaining("Invalid image dimensions"));
+  expect(await evaluateJevDecision({ item: 2 }, questions, false, report, ["https://example.com/b.jpg"])).toMatchObject({ same: { probability: 0.98 } });
+  expect(fetcher).toHaveBeenCalledTimes(3);
 });

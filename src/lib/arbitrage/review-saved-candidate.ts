@@ -15,8 +15,13 @@ export async function reviewSavedCatalogCandidate(id: string) {
   let variant = "";
   try { variant = JSON.parse(item.amazonImportDetailsJson || "{}").variant || ""; } catch { await hold("Import identity data needs manual review."); return; }
   let visualFailure = "";
-  const assessment = await assessProductMatch({ title: item.ebayTitle, imageUrl: item.ebayImageUrl }, { title: item.amazonTitle, imageUrl: item.amazonImageUrl }, (reason) => { visualFailure = reason; });
-  if (assessment.method !== "AI") { await hold(assessment.verdict === "REJECTED" ? `Identity review blocked: ${assessment.reason} Manual review remains available.` : visualFailure ? `${visualFailure} No approval was made; retry or review manually.` : "Image-aware verification did not return a usable result. Manual review is required."); return; }
+  let visualRetryAfter = 0;
+  const assessment = await assessProductMatch({ title: item.ebayTitle, imageUrl: item.ebayImageUrl }, { title: item.amazonTitle, imageUrl: item.amazonImageUrl }, (reason, seconds) => { visualFailure = reason; visualRetryAfter = seconds || 0; });
+  if (assessment.method !== "AI") {
+    await hold(assessment.verdict === "REJECTED" ? `Identity review blocked: ${assessment.reason} Manual review remains available.` : visualFailure ? `${visualFailure} No approval was made; retry or review manually.` : "Image-aware verification did not return a usable result. Manual review is required.");
+    if (visualRetryAfter) return { pauseReason: visualFailure, retryAfterSeconds: visualRetryAfter };
+    return;
+  }
   const policy = automaticReviewDecision({ assessment, rulesRejected: assessProductMatchRules(item.ebayTitle, item.amazonTitle).verdict === "REJECTED", amazonTitle: item.amazonTitle, ebayTitle: item.ebayTitle, brand: item.amazonBrand, variant, amazonImage: item.amazonImageUrl, ebayImage: item.ebayImageUrl }, 95, true);
   if (!policy.publish) { await hold(policy.reason); return; }
   let provider = "OpenAI Decisions";

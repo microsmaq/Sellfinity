@@ -22,7 +22,7 @@ it("sends real encoded photos through the exhausted-credit fallback, not externa
     expect(parts).toHaveLength(3);
     for (const part of parts.slice(1)) {
       expect(part.image_url).toMatch(/^data:image\/jpeg;base64,/);
-      expect(await sharp(Buffer.from(part.image_url.split(",")[1], "base64")).metadata()).toMatchObject({ format: "jpeg", width: 32, height: 32 });
+      expect(await sharp(Buffer.from(part.image_url.split(",")[1], "base64")).metadata()).toMatchObject({ format: "jpeg", width: 280, height: 280 });
     }
     return Response.json({ answers: [{ name: "same", type: "predicate", probability: 0.98 }, { name: "conflict", type: "predicate", probability: 0.01 }] });
   });

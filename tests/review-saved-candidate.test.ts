@@ -58,6 +58,15 @@ it("preserves the specific image-aware matcher failure for the item", async () =
   expect(mocks.publish).not.toHaveBeenCalled();
   expect(mocks.hold.mock.calls[0][0].data.matchReason).toContain("Product photo 2");
 });
+it("tells the caller to pause rather than consume the rest of a rate-limited batch", async () => {
+  mocks.assess.mockImplementation(async (_ebay, _amazon, reportFailure) => {
+    reportFailure("OpenRouter rate limited. Retry after 120 seconds.", 120);
+    return { method: "RULES", verdict: "LIKELY", confidence: 90 };
+  });
+  expect(await reviewSavedCatalogCandidate("a")).toMatchObject({ retryAfterSeconds: 120, pauseReason: expect.stringContaining("120 seconds") });
+  expect(mocks.decisions).not.toHaveBeenCalled();
+  expect(mocks.publish).not.toHaveBeenCalled();
+});
 it("supplies both images, separates missing details from contradictions and does not anchor Decisions to a prior score", async () => {
   const item = { ...row(), matchConfidence: 100, amazonImageUrl: "https://example.com/amazon.jpg", ebayImageUrl: "https://example.com/ebay.jpg", amazonImportDetailsJson: '{"variant":"Black"}' };
   mocks.find.mockResolvedValue(item); await reviewSavedCatalogCandidate("a");

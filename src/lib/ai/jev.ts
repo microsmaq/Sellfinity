@@ -97,6 +97,7 @@ export async function evaluateJevDecision(state: unknown, questions: Record<stri
     if (!response.ok) {
       const payload = await response.json().catch(() => null);
       const detail = typeof payload?.error?.message === "string" ? sanitizeJevDiagnostic(payload.error.message) : "";
+      if (provider === "Jev fallback" && response.status === 400 && /image|dimensions/i.test(detail)) throw new DecisionImageError(`Jev rejected this product's photos (HTTP 400): ${detail} Other products can still be checked.`);
       throw new Error(`${provider} returned HTTP ${response.status}${detail ? `: ${detail}` : "."}`);
     }
     const parsed = responseSchema.parse(await response.json());

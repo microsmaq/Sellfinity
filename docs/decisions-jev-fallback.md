@@ -9,10 +9,14 @@ for image requests. Gateway requires inline base64 image data, not external phot
 URLs. The server downloads both trusted marketplace photos, decodes and normalizes
 them to JPEG, and embeds actual bytes in the same labeled image parts. Downloads
 are limited to 8 MB, 10 seconds and three validated redirects; decoded images are
-limited to 25 megapixels and normalized to at most 1536 pixels and 2 MB each.
+limited to 25 megapixels and normalized to baseline JPEG at most 1536 pixels and
+2 MB each. Jev requires each axis to be at least 280 pixels; smaller/narrow axes
+are padded with white after orientation and aspect-preserving resizing. Images
+are never cropped or stretched to satisfy the minimum.
 The process-local photo cache is bounded to 64 photos / 16 MB with a ten-minute
 TTL. No photo bytes are added to database records, logs or extension storage.
-Failure to prepare either photo holds only that item, not unrelated products.
+Failure to prepare either photo, or a provider HTTP 400 rejection of image
+dimensions, holds only that item, not unrelated products.
 
 Gateway authentication uses the existing `AI_GATEWAY_API_KEY`, falling back to
 `VERCEL_OIDC_TOKEN`. These credentials are never sent to OpenAI. Set `JEV_ENABLED=false`
@@ -37,6 +41,12 @@ unusable Jev responses leave items unapproved. Approval notes identify Jev when 
 The first image-aware matcher also uses this adapter on explicit OpenAI credit
 exhaustion or OpenRouter HTTP 402; other failures and actual negative decisions
 do not trigger it. Both photos and the existing approval checks remain mandatory.
+OpenRouter/OpenAI visual HTTP 429 rate limits honor `Retry-After` (seconds or date;
+60-second fallback). Warm-worker cooldowns avoid more visual requests while
+waiting. Saved-match server batches and client checkpoints pause at the affected
+item; untouched items are not marked reviewed, skipped or failed. Completed
+approvals remain saved. The user can retry after the reported delay; no automatic
+provider switching is performed to evade a rate limit.
 
 Reference: https://vercel.com/i/jev-integrations
 

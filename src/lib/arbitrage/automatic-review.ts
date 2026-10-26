@@ -26,7 +26,7 @@ export async function runAutomaticCatalogReview(force = false, reviewOnly = fals
     data: { lockUntil: new Date(now.getTime() + 15 * 60 * 1000) },
   });
   if (!lease.count) return { skipped: true, reason: "Another catalog review is running." };
-  const summary = { processed: 0, published: 0, review: 0, failed: 0, queued: 0, eligibleIds: [] as string[], items: [] as { id: string; asin: string; outcome: string; reason: string }[] };
+  const summary = { processed: 0, published: 0, review: 0, failed: 0, queued: 0, pauseReason: "", eligibleIds: [] as string[], items: [] as { id: string; asin: string; outcome: string; reason: string }[] };
   const deadline = Date.now() + 220_000;
   try {
     const savedReview = { status: "NO_MATCH", matchConfidence: { gte: 95 }, matchVerdict: { not: "REJECTED" }, matchMethod: { not: "MANUAL_REJECTED" }, ebayItemId: { not: null } };
@@ -46,7 +46,10 @@ export async function runAutomaticCatalogReview(force = false, reviewOnly = fals
     for (const candidate of prioritized) {
       if (Date.now() + 90_000 > deadline) break;
       try {
-        if (candidate.status === "NO_MATCH") await reviewSavedCatalogCandidate(candidate.id);
+        if (candidate.status === "NO_MATCH") {
+          const reviewed = await reviewSavedCatalogCandidate(candidate.id);
+          if (reviewed?.pauseReason) summary.pauseReason = reviewed.pauseReason;
+        }
         else await researchAdminCatalogProduct(candidate.id, { automatic: true, ebayOnly: true });
         const result = await db.adminArbitrageProduct.findUnique({ where: { id: candidate.id }, select: { status: true, matchReason: true } });
         const published = result?.status === "PUBLISHED";
@@ -59,6 +62,7 @@ export async function runAutomaticCatalogReview(force = false, reviewOnly = fals
         summary.items.push({ id: candidate.id, asin: candidate.asin, outcome: "failed", reason });
       }
       summary.processed++;
+      if (summary.pauseReason) break;
     }
     summary.queued = await db.adminArbitrageProduct.count({ where });
     await db.adminCatalogReviewAutomation.update({ where: { id: "main" }, data: { lastRunAt: new Date(), lastSummaryJson: JSON.stringify(summary) } });

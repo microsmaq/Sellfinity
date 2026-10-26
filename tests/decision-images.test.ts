@@ -19,11 +19,34 @@ it("converts real photos into JPEG data URLs and caches bounded results", async 
   expect(result).toHaveLength(2);
   for (const value of result) {
     expect(value).toMatch(/^data:image\/jpeg;base64,/);
-    expect(await sharp(Buffer.from(value.split(",")[1], "base64")).metadata()).toMatchObject({ format: "jpeg", width: 50, height: 40 });
+    expect(await sharp(Buffer.from(value.split(",")[1], "base64")).metadata()).toMatchObject({ format: "jpeg", width: 280, height: 280, isProgressive: false });
   }
   expect(await prepareDecisionImages(source)).toEqual(result);
   expect(fetcher).toHaveBeenCalledTimes(2);
   expect(fetcher.mock.calls[0][1]).toMatchObject({ redirect: "manual" });
+});
+it.each([[1, 1], [1500, 20], [20, 1500], [280, 280], [3500, 2000], [800, 400]])("keeps both output axes in Jev's supported range for a %sx%s source", async (width, height) => {
+  const bytes = await sharp({ create: { width, height, channels: 3, background: "red" } }).png().toBuffer();
+  vi.stubGlobal("fetch", vi.fn().mockImplementation(async () => new Response(Uint8Array.from(bytes))));
+  const { prepareDecisionImages } = await subject();
+  const [image] = await prepareDecisionImages(["https://i.ebayimg.com/dimensions.png"]);
+  const metadata = await sharp(Buffer.from(image.split(",")[1], "base64")).metadata();
+  expect(metadata.width).toBeGreaterThanOrEqual(280); expect(metadata.width).toBeLessThanOrEqual(1536);
+  expect(metadata.height).toBeGreaterThanOrEqual(280); expect(metadata.height).toBeLessThanOrEqual(1536);
+  expect(metadata.isProgressive).toBe(false);
+});
+it("pads a narrow image without stretching or cutting its contents", async () => {
+  const bytes = await sharp({ create: { width: 800, height: 20, channels: 3, background: "red" } }).png().toBuffer();
+  vi.stubGlobal("fetch", vi.fn().mockImplementation(async () => new Response(Uint8Array.from(bytes))));
+  const { prepareDecisionImages } = await subject();
+  const [image] = await prepareDecisionImages(["https://i.ebayimg.com/narrow.png"]);
+  const decoded = await sharp(Buffer.from(image.split(",")[1], "base64")).raw().toBuffer({ resolveWithObject: true });
+  expect(decoded.info).toMatchObject({ width: 800, height: 280 });
+  const redRows = Array.from({ length: 280 }, (_, y) => {
+    const offset = (y * 800 + 400) * decoded.info.channels;
+    return decoded.data[offset] > 200 && decoded.data[offset + 1] < 60;
+  }).filter(Boolean).length;
+  expect(redRows).toBeGreaterThanOrEqual(18); expect(redRows).toBeLessThanOrEqual(22);
 });
 it.each(["https://127.0.0.1/photo", "http://m.media-amazon.com/a", "https://m.media-amazon.com.evil.test/a", "https://user:password@i.ebayimg.com/a", "https://i.ebayimg.com:444/a", "file:///a", "https://www.sellfinity.app/admin"])("refuses unsafe image sources: %s", async (url) => {
   const fetcher = vi.fn(); vi.stubGlobal("fetch", fetcher);

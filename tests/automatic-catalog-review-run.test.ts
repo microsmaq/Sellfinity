@@ -53,4 +53,12 @@ describe("automatic pending-review queue", () => {
     await runAutomaticCatalogReview(true, true, { limit: 100 });
     expect(mocks.candidates).toHaveBeenLastCalledWith(expect.objectContaining({ take: 25 }));
   });
+  it("stops the server batch at a provider rate limit and leaves remaining candidates untouched", async () => {
+    mocks.candidates.mockResolvedValue([{ id: "one", asin: "B012345678", status: "NO_MATCH" }, { id: "two", asin: "B012345679", status: "NO_MATCH" }]);
+    mocks.research.mockResolvedValue({ pauseReason: "OpenRouter rate limited. Retry after 120 seconds.", retryAfterSeconds: 120 });
+    mocks.result.mockResolvedValue({ status: "NO_MATCH", matchReason: "Retry after 120 seconds" });
+    const result = await runAutomaticCatalogReview(true, true);
+    expect(result).toMatchObject({ processed: 1, review: 1, pauseReason: expect.stringContaining("120 seconds") });
+    expect(mocks.research).toHaveBeenCalledTimes(1);
+  });
 });

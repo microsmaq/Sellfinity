@@ -16,6 +16,17 @@ type ProductIdentity = {
   imageUrl?: string | null;
 };
 
+const visualCooldowns = new Map<string, number>();
+type MatchFailure = (reason: string, retryAfterSeconds?: number) => void;
+
+function retryDelay(header: string | null): number {
+  if (!header) return 60;
+  const seconds = Number(header);
+  if (Number.isFinite(seconds) && seconds >= 0) return Math.max(1, Math.ceil(seconds));
+  const date = Date.parse(header);
+  return Number.isFinite(date) ? Math.max(1, Math.ceil((date - Date.now()) / 1000)) : 60;
+}
+
 const MODEL_TOKEN = /\b(?=[a-z0-9-]*[a-z])(?=[a-z0-9-]*\d)[a-z0-9]+(?:-[a-z0-9]+)*\b/gi;
 const QUANTITY = /\b(\d+)\s*(?:pack|pk|count|ct|pcs?|pieces?|units?)\b/i;
 const MEASUREMENT = /\b(\d+(?:\.\d+)?)\s*(inches?|inch|in|feet|foot|ft|cm|mm|oz|ounces?|lb|lbs|pounds?|qt|quarts?|gal|gallons?|ml|liters?|litres?|w|watts?)\b/gi;
@@ -159,12 +170,20 @@ function chatCompletionText(payload: unknown): string | null {
 async function assessWithAi(
   ebay: ProductIdentity,
   amazon: ProductIdentity,
-  reportFailure?: (reason: string) => void,
+  reportFailure?: MatchFailure,
 ): Promise<ProductMatchAssessment | null> {
   const openRouterKey = process.env.OPENROUTER_API_KEY;
   const openAiKey = process.env.OPENAI_API_KEY;
   const apiKey = openRouterKey || openAiKey;
   if (!apiKey) { reportFailure?.("Image-aware matcher authentication is not configured."); return null; }
+  const providerName = openRouterKey ? "OpenRouter" : "OpenAI";
+  const cooldownKey = `${providerName}:${openRouterKey ? process.env.OPENROUTER_MATCH_MODEL || "google/gemini-2.5-flash-lite" : process.env.OPENAI_MATCH_MODEL || "gpt-5.6-luna"}`;
+  const until = visualCooldowns.get(cooldownKey) || 0;
+  if (until > Date.now()) {
+    const seconds = Math.ceil((until - Date.now()) / 1000);
+    reportFailure?.(`${providerName} image matcher is rate-limited. Retry after ${seconds} seconds.`, seconds);
+    return null;
+  }
 
   const prompt = [
     "Act as a strict ecommerce product identity verifier.",
@@ -234,6 +253,14 @@ async function assessWithAi(
     if (!response.ok) {
       const payload = await response.json().catch(() => null);
       const message = typeof payload?.error?.message === "string" ? sanitizeJevDiagnostic(payload.error.message) : "";
+      const creditCode = ["credit_balance_exhausted", "insufficient_quota"].includes(payload?.error?.code) || /no credits remaining|insufficient_quota/i.test(message);
+      if (response.status === 429 && !creditCode) {
+        const seconds = retryDelay(response.headers.get("retry-after"));
+        if (visualCooldowns.size >= 8) visualCooldowns.delete(visualCooldowns.keys().next().value!);
+        visualCooldowns.set(cooldownKey, Date.now() + seconds * 1000);
+        reportFailure?.(`${providerName} image matcher returned HTTP 429 (rate limited). Retry after ${seconds} seconds. No product mismatch was inferred.`, seconds);
+        return null;
+      }
       const creditFailure = (Boolean(openRouterKey) && response.status === 402) || (response.status === 429 && (["credit_balance_exhausted", "insufficient_quota"].includes(payload?.error?.code) || /no credits remaining|insufficient_quota/i.test(message)));
       if (creditFailure) {
         if (!amazon.imageUrl?.startsWith("https://") || !ebay.imageUrl?.startsWith("https://")) { reportFailure?.("Both product photos are required for Jev image verification."); return null; }
@@ -280,7 +307,7 @@ async function assessWithAi(
 export async function assessProductMatch(
   ebay: ProductIdentity,
   amazon: ProductIdentity,
-  reportFailure?: (reason: string) => void,
+  reportFailure?: MatchFailure,
 ): Promise<ProductMatchAssessment> {
   const rules = assessProductMatchRules(ebay.title, amazon.title);
   if (rules.verdict === "REJECTED") return rules;

@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/db", () => ({ db: {} }));
 vi.mock("@/lib/ai/jev", async (importOriginal) => {
@@ -13,8 +13,11 @@ import {
 } from "@/lib/arbitrage/product-match";
 
 describe("arbitrage product identity", () => {
+  let modelSequence = 0;
+  beforeEach(() => { vi.stubEnv("OPENROUTER_MATCH_MODEL", `test-model-${modelSequence++}`); });
   afterEach(() => {
     vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
     vi.mocked(screenProductPairWithJev).mockResolvedValue(null);
     vi.mocked(evaluateJevDecision).mockReset().mockResolvedValue(null);
   });
@@ -136,7 +139,7 @@ describe("arbitrage product identity", () => {
     const result = await assessProductMatch({ title: "Acme Lamp" }, { title: "Acme Lamp" }, report);
     expect(result.method).toBe("RULES");
     expect(evaluateJevDecision).not.toHaveBeenCalled();
-    expect(report).toHaveBeenCalledWith(expect.stringContaining(`HTTP ${status}`));
+    expect(report.mock.calls[0][0]).toContain(`HTTP ${status}`);
     vi.unstubAllEnvs();
   });
 
@@ -146,5 +149,16 @@ describe("arbitrage product identity", () => {
     vi.mocked(evaluateJevDecision).mockResolvedValue({ sameVisualProduct: { type: "boolean", probability: 0.94 }, visualConflict: { type: "boolean", probability: 0.02 } });
     expect(await assessProductMatch({ title: "Acme Lamp", imageUrl: "https://i.ebayimg.com/a" }, { title: "Acme Lamp", imageUrl: "https://m.media-amazon.com/a" })).toMatchObject({ verdict: "REVIEW", confidence: 94 });
     vi.unstubAllEnvs();
+  });
+  it("honors Retry-After without repeatedly calling a rate-limited visual provider", async () => {
+    vi.stubEnv("OPENROUTER_API_KEY", "router-key");
+    const fetcher = vi.fn().mockImplementation(async () => Response.json({ error: { message: "Provider returned error" } }, { status: 429, headers: { "retry-after": "120" } }));
+    vi.stubGlobal("fetch", fetcher);
+    const report = vi.fn();
+    for (let i = 0; i < 3; i++) await assessProductMatch({ title: "Acme Lamp" }, { title: "Acme Lamp" }, report);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(report.mock.calls[0][1]).toBe(120);
+    expect(report.mock.calls[2][1]).toBeGreaterThan(115);
+    expect(evaluateJevDecision).not.toHaveBeenCalled();
   });
 });

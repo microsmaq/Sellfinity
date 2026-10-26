@@ -37,3 +37,9 @@ it("does not loop endlessly when an eligible checkpoint reports no progress", as
   const result = await processCatalogApprovalQueue(["one"], review, { shouldStop: () => false, onProgress: vi.fn() });
   expect(result.pauseReason).toContain("No progress"); expect(review).toHaveBeenCalledTimes(1);
 });
+it("pauses on rate limits without marking untouched checkpoint items as reviewed or failed", async () => {
+  const review = vi.fn(async (ids: string[]) => ({ eligibleIds: ids, items: [item(ids[0])], pauseReason: "OpenRouter rate limited. Retry after 120 seconds." }));
+  const result = await processCatalogApprovalQueue(["one", "two", "three"], review, { shouldStop: () => false, onProgress: vi.fn() });
+  expect(result).toMatchObject({ total: 3, done: 1, review: 1, failed: 0, skipped: 0, pauseReason: expect.stringContaining("120 seconds") });
+  expect(review).toHaveBeenCalledTimes(1);
+});

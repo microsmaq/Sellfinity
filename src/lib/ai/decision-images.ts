@@ -60,7 +60,14 @@ async function prepare(raw: string): Promise<string> {
   const decoder = sharp(bytes, { limitInputPixels: 25_000_000, animated: false });
   const metadata = await decoder.metadata();
   if (!metadata.width || !metadata.height || !["jpeg", "png", "webp"].includes(metadata.format || "")) throw new DecisionImageError("Product image is not a readable JPEG, PNG or WebP photo.");
-  const normalized = await decoder.rotate().resize({ width: 1536, height: 1536, fit: "inside", withoutEnlargement: true }).flatten({ background: "#fff" }).jpeg({ quality: 90 }).toBuffer();
+  // Jev requires BOTH axes >= 280. Preserve every source pixel/aspect ratio;
+  // pad small or panoramic photos rather than stretching or cropping evidence.
+  const resized = await decoder.rotate().resize({ width: 1536, height: 1536, fit: "inside", withoutEnlargement: true }).flatten({ background: "#fff" }).removeAlpha().toColourspace("srgb").raw().toBuffer({ resolveWithObject: true });
+  const extraWidth = Math.max(0, 280 - resized.info.width);
+  const extraHeight = Math.max(0, 280 - resized.info.height);
+  const normalized = await sharp(resized.data, { raw: { width: resized.info.width, height: resized.info.height, channels: resized.info.channels } })
+    .extend({ left: Math.floor(extraWidth / 2), right: Math.ceil(extraWidth / 2), top: Math.floor(extraHeight / 2), bottom: Math.ceil(extraHeight / 2), background: "#fff" })
+    .jpeg({ quality: 90, progressive: false }).toBuffer();
   if (normalized.length > MAX_ENCODED_IMAGE) throw new DecisionImageError("Product image is too large to send for verification.");
   const data = `data:image/jpeg;base64,${normalized.toString("base64")}`;
   while (images.size && (images.size >= 64 || cacheBytes + data.length > MAX_CACHE_BYTES)) {
