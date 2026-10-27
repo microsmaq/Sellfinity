@@ -91,14 +91,33 @@ export async function getProductAnalyticsOverview(options: {
   const [products, catalog] = await Promise.all([
     db.product.findMany({
       where: options.userId ? { userId: options.userId } : undefined,
-      include: {
+      select: {
+        userId: true, supplierProductId: true, sku: true, title: true,
+        imageUrlsJson: true, category: true, createdAt: true,
+        costCents: true, shippingCostCents: true,
         user: { select: { ebayAdRateBps: true, ebaySitewideDiscountBps: true, targetProfitEnabled: true, targetProfitMode: true, targetProfitMinCents: true, targetProfitCents: true, ebayConnection: { select: { status: true } } } },
-        listings: { include: { orders: { include: { amazonPurchaseItem: true } } } },
+        listings: { select: {
+          status: true, priceCents: true, ebayListingId: true, updatedAt: true,
+          orders: { select: {
+            sourcingStatus: true, status: true, saleDate: true, quantity: true,
+            salePriceCents: true, shippingChargedCents: true, ebayFeeCents: true,
+            cogsCents: true, shippingCostCents: true, ebayFinancialsSource: true,
+            ebayGrossAmountCents: true, ebayOrderEarningsCents: true,
+            ebayTransactionFeeCents: true, ebayAdvertisingFeeCents: true,
+            ebayOtherFeeCents: true, ebayShippingLabelCents: true, ebayRefundCents: true,
+            amazonPurchaseItem: { select: { lineTotalCents: true, allocatedShippingCents: true, allocatedTaxCents: true, allocatedDiscountCents: true } },
+          } },
+        } },
       },
       orderBy: { createdAt: "desc" },
     }),
     options.includeCatalog
-      ? db.adminArbitrageProduct.findMany({ orderBy: { createdAt: "desc" } })
+      ? db.adminArbitrageProduct.findMany({
+          select: { asin: true, amazonTitle: true, amazonImageUrl: true, category: true,
+            averageCompetitorPriceCents: true, suggestedPriceCents: true, competitorCount: true,
+            ebayPriceCents: true, createdAt: true, updatedAt: true },
+          orderBy: { createdAt: "desc" },
+        })
       : Promise.resolve([]),
   ]);
 
@@ -221,6 +240,7 @@ export async function getProductAnalyticsOverview(options: {
     listing.ebayListingId ? [{ listing, product }] : [],
   ));
   const marketMetrics = publishedListings.length ? await db.ebayMarketMetric.findMany({
+    select: { userId: true, ebayListingId: true, averageCompetitorPriceCents: true, competitorCount: true, bestSellingPriceCents: true },
     where: {
       ...(options.userId && { userId: options.userId }),
       ebayListingId: { in: publishedListings.map(({ listing }) => listing.ebayListingId!) },
