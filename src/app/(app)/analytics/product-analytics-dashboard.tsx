@@ -205,7 +205,7 @@ function TopProducts({ rows }: { rows: ProductAnalyticsRow[] }) {
   const top = [...rows]
       .sort((a, b) => b.revenueCents - a.revenueCents)
       .slice(0, 5),
-    max = Math.max(1, ...rows.map((row) => row.revenueCents));
+    max = rows.reduce((maximum, row) => Math.max(maximum, row.revenueCents), 1);
   return (
     <div className="space-y-4">
       {top.map((row, index) => (
@@ -307,7 +307,7 @@ export function ProductAnalyticsDashboard({
   };
   const arrow = (key: SortKey) =>
     sortKey === key ? (descending ? " ↓" : " ↑") : "";
-  if (!overview.rows.length)
+  if (!overview.rows.length && !admin)
     return (
       <EmptyState
         title="No products yet"
@@ -345,7 +345,7 @@ export function ProductAnalyticsDashboard({
       </Card>
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <StatCard
-          label={admin ? "All products" : "Your products"}
+          label={admin ? "Catalog products" : "Your products"}
           value={overview.totals.productCount.toLocaleString()}
           sub={
             admin
@@ -436,11 +436,10 @@ export function ProductAnalyticsDashboard({
           <div className="flex flex-col justify-between gap-3 xl:flex-row xl:items-end">
             <div>
               <h2 className="font-semibold text-slate-900">
-                Product performance
+                {admin ? "Mirrored product performance" : "Product performance"}
               </h2>
               <p className="mt-1 text-xs text-slate-500">
-                Search any product or ASIN, then sort by sales, traffic, or
-                pricing.
+                {admin ? "Search and sort products mirrored by sellers. Browse the full catalog below." : "Search any product or ASIN, then sort by sales, traffic, or pricing."}
               </p>
             </div>
             <div className="grid gap-2 sm:grid-cols-2 xl:flex">
@@ -471,7 +470,6 @@ export function ProductAnalyticsDashboard({
                 <option value="ALL">All products</option>
                 <option value="ACTIVE">Active listings</option>
                 <option value="MIRRORED">Mirrored products</option>
-                {admin && <option value="UNMIRRORED">Not yet mirrored</option>}
               </select>
               <div className="flex gap-2 xl:hidden">
                 <select

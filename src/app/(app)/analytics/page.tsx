@@ -2,6 +2,8 @@ import { requireUser } from "@/lib/auth";
 import { PageHeader } from "@/components/ui";
 import { getProductAnalyticsOverview } from "@/lib/analytics/product-overview";
 import { ProductAnalyticsDashboard } from "./product-analytics-dashboard";
+import { AdminCatalogTable } from "./admin-catalog-table";
+import { db } from "@/lib/db";
 
 export const metadata = { title: "Product analytics — Sellfinity" };
 
@@ -34,10 +36,22 @@ export default async function ProductAnalyticsPage({
   if (startDate < earliest) startDate = earliest;
   const overview = await getProductAnalyticsOverview({
     userId: admin ? undefined : user.id,
-    includeCatalog: admin,
+    includeCatalog: false,
     startDate: new Date(`${startDate}T00:00:00.000Z`),
     endDate: new Date(`${endDate}T23:59:59.999Z`),
   });
+
+  const search = typeof raw.catalogSearch === "string" ? raw.catalogSearch.trim().slice(0, 120) : "";
+  const catalogSort = typeof raw.catalogSort === "string" && ["title", "activity", "suggested", "competitor"].includes(raw.catalogSort) ? raw.catalogSort : "title";
+  const catalogPage = typeof raw.catalogPage === "string" && /^\d+$/.test(raw.catalogPage) ? Math.max(1, Math.min(100000, Number(raw.catalogPage))) : 1;
+  const where = search ? { OR: [{ asin: { contains: search, mode: "insensitive" as const } }, { amazonTitle: { contains: search, mode: "insensitive" as const } }] } : {};
+  const catalogOrder = catalogSort === "activity" ? { updatedAt: "desc" as const } : catalogSort === "suggested" ? { suggestedPriceCents: "desc" as const } : catalogSort === "competitor" ? { averageCompetitorPriceCents: "desc" as const } : { amazonTitle: "asc" as const };
+  const [catalogCount, matchingCount, catalogRows] = admin ? await Promise.all([
+    db.adminArbitrageProduct.count(),
+    db.adminArbitrageProduct.count({ where }),
+    db.adminArbitrageProduct.findMany({ where, select: { asin: true, amazonTitle: true, amazonImageUrl: true, category: true, suggestedPriceCents: true, averageCompetitorPriceCents: true, updatedAt: true }, orderBy: [catalogOrder, { asin: "asc" }], skip: (catalogPage - 1) * 50, take: 50 }),
+  ]) : [0, 0, []];
+  if (admin) overview.totals.productCount = catalogCount;
 
   return (
     <>
@@ -48,6 +62,7 @@ export default async function ProductAnalyticsPage({
           : "Sales, profit, listing activity, and performance for every product you mirrored."}
       />
       <ProductAnalyticsDashboard overview={overview} admin={admin} startDate={startDate} endDate={endDate} />
+      {admin && <AdminCatalogTable rows={catalogRows.map((row) => ({ ...row, updatedAt: row.updatedAt.toISOString() }))} count={matchingCount} page={catalogPage} search={search} sort={catalogSort} startDate={startDate} endDate={endDate} />}
     </>
   );
 }
