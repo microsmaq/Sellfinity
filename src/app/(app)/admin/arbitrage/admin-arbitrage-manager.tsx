@@ -302,17 +302,17 @@ function CatalogRow({
           >
             ↻ Research
           </Button>
-          {row.status !== "PUBLISHED" && row.amazonInStock && row.ebayItemId && (
+          {row.status !== "PUBLISHED" && !row.bannedAt && row.ebayItemId && (
             <Button size="sm" disabled={busy} onClick={() => run("approve", row.id)}>
               Approve match
             </Button>
           )}
-          {row.status !== "PUBLISHED" && row.amazonInStock && row.ebayItemId && (
+          {row.status !== "PUBLISHED" && !row.bannedAt && row.ebayItemId && (
             <Button size="sm" variant="ghost" disabled={busy} onClick={() => run("reject", row.id)}>
               Reject candidate
             </Button>
           )}
-          {row.status !== "PUBLISHED" && row.amazonInStock && (
+          {row.status !== "PUBLISHED" && !row.bannedAt && (
             <details className="rounded-lg border border-slate-200 bg-slate-50 p-2 text-xs">
               <summary className="cursor-pointer font-semibold text-slate-700">{row.ebayItemId ? "Use different eBay item" : "Add eBay candidate"}</summary>
               <form className="mt-2 space-y-2" onSubmit={(event) => { event.preventDefault(); if (candidateInput.trim()) attachCandidate(row.id, candidateInput); }}>
@@ -321,7 +321,7 @@ function CatalogRow({
               </form>
             </details>
           )}
-          {row.status !== "PUBLISHED" && !row.amazonInStock && <p className="rounded-lg bg-red-50 px-2 py-1.5 text-[11px] leading-4 text-red-700">{row.bannedAt ? "Banned for every store. Publishing and relisting are blocked." : "Refresh or replace the unavailable Amazon source before matching."}</p>}
+          {row.status !== "PUBLISHED" && !row.amazonInStock && <p className="rounded-lg bg-red-50 px-2 py-1.5 text-[11px] leading-4 text-red-700">{row.bannedAt ? "Banned for every store. Publishing and relisting are blocked." : "Amazon availability needs checking. You can still review an existing product match."}</p>}
           {!row.bannedAt && <Button size="sm" variant="danger" disabled={busy} onClick={() => run("ban", row.id)}>Ban &amp; remove</Button>}
           {row.status !== "ARCHIVED" && !row.bannedAt && (
             <Button
