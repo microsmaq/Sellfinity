@@ -55,4 +55,17 @@ describe("arbitrage finder filters", () => {
     expect(filtered.total).toBeGreaterThan(0);
     for (const row of filtered.rows) expect(assessPriceCompetitiveness(row.suggestedListingPriceCents, row.ebayPriceCents, row.avgCompPriceCents, row.ebayRecommendedPriceCents, null, 0).label).toBe(label);
   });
+  it("filters and sorts by Amazon price plus shipping before pagination", async () => {
+    const result = await listArbitragePage("seller", { ...base, sortKey: "amazonPrice", sortDesc: false, minAmazonLandedCents: 550, maxAmazonLandedCents: 600 });
+    expect(result.total).toBe(2);
+    expect(result.rows.map((row) => [row.asin, row.amazonPriceCents + row.amazonShippingCents])).toEqual([["B", 550], ["C", 600]]);
+  });
+  it("passes competitor limits and applies seller-specific profit filters", async () => {
+    const all = await listArbitragePage("seller", { ...base });
+    const minimum = Math.max(...all.rows.map((row) => row.profitCents));
+    const result = await listArbitragePage("seller", { ...base, minProfitCents: minimum, maxCompetitors: 3 });
+    expect(result.rows.length).toBeGreaterThan(0);
+    expect(result.rows.every((row) => row.profitCents >= minimum)).toBe(true);
+    expect(m.count.mock.calls.at(-1)![0].where.competitorCount.lte).toBe(3);
+  });
 });

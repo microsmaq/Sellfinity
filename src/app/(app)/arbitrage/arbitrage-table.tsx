@@ -267,7 +267,7 @@ export function ArbitrageTable({
   function urlFor(
     overrides: Partial<Record<
       "page" | "q" | "category" | "match" | "minMargin" |
-      "minConfidence" | "qualified" | "unlisted" | "sort" | "dir" | "pageSize" | "minSales" | "minUsers" | "minPrice" | "maxPrice" | "assessment",
+      "minConfidence" | "qualified" | "unlisted" | "sort" | "dir" | "pageSize" | "minSales" | "minUsers" | "minPrice" | "maxPrice" | "assessment" | "minAmazon" | "maxAmazon" | "minProfit" | "maxCompetitors",
       string | number
     >> = {},
   ) {
@@ -286,6 +286,10 @@ export function ArbitrageTable({
       minSales: String(filters.minSales ?? 0), minUsers: String(filters.minUsers ?? 0),
       minPrice: filters.minEbayPriceCents ? String(filters.minEbayPriceCents / 100) : "",
       maxPrice: filters.maxEbayPriceCents ? String(filters.maxEbayPriceCents / 100) : "",
+      minAmazon: filters.minAmazonLandedCents ? String(filters.minAmazonLandedCents / 100) : "",
+      maxAmazon: filters.maxAmazonLandedCents == null ? "" : String(filters.maxAmazonLandedCents / 100),
+      minProfit: filters.minProfitCents ? String(filters.minProfitCents / 100) : "",
+      maxCompetitors: filters.maxCompetitors == null ? "" : String(filters.maxCompetitors),
       assessment: filters.priceAssessment ?? "ALL",
     });
     for (const [key, value] of Object.entries(overrides)) params.set(key, String(value));
@@ -461,6 +465,10 @@ export function ArbitrageTable({
               <label className="text-xs text-slate-500">Users with active listings, minimum<input aria-label="Minimum users listed" name="minUsers" type="number" min="0" step="1" defaultValue={filters.minUsers || ""} placeholder="Any" className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" /></label>
               <label className="text-xs text-slate-500">eBay price, minimum $<input aria-label="Minimum eBay price" name="minPrice" type="number" min="0" step="0.01" defaultValue={filters.minEbayPriceCents ? filters.minEbayPriceCents / 100 : ""} placeholder="Any" className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" /></label>
               <label className="text-xs text-slate-500">eBay price, maximum $<input aria-label="Maximum eBay price" name="maxPrice" type="number" min="0" step="0.01" defaultValue={filters.maxEbayPriceCents ? filters.maxEbayPriceCents / 100 : ""} placeholder="Any" className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" /></label>
+              <label className="text-xs text-slate-500">Amazon landed cost, minimum $<input aria-label="Minimum Amazon landed cost" name="minAmazon" type="number" min="0" step="0.01" defaultValue={filters.minAmazonLandedCents ? filters.minAmazonLandedCents / 100 : ""} placeholder="Any" className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" /></label>
+              <label className="text-xs text-slate-500">Amazon landed cost, maximum $<input aria-label="Maximum Amazon landed cost" name="maxAmazon" type="number" min="0" step="0.01" defaultValue={filters.maxAmazonLandedCents == null ? "" : filters.maxAmazonLandedCents / 100} placeholder="Any" className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" /></label>
+              <label className="text-xs text-slate-500">Estimated profit, minimum $<input aria-label="Minimum estimated profit" name="minProfit" type="number" min="0" step="0.01" defaultValue={filters.minProfitCents ? filters.minProfitCents / 100 : ""} placeholder="Any" className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" /></label>
+              <label className="text-xs text-slate-500">Competitors, maximum<input aria-label="Maximum competitors" name="maxCompetitors" type="number" min="0" step="1" defaultValue={filters.maxCompetitors ?? ""} placeholder="Any" className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" /></label>
               <label className="text-xs text-slate-500">Sort by<select aria-label="Sort products" name="sort" defaultValue={filters.sortKey} className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm">{[["profit", "Your estimated profit"], ["margin", "Your estimated margin"], ["priceAssessment", "Price assessment"], ["sales", "Estimated sales/month"], ["usersListed", "Users listed"], ["amazonPrice", "Amazon landed cost"], ["ebayPrice", "eBay price"], ["suggestedPrice", "Your suggested price"], ["competition", "Competitor count"], ["avgCompPrice", "Competitor average"], ["recommendedPrice", "eBay recommended price"], ["matchConfidence", "Match confidence"], ["researched", "Last researched"], ["newest", "Recently updated"], ["amazonTitle", "Product name"], ["category", "Category"]].map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
               <select aria-label="Sort direction" name="dir" defaultValue={filters.sortDesc ? "desc" : "asc"} className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"><option value="desc">Highest first</option><option value="asc">Lowest first</option></select>
               <select name="match" defaultValue={filters.matchVerdict ?? "ALL"} className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm">
@@ -499,6 +507,7 @@ export function ArbitrageTable({
                 Unlisted by me only
               </label>
             </div>
+            <p className="text-xs text-slate-500">Amazon landed cost includes saved Amazon shipping. A competitor limit excludes products without competitor data.</p>
           </form>
         </div>
 

@@ -23,6 +23,7 @@ export default async function ArbitragePage({
   const rawSort = typeof raw.sort === "string" ? raw.sort : "profit";
   const rawMatch = typeof raw.match === "string" ? raw.match.toUpperCase() : "ALL";
   const number = (value: string | string[] | undefined, max: number) => typeof value === "string" && value.trim() && Number.isFinite(Number(value)) ? Math.min(max, Math.max(0, Number(value))) : 0;
+  const optionalNumber = (value: string | string[] | undefined, max: number) => typeof value === "string" && value.trim() && Number.isFinite(Number(value)) && Number(value) >= 0 ? Math.min(max, Number(value)) : undefined;
   const params: ArbitragePageParams = {
     page: Math.max(1, Number(raw.page ?? 1) || 1),
     pageSize: [25, 50, 100, 250, 500, 1_000].includes(Number(raw.pageSize))
@@ -44,6 +45,10 @@ export default async function ArbitragePage({
     minUsers: Math.floor(number(raw.minUsers, 1000000)),
     minEbayPriceCents: Math.round(number(raw.minPrice, 1000000) * 100),
     maxEbayPriceCents: Math.round(number(raw.maxPrice, 1000000) * 100),
+    minAmazonLandedCents: Math.round(number(raw.minAmazon, 1000000) * 100),
+    maxAmazonLandedCents: optionalNumber(raw.maxAmazon, 1000000) == null ? undefined : Math.round(optionalNumber(raw.maxAmazon, 1000000)! * 100),
+    minProfitCents: Math.round(number(raw.minProfit, 1000000) * 100) || undefined,
+    maxCompetitors: optionalNumber(raw.maxCompetitors, 1000000) == null ? undefined : Math.floor(optionalNumber(raw.maxCompetitors, 1000000)!),
     priceAssessment: typeof raw.assessment === "string" && ["Highly competitive", "Competitive", "Near market", "Above market", "High premium", "Not rated"].includes(raw.assessment) ? raw.assessment : "ALL",
     query: typeof raw.q === "string" ? raw.q : "",
   };

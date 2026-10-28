@@ -154,6 +154,10 @@ export type ArbitragePageParams = {
   minUsers?: number;
   minEbayPriceCents?: number;
   maxEbayPriceCents?: number;
+  minAmazonLandedCents?: number;
+  maxAmazonLandedCents?: number;
+  minProfitCents?: number;
+  maxCompetitors?: number;
   priceAssessment?: string;
   query: string;
 };
@@ -262,6 +266,7 @@ export async function listArbitragePage(
       suggestedPriceCents: { not: null },
     }),
     ...((params.minSales ?? 0) > 0 && { estimatedSales30d: { gte: params.minSales } }),
+    ...(params.maxCompetitors != null && { competitorCount: { lte: params.maxCompetitors } }),
     ...(((params.minEbayPriceCents ?? 0) > 0 || (params.maxEbayPriceCents ?? 0) > 0) && { ebayPriceCents: {
       ...((params.minEbayPriceCents ?? 0) > 0 && { gte: params.minEbayPriceCents }),
       ...((params.maxEbayPriceCents ?? 0) > 0 && { lte: params.maxEbayPriceCents }),
@@ -318,7 +323,7 @@ export async function listArbitragePage(
   const qualified = qualifiedCandidates.filter(hasCompetitiveSuggestedPrice).length;
 
   const computedSort = ["usersListed", "priceAssessment", "profit", "margin", "suggestedPrice", "amazonPrice"].includes(params.sortKey);
-  const inMemoryPagination = computedSort || params.qualifiedOnly || Boolean(params.priceAssessment && params.priceAssessment !== "ALL") || (params.minUsers ?? 0) > 0 || params.minMarginPct > 0;
+  const inMemoryPagination = computedSort || params.qualifiedOnly || Boolean(params.priceAssessment && params.priceAssessment !== "ALL") || (params.minUsers ?? 0) > 0 || params.minMarginPct > 0 || (params.minAmazonLandedCents ?? 0) > 0 || params.maxAmazonLandedCents != null || (params.minProfitCents ?? 0) > 0;
   const candidates = inMemoryPagination ? await db.adminArbitrageProduct.findMany({
     where, orderBy: [orderBy(params), { asin: "asc" }],
     select: { asin: true, updatedAt: true, amazonPriceCents: true, amazonShippingCents: true, ebayPriceCents: true, ebayRecommendedPriceCents: true, averageCompetitorPriceCents: true },
@@ -352,7 +357,16 @@ export async function listArbitragePage(
       const margin = estimateMargin(suggested, item.amazonPriceCents, item.amazonShippingCents, sitewideDiscountBps, adRateBps);
       const assessment = assessPriceCompetitiveness(suggested, item.ebayPriceCents ?? 0, item.averageCompetitorPriceCents, item.ebayRecommendedPriceCents, null, sitewideDiscountBps);
       return { item, suggested, margin, assessment, users: usersByAsin.get(item.asin)?.size ?? 0 };
-    }).filter((row) => (!params.qualifiedOnly || isCompetitivelyPriced(row.assessment)) && (!params.priceAssessment || params.priceAssessment === "ALL" || row.assessment.label === params.priceAssessment) && row.users >= (params.minUsers ?? 0) && (!params.minMarginPct || Math.round(row.margin.marginPct) >= params.minMarginPct));
+    }).filter((row) => {
+      const landed = row.item.amazonPriceCents + row.item.amazonShippingCents;
+      return (!params.qualifiedOnly || isCompetitivelyPriced(row.assessment))
+        && (!params.priceAssessment || params.priceAssessment === "ALL" || row.assessment.label === params.priceAssessment)
+        && row.users >= (params.minUsers ?? 0)
+        && (!params.minMarginPct || Math.round(row.margin.marginPct) >= params.minMarginPct)
+        && landed >= (params.minAmazonLandedCents ?? 0)
+        && (params.maxAmazonLandedCents == null || landed <= params.maxAmazonLandedCents)
+        && row.margin.estimatedProfitCents >= (params.minProfitCents ?? -Infinity);
+    });
     if (computedSort) computed.sort((a, b) => {
       const value = (row: typeof a) => params.sortKey === "usersListed" ? row.users : params.sortKey === "priceAssessment" ? ranks[row.assessment.label] : params.sortKey === "profit" ? row.margin.estimatedProfitCents : params.sortKey === "margin" ? Math.round(row.margin.marginPct) : params.sortKey === "suggestedPrice" ? row.suggested : row.item.amazonPriceCents + row.item.amazonShippingCents;
       const difference = value(a) - value(b);
