@@ -44,7 +44,7 @@ export type OpportunityRow = {
   title: string;
   imageUrl: string;
   ebayPriceCents: number;
-  ebaySales30d: number;
+  ebaySales30d: number | null;
   competitorCount: number | null;
   avgCompPriceCents: number | null;
   suggestedListingPriceCents: number;

@@ -267,7 +267,7 @@ export function ArbitrageTable({
   function urlFor(
     overrides: Partial<Record<
       "page" | "q" | "category" | "match" | "minMargin" |
-      "minConfidence" | "qualified" | "unlisted" | "sort" | "dir" | "pageSize",
+      "minConfidence" | "qualified" | "unlisted" | "sort" | "dir" | "pageSize" | "minSales" | "minUsers" | "minPrice" | "maxPrice" | "assessment",
       string | number
     >> = {},
   ) {
@@ -283,6 +283,10 @@ export function ArbitrageTable({
       sort: filters.sortKey,
       dir: filters.sortDesc ? "desc" : "asc",
       pageSize: String(filters.pageSize ?? 50),
+      minSales: String(filters.minSales ?? 0), minUsers: String(filters.minUsers ?? 0),
+      minPrice: filters.minEbayPriceCents ? String(filters.minEbayPriceCents / 100) : "",
+      maxPrice: filters.maxEbayPriceCents ? String(filters.maxEbayPriceCents / 100) : "",
+      assessment: filters.priceAssessment ?? "ALL",
     });
     for (const [key, value] of Object.entries(overrides)) params.set(key, String(value));
     return `/arbitrage?${params.toString()}`;
@@ -354,7 +358,7 @@ export function ArbitrageTable({
       );
       setBusyId(null);
       setNotice({
-        text: `Exported ${data.total.toLocaleString()} matching opportunities.`,
+        text: `Exported up to ${Math.min(data.total, 2000).toLocaleString()} matching opportunities${data.total > 2000 ? " (2,000-item export limit)" : ""}.`,
         error: false,
       });
     });
@@ -399,7 +403,7 @@ export function ArbitrageTable({
               <h2 className="font-semibold text-slate-900">Published product intelligence</h2>
               <p className="mt-0.5 text-xs text-slate-500">
                 Curated by Sellfinity admins. Profit and margin include Amazon shipping,
-                eBay fees, and a 3% advertising allowance.
+                eBay fees and your saved advertising rate. Monthly sales are estimates, not verified sales; some estimates are modeled from item details.
               </p>
             </div>
             <div className="flex flex-wrap items-center gap-2">
@@ -426,8 +430,6 @@ export function ArbitrageTable({
           </div>
 
           <form action="/arbitrage" method="get" className="mt-4 space-y-3">
-            <input type="hidden" name="sort" value={filters.sortKey} />
-            <input type="hidden" name="dir" value={filters.sortDesc ? "desc" : "asc"} />
             <div className="flex flex-wrap gap-2">
               <div className="min-w-0 flex-[1_1_280px]">
                 <Input
@@ -452,6 +454,15 @@ export function ArbitrageTable({
               </Link>
             </div>
             <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-6">
+              <select aria-label="Price assessment" name="assessment" defaultValue={filters.priceAssessment ?? "ALL"} className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm">
+                <option value="ALL">Any price assessment</option>{["Highly competitive", "Competitive", "Near market", "Above market", "High premium", "Not rated"].map((label) => <option key={label} value={label}>{label}</option>)}
+              </select>
+              <label className="text-xs text-slate-500">Estimated sales/month, minimum<input aria-label="Minimum estimated sales per month" name="minSales" type="number" min="0" step="1" defaultValue={filters.minSales || ""} placeholder="Any" className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" /></label>
+              <label className="text-xs text-slate-500">Users with active listings, minimum<input aria-label="Minimum users listed" name="minUsers" type="number" min="0" step="1" defaultValue={filters.minUsers || ""} placeholder="Any" className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" /></label>
+              <label className="text-xs text-slate-500">eBay price, minimum $<input aria-label="Minimum eBay price" name="minPrice" type="number" min="0" step="0.01" defaultValue={filters.minEbayPriceCents ? filters.minEbayPriceCents / 100 : ""} placeholder="Any" className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" /></label>
+              <label className="text-xs text-slate-500">eBay price, maximum $<input aria-label="Maximum eBay price" name="maxPrice" type="number" min="0" step="0.01" defaultValue={filters.maxEbayPriceCents ? filters.maxEbayPriceCents / 100 : ""} placeholder="Any" className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm" /></label>
+              <label className="text-xs text-slate-500">Sort by<select aria-label="Sort products" name="sort" defaultValue={filters.sortKey} className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm">{[["profit", "Your estimated profit"], ["margin", "Your estimated margin"], ["priceAssessment", "Price assessment"], ["sales", "Estimated sales/month"], ["usersListed", "Users listed"], ["amazonPrice", "Amazon landed cost"], ["ebayPrice", "eBay price"], ["suggestedPrice", "Your suggested price"], ["competition", "Competitor count"], ["avgCompPrice", "Competitor average"], ["recommendedPrice", "eBay recommended price"], ["matchConfidence", "Match confidence"], ["researched", "Last researched"], ["newest", "Recently updated"], ["amazonTitle", "Product name"], ["category", "Category"]].map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+              <select aria-label="Sort direction" name="dir" defaultValue={filters.sortDesc ? "desc" : "asc"} className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"><option value="desc">Highest first</option><option value="asc">Lowest first</option></select>
               <select name="match" defaultValue={filters.matchVerdict ?? "ALL"} className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm">
                 <option value="ALL">Any match status</option>
                 <option value="MATCH">Exact match</option>
@@ -513,8 +524,8 @@ export function ArbitrageTable({
                 <SortHeader label="Competitor avg" sortKey="avgCompPrice" filters={filters} href={sortHref("avgCompPrice")} />
                 <SortHeader label="eBay recommended" sortKey="recommendedPrice" filters={filters} href={sortHref("recommendedPrice")} />
                 <SortHeader label="Suggested price" sortKey="suggestedPrice" filters={filters} href={sortHref("suggestedPrice")} />
-                <th className="sticky top-0 z-30 bg-slate-50 px-4 py-3 text-left">Price assessment</th>
-                <SortHeader label="Sales / month" sortKey="sales" filters={filters} href={sortHref("sales")} />
+                <SortHeader label="Price assessment" sortKey="priceAssessment" filters={filters} href={sortHref("priceAssessment")} align="left" />
+                <SortHeader label="Est. sales / month" sortKey="sales" filters={filters} href={sortHref("sales")} />
                 <SortHeader label="Competition" sortKey="competition" filters={filters} href={sortHref("competition")} />
                 <SortHeader label="Profit after ads" sortKey="profit" filters={filters} href={sortHref("profit")} />
                 <SortHeader label="Margin after ads" sortKey="margin" filters={filters} href={sortHref("margin")} />

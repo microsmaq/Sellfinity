@@ -138,6 +138,7 @@ export type ArbitragePageParams = {
     | "suggestedPrice"
     | "matchConfidence"
     | "usersListed"
+    | "priceAssessment"
     | "researched"
     | "amazonTitle"
     | "category"
@@ -149,6 +150,11 @@ export type ArbitragePageParams = {
   matchVerdict?: "ALL" | "MATCH" | "LIKELY" | "REVIEW";
   qualifiedOnly?: boolean;
   unlistedOnly?: boolean;
+  minSales?: number;
+  minUsers?: number;
+  minEbayPriceCents?: number;
+  maxEbayPriceCents?: number;
+  priceAssessment?: string;
   query: string;
 };
 
@@ -167,7 +173,7 @@ export type ArbitragePage = {
 };
 
 const SORT_COLUMNS: Record<
-  Exclude<ArbitragePageParams["sortKey"], "usersListed">,
+  Exclude<ArbitragePageParams["sortKey"], "usersListed" | "priceAssessment">,
   keyof Prisma.AdminArbitrageProductOrderByWithRelationInput
 > = {
   profit: "estimatedProfitCents",
@@ -187,7 +193,7 @@ const SORT_COLUMNS: Record<
 };
 
 function orderBy(params: ArbitragePageParams) {
-  const key = params.sortKey === "usersListed" ? "newest" : params.sortKey;
+  const key = params.sortKey === "usersListed" || params.sortKey === "priceAssessment" ? "newest" : params.sortKey;
   const column = SORT_COLUMNS[key] ?? SORT_COLUMNS.profit;
   const direction = params.sortDesc ? "desc" : "asc";
   const nullable = [
@@ -239,7 +245,6 @@ export async function listArbitragePage(
     ebayItemId: { not: null, ...(hiddenIds.length && { notIn: hiddenIds }) },
     ...(ownedAsins.length > 0 && { asin: { notIn: ownedAsins } }),
     ...(params.category !== "all" && { category: params.category }),
-    ...(params.minMarginPct > 0 && { marginPct: { gte: params.minMarginPct } }),
     ...((params.minConfidence ?? 0) > 0 && {
       matchConfidence: { gte: params.minConfidence },
     }),
@@ -249,13 +254,18 @@ export async function listArbitragePage(
     ...(params.qualifiedOnly && {
       matchVerdict: { in: ["MATCH", "LIKELY"] },
       matchConfidence: { gte: 95 },
-      OR: [
+      AND: [{ OR: [
         { marginPct: { gte: AUTO_PUBLISH_MIN_MARGIN_PCT } },
         { estimatedProfitCents: { gte: AUTO_PUBLISH_FLAT_PROFIT_CENTS } },
-      ],
+      ] }],
       estimatedProfitCents: { gt: 0 },
       suggestedPriceCents: { not: null },
     }),
+    ...((params.minSales ?? 0) > 0 && { estimatedSales30d: { gte: params.minSales } }),
+    ...(((params.minEbayPriceCents ?? 0) > 0 || (params.maxEbayPriceCents ?? 0) > 0) && { ebayPriceCents: {
+      ...((params.minEbayPriceCents ?? 0) > 0 && { gte: params.minEbayPriceCents }),
+      ...((params.maxEbayPriceCents ?? 0) > 0 && { lte: params.maxEbayPriceCents }),
+    } }),
     ...(query && {
       OR: [
         { asin: { contains: query, mode: "insensitive" } },
@@ -307,28 +317,22 @@ export async function listArbitragePage(
   ]);
   const qualified = qualifiedCandidates.filter(hasCompetitiveSuggestedPrice).length;
 
-  const inMemoryPagination =
-    params.sortKey === "usersListed" || params.qualifiedOnly;
-  let items = await db.adminArbitrageProduct.findMany({
-    where,
-    orderBy: orderBy(params),
-    ...(inMemoryPagination
-      ? {}
-      : {
-          skip: (Math.max(1, params.page) - 1) * pageSize,
-          take: pageSize,
-        }),
+  const computedSort = ["usersListed", "priceAssessment", "profit", "margin", "suggestedPrice", "amazonPrice"].includes(params.sortKey);
+  const inMemoryPagination = computedSort || params.qualifiedOnly || Boolean(params.priceAssessment && params.priceAssessment !== "ALL") || (params.minUsers ?? 0) > 0 || params.minMarginPct > 0;
+  const candidates = inMemoryPagination ? await db.adminArbitrageProduct.findMany({
+    where, orderBy: [orderBy(params), { asin: "asc" }],
+    select: { asin: true, updatedAt: true, amazonPriceCents: true, amazonShippingCents: true, ebayPriceCents: true, ebayRecommendedPriceCents: true, averageCompetitorPriceCents: true },
+  }) : [];
+  let items = inMemoryPagination ? [] : await db.adminArbitrageProduct.findMany({
+    where, orderBy: [orderBy(params), { asin: "asc" }],
+    skip: (Math.max(1, params.page) - 1) * pageSize, take: pageSize,
   });
-  if (params.qualifiedOnly) {
-    items = items.filter(hasCompetitiveSuggestedPrice);
-  }
-  const total = params.qualifiedOnly ? items.length : databaseTotal;
 
-  const adoptionAsins = items.map((item) => item.asin);
+  const adoptionAsins = inMemoryPagination ? candidates.map((item) => item.asin) : items.map((item) => item.asin);
   const activeProducts = adoptionAsins.length
     ? await db.product.findMany({
         where: {
-          sku: { in: adoptionAsins },
+          ...(inMemoryPagination ? {} : { sku: { in: adoptionAsins } }),
           listings: { some: { status: "ACTIVE" } },
         },
         select: { sku: true, userId: true },
@@ -340,24 +344,30 @@ export async function listArbitragePage(
     users.add(product.userId);
     usersByAsin.set(product.sku, users);
   }
-  if (params.sortKey === "usersListed") {
-    items.sort((a, b) => {
-      const difference =
-        (usersByAsin.get(a.asin)?.size ?? 0) -
-        (usersByAsin.get(b.asin)?.size ?? 0);
-      if (difference !== 0) return params.sortDesc ? -difference : difference;
-      return b.updatedAt.getTime() - a.updatedAt.getTime();
+  let total = databaseTotal;
+  if (inMemoryPagination) {
+    const ranks: Record<string, number> = { "Highly competitive": 5, Competitive: 4, "Near market": 3, "Above market": 2, "High premium": 1, "Not rated": 0 };
+    const computed = candidates.map((item) => {
+      const suggested = arbitrageSuggestedPriceCents(item.amazonPriceCents, item.ebayPriceCents ?? 0, item.ebayRecommendedPriceCents, item.averageCompetitorPriceCents ?? item.ebayPriceCents ?? 0, item.amazonShippingCents, sitewideDiscountBps, adRateBps);
+      const margin = estimateMargin(suggested, item.amazonPriceCents, item.amazonShippingCents, sitewideDiscountBps, adRateBps);
+      const assessment = assessPriceCompetitiveness(suggested, item.ebayPriceCents ?? 0, item.averageCompetitorPriceCents, item.ebayRecommendedPriceCents, null, sitewideDiscountBps);
+      return { item, suggested, margin, assessment, users: usersByAsin.get(item.asin)?.size ?? 0 };
+    }).filter((row) => (!params.qualifiedOnly || isCompetitivelyPriced(row.assessment)) && (!params.priceAssessment || params.priceAssessment === "ALL" || row.assessment.label === params.priceAssessment) && row.users >= (params.minUsers ?? 0) && (!params.minMarginPct || Math.round(row.margin.marginPct) >= params.minMarginPct));
+    if (computedSort) computed.sort((a, b) => {
+      const value = (row: typeof a) => params.sortKey === "usersListed" ? row.users : params.sortKey === "priceAssessment" ? ranks[row.assessment.label] : params.sortKey === "profit" ? row.margin.estimatedProfitCents : params.sortKey === "margin" ? Math.round(row.margin.marginPct) : params.sortKey === "suggestedPrice" ? row.suggested : row.item.amazonPriceCents + row.item.amazonShippingCents;
+      const difference = value(a) - value(b);
+      return difference ? (params.sortDesc ? -difference : difference) : a.item.asin.localeCompare(b.item.asin);
     });
-    const start = (Math.max(1, params.page) - 1) * pageSize;
-    items = items.slice(start, start + pageSize);
-  } else if (params.qualifiedOnly) {
-    const start = (Math.max(1, params.page) - 1) * pageSize;
-    items = items.slice(start, start + pageSize);
+    total = computed.length;
+    const asins = computed.slice((Math.max(1, params.page) - 1) * pageSize, Math.max(1, params.page) * pageSize).map((row) => row.item.asin);
+    const selected = asins.length ? await db.adminArbitrageProduct.findMany({ where: { ...where, asin: { in: asins } } }) : [];
+    const byAsin = new Map(selected.map((item) => [item.asin, item]));
+    items = asins.flatMap((asin) => { const item = byAsin.get(asin); return item ? [item] : []; });
   }
 
   // Ownership: which of this page's ASINs the user already sells.
   const asins = items.map((i) => i.asin);
-  const [products, researchRows, matchDecisions, listedByUser] = await Promise.all([
+  const [products, researchRows, matchDecisions, activeOwnedProducts] = await Promise.all([
     db.product.findMany({
       where: { userId, sku: { in: asins } },
       select: {
@@ -389,14 +399,16 @@ export async function listArbitragePage(
       },
       select: { ebayItemId: true },
     }),
-    db.product.count({
+    db.product.findMany({
       where: {
         userId,
-        sku: { in: publishedRows.map((item) => item.asin) },
         listings: { some: { status: "ACTIVE" } },
       },
+      select: { sku: true },
     }),
   ]);
+  const publishedAsins = new Set(publishedRows.map((item) => item.asin));
+  const listedByUser = activeOwnedProducts.filter((product) => publishedAsins.has(product.sku)).length;
   const itemHost =
     ebayEnvConfig()?.env === "PRODUCTION"
       ? "https://www.ebay.com"
@@ -441,7 +453,7 @@ export async function listArbitragePage(
       title: i.ebayTitle ?? i.amazonTitle,
       imageUrl: i.ebayImageUrl ?? i.amazonImageUrl ?? "",
       ebayPriceCents: i.ebayPriceCents ?? 0,
-      ebaySales30d: i.estimatedSales30d ?? 0,
+      ebaySales30d: i.estimatedSales30d,
       competitorCount: i.competitorCount,
       avgCompPriceCents: i.averageCompetitorPriceCents,
       suggestedListingPriceCents: suggestedPrice,

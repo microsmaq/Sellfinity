@@ -120,7 +120,7 @@ export type ArbitrageExcelRow = {
   amazonShippingCents: number;
   profitCents: number | null;
   marginPct: number | null;
-  estimatedSales30d: number;
+  estimatedSales30d: number | null;
   competitorCount: number | null;
   averageCompetitorPriceCents: number | null;
   ebayRecommendedPriceCents?: number | null;

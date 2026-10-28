@@ -18,10 +18,11 @@ export default async function ArbitragePage({
   const sortKeys: ArbitragePageParams["sortKey"][] = [
     "profit", "margin", "ebayPrice", "amazonPrice", "sales", "competition",
     "avgCompPrice", "recommendedPrice", "suggestedPrice", "matchConfidence",
-    "usersListed", "researched", "amazonTitle", "category", "newest",
+    "usersListed", "priceAssessment", "researched", "amazonTitle", "category", "newest",
   ];
   const rawSort = typeof raw.sort === "string" ? raw.sort : "profit";
   const rawMatch = typeof raw.match === "string" ? raw.match.toUpperCase() : "ALL";
+  const number = (value: string | string[] | undefined, max: number) => typeof value === "string" && value.trim() && Number.isFinite(Number(value)) ? Math.min(max, Math.max(0, Number(value))) : 0;
   const params: ArbitragePageParams = {
     page: Math.max(1, Number(raw.page ?? 1) || 1),
     pageSize: [25, 50, 100, 250, 500, 1_000].includes(Number(raw.pageSize))
@@ -39,6 +40,11 @@ export default async function ArbitragePage({
       : "ALL",
     qualifiedOnly: raw.qualified === "1" || raw.qualified === "true",
     unlistedOnly: raw.unlisted === "1" || raw.unlisted === "true",
+    minSales: Math.floor(number(raw.minSales, 1000000)),
+    minUsers: Math.floor(number(raw.minUsers, 1000000)),
+    minEbayPriceCents: Math.round(number(raw.minPrice, 1000000) * 100),
+    maxEbayPriceCents: Math.round(number(raw.maxPrice, 1000000) * 100),
+    priceAssessment: typeof raw.assessment === "string" && ["Highly competitive", "Competitive", "Near market", "Above market", "High premium", "Not rated"].includes(raw.assessment) ? raw.assessment : "ALL",
     query: typeof raw.q === "string" ? raw.q : "",
   };
   const data = await listArbitragePage(user.id, params);
